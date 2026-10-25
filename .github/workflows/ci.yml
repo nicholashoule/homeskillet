@@ -1,7 +1,7 @@
 # CI: the checks `make check` runs, on every Go release from the go.mod floor to
 # the latest, on Linux and macOS; on Windows, the packages that build there and
-# the unsupported-system refusal; release cross builds; and golangci-lint. See
-# Continuous Integration in docs/development.md.
+# the unsupported-system refusal; release cross builds; and golangci-lint,
+# repogov, and demojify. See Continuous Integration in docs/development.md.
 name: CI
 
 on:
@@ -26,13 +26,13 @@ jobs:
         os: [ubuntu-latest, macos-latest, windows-latest]
 
     steps:
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           # Nothing here pushes, so the token is not left in .git/config.
           persist-credentials: false
 
       - name: Set up Go ${{ matrix.go-version }}
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           go-version: ${{ matrix.go-version }}
 
@@ -71,28 +71,17 @@ jobs:
         if: matrix.go-version == 'stable' && runner.os == 'Linux'
         run: make cross
 
-      - name: Coverage
-        if: matrix.go-version == 'stable' && runner.os == 'Linux'
-        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
-
-      - name: Upload coverage
-        if: matrix.go-version == 'stable' && runner.os == 'Linux'
-        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
-        with:
-          files: coverage.out
-          fail_ci_if_error: false
-
   lint:
     name: Lint
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
         with:
           persist-credentials: false
 
       - name: Set up Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
         with:
           # golangci-lint cannot analyze standard-library files from a Go
           # newer than the one it was built with, so this stays on the
@@ -108,7 +97,15 @@ jobs:
           version: v2.15.0
 
       # Markdown line limits and the agent-instruction layout, configured in
-      # .github/repogov-config.json. Pinned to a release, like the command in
-      # .github/copilot-instructions.md; bump both together.
+      # .github/repogov-config.json. Pinned to a release;
+      # .github/copilot-instructions.md lists every file to bump with it.
       - name: repogov
         run: go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all
+
+      # Emoji in Go, Markdown, YAML, and JSON files. It only reports, never
+      # rewrites, and skips _test.go files, which may hold emoji as test input.
+      # Pinned like repogov; bump it in the same files.
+      - name: demojify
+        run: >
+          go run github.com/nicholashoule/demojify-sanitize/cmd/demojify@v1.2.0
+          -root . -exts .go,.md,.yml,.yaml,.json

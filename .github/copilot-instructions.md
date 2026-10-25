@@ -27,8 +27,10 @@ YAML frontmatter (e.g. `applyTo: "**/*.go"`) to scope each file.
 
 Run checks: `go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all`
 Re-scaffold missing files: `go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot init`
+Check for emoji: `go run github.com/nicholashoule/demojify-sanitize/cmd/demojify@v1.2.0 -root . -exts .go,.md,.yml,.yaml,.json`
 
-repogov is pinned to a release, not `@latest`; bump it here and in `.github/workflows/ci.yml` together.
+repogov and demojify are pinned to releases, not `@latest`; bump each here, in `AGENTS.md`,
+`docs/development.md`, and `.github/workflows/ci.yml` together.
 
 ## File Naming Conventions
 

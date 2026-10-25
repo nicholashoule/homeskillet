@@ -72,9 +72,11 @@ make integration  # link the sibling dotfiles-linux manifest into a temp home
 ```
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) also runs repogov,
-which limits Markdown length (README.md to 300 lines); when a file nears its
-limit, move detail to `docs/` and link to it. Check before handing back:
-`go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all`.
+which limits Markdown length (README.md to 300 lines), and demojify, which
+fails on emoji outside test files. When a file nears its limit, move detail to
+`docs/` and link to it. Check both before handing back:
+`go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all`
+and `go run github.com/nicholashoule/demojify-sanitize/cmd/demojify@v1.2.0 -root . -exts .go,.md,.yml,.yaml,.json`.
 
 Keep the Makefile portable across Linux, WSL, containers, and macOS. macOS
 ships GNU Make 3.81, so use only Make 3.81 features. Recipes call only `go`,
