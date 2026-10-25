@@ -43,6 +43,7 @@ describe the project, so keep them current instead.
 | `Makefile` | Portable build, test, lint, and cross-build targets |
 | `tools/xplat` | Cross-platform shim for Makefile recipes, vendored from `go-webapp` |
 | `tools/buildtime` | Prints the build time the Makefile stamps into binaries |
+| `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
 | `.github/` | CI workflow, Dependabot, repogov line limits, and Copilot instructions |
 
 `tools/xplat` is a byte-identical copy of
@@ -69,6 +70,7 @@ make build        # bin/homeskillet for this machine (VERSION=v0.0.1 to stamp)
 make install      # build, then install it as a new version under ~/.local
 make cross        # bin/homeskillet-<os>-<arch> for Linux and macOS
 make integration  # link the sibling dotfiles-linux manifest into a temp home
+make hooks        # pre-commit hook: check, repogov, demojify (docs/development.md)
 ```
 
 CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) also runs repogov,

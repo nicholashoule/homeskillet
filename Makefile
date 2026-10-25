@@ -84,6 +84,11 @@ test: ## Run tests, with the race detector when cgo is available
 
 check: vet lint test ## Run vet, lint, and tests; required before handing off work
 
+# tools/githooks resolves the hooks directory through Git and never replaces a
+# hook it did not install. Run it again after changing tools/githooks/pre-commit.
+hooks: ## Install the pre-commit hook: check, repogov, and demojify on each commit
+	go run ./tools/githooks
+
 ##@ Build
 
 # CGO_ENABLED=0 makes the binary static, so it runs on any distribution or
@@ -111,4 +116,4 @@ integration: build ## Link the dotfiles-linux manifest into a temporary home (ne
 clean: ## Remove bin/
 	$(XPLAT) rmrf $(BIN)
 
-.PHONY: help fmt vet lint test check build install cross integration clean
+.PHONY: help fmt vet lint test check hooks build install cross integration clean

@@ -10,6 +10,7 @@ make check            # go vet ./..., golangci-lint run ./..., go test -race ./.
 make build            # static, stripped bin/homeskillet (about 2.5 MiB)
 bin/homeskillet --help
 make install          # build, then bin/homeskillet self install
+make hooks            # run check, repogov, and demojify before each commit
 ```
 
 `make test` uses the race detector only when cgo is available. On Linux the
@@ -41,6 +42,22 @@ directory through a symlink.
 Tests cannot exercise the root refusal or files owned by another user without
 root. To check the refusal by hand, `unshare -r bin/homeskillet status` runs the
 binary as root inside a user namespace.
+
+## Git Hooks
+
+`make hooks` installs [tools/githooks/pre-commit](../tools/githooks/pre-commit)
+as this clone's pre-commit hook. Each commit then runs `make check`, repogov,
+and demojify, the checks CI runs, and stops when any fails:
+
+- The hook only reports. It never rewrites or stages files, so changes you
+  left unstaged stay out of the commit. `make fmt` fixes formatting.
+- It checks the working tree, which can differ from what is staged. CI checks
+  what was committed.
+- The installed hook is a copy. Run `make hooks` again after the hook changes.
+- `make hooks` never replaces a hook it did not install, and refuses when
+  `core.hooksPath` is set, since that directory may serve every repository.
+- The first commit downloads the pinned repogov and demojify, so it needs the
+  network. `git commit --no-verify` skips the hook once.
 
 ## Continuous Integration
 
