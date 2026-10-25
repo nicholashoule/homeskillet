@@ -212,7 +212,7 @@ still links everything under `home/`:
     {
       "name": "uv",
       "run": ["sh", "setup/uv.sh"],
-      "platforms": ["linux"],
+      "platforms": ["linux", "darwin"],
       "creates": ".local/bin/uv"
     },
     {
@@ -224,6 +224,9 @@ still links everything under `home/`:
   ]
 }
 ```
+
+One repository serves both systems: on Linux `setup` offers uv, and on macOS
+uv and then ripgrep.
 
 | Field | Meaning |
 |---|---|
