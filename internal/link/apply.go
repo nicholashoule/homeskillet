@@ -9,16 +9,22 @@ import (
 	"path/filepath"
 )
 
-// Create links every Missing target to its source, writing one line per link to
-// log. It refuses to start if any plan is blocked, so a caller cannot apply
-// part of a set of entries that failed its checks.
+// Create removes every Orphaned link and links every Missing target to its
+// source, writing one line per change to log, which may be nil to discard the
+// lines. It refuses to start if any plan is blocked, so a caller cannot apply
+// part of a set of entries that failed its checks. Callers then record the
+// result with Save.
 //
 // A failed write to log stops Create with that error. The link it describes
 // already exists, and rerunning finishes the rest, but a run that cannot report
 // what it changed should not claim success.
 func Create(plans []Plan, log io.Writer) error {
+	log = orDiscard(log)
 	if Blocked(plans) {
 		return ErrBlocked
+	}
+	if err := removeOrphans(plans, log); err != nil {
+		return err
 	}
 	for _, plan := range plans {
 		if plan.State != Missing {
@@ -44,16 +50,18 @@ func Create(plans []Plan, log io.Writer) error {
 	return nil
 }
 
-// Remove deletes every Linked target and reports each Conflict as skipped,
-// writing one line per target to log. Conflicts do not block it: it only
-// deletes symlinks that point at their own source, so whatever else occupies a
-// target is left alone while the other entries are still removed. A failed
-// write to log stops it, as in Create.
+// Remove deletes every Linked and Orphaned target and reports each Conflict as
+// skipped, writing one line per target to log, which may be nil. Conflicts do
+// not block it: it only deletes symlinks that point at their own source, so
+// whatever else occupies a target is left alone while the other entries are
+// still removed. A failed write to log stops it, as in Create. Callers then
+// record the result with Save.
 func Remove(plans []Plan, log io.Writer) error {
+	log = orDiscard(log)
 	for _, plan := range plans {
 		var line string
 		switch plan.State {
-		case Linked:
+		case Linked, Orphaned:
 			if err := os.Remove(plan.Target); err != nil {
 				return err
 			}
@@ -68,4 +76,31 @@ func Remove(plans []Plan, log io.Writer) error {
 		}
 	}
 	return nil
+}
+
+// removeOrphans deletes every Orphaned link. Prepare found each to be a
+// symlink naming its recorded source; os.Remove deletes the link itself,
+// never what it points to.
+func removeOrphans(plans []Plan, log io.Writer) error {
+	for _, plan := range plans {
+		if plan.State != Orphaned {
+			continue
+		}
+		if err := os.Remove(plan.Target); err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(log, "unlinked\t%s\n", plan.Target); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// orDiscard returns w, or io.Discard when w is nil, so a caller that wants no
+// output cannot make a write panic.
+func orDiscard(w io.Writer) io.Writer {
+	if w == nil {
+		return io.Discard
+	}
+	return w
 }

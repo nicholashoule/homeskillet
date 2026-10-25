@@ -30,14 +30,26 @@ RACE ?= $(if $(filter 1,$(shell go env CGO_ENABLED)),-race)
 INTEGRATION_REPO ?= ../dotfiles-linux
 
 # Version stamping. Building in a Git checkout with Go 1.24 or newer records
-# the tag (v0.0.1), or a pseudo-version for an untagged commit, plus the commit,
-# its time, and whether the tree was modified; `homeskillet version` prints
-# them. Set VERSION only where no Git metadata exists, such as a container build
-# that excludes .git: `make install VERSION=v0.0.1`. In a checkout, tag instead:
-# a stamped build differs from the tagged one, and installed versions are never
-# rewritten. It must be a semantic version with a leading v. `=` (not `:=`) lets a command-line VERSION take effect.
+# the tag (v0.0.1), or a pseudo-version for an untagged commit, plus the commit
+# and whether the tree was modified; `homeskillet version` prints them. Set
+# VERSION only where no Git metadata exists, such as a container build that
+# excludes .git: `make install VERSION=v0.0.1`. In a checkout, tag instead: a
+# stamped build differs from the tagged one, and installed versions are never
+# rewritten. VERSION must be a semantic version with a leading v.
 VERSION ?=
-LDFLAGS = $(if $(VERSION),-X github.com/nicholashoule/homeskillet/internal/version.stamped=$(VERSION))
+
+# Build time, which Go does not record, for `homeskillet version`. It is the
+# current time, or SOURCE_DATE_EPOCH for a reproducible build; BUILT= leaves
+# it out. Make 3.81 has no clock, so tools/buildtime reads it. The $(eval)
+# runs that once, when a build first needs it, not on every make invocation.
+BUILT ?= $(eval BUILT := $(shell go run ./tools/buildtime))$(BUILT)
+
+# Linker flags for every build. -s and -w drop the symbol table and DWARF debug
+# data, about a third of the binary. Neither is needed at run time: panics still
+# print function names and lines, and the build details `homeskillet version`
+# reports live in a section of their own.
+STAMP = github.com/nicholashoule/homeskillet/internal/version
+LDFLAGS = -s -w$(if $(BUILT), -X $(STAMP).built=$(BUILT))$(if $(VERSION), -X $(STAMP).stamped=$(VERSION))
 
 # Installation prefix for `make install`; empty means ~/.local. The binary goes
 # to $(PREFIX)/share/homeskillet/versions/<version>/ and the command to
@@ -56,8 +68,13 @@ help: ## Show this help
 fmt: ## Format sources (gofmt -s and goimports, via golangci-lint)
 	golangci-lint fmt ./...
 
-vet: ## Run go vet
+# Vetting for macOS and Windows as well catches code that breaks those builds
+# from any machine: macOS is a target, and Windows builds the
+# unsupported-system stub and the packages that build everywhere.
+vet: ## Run go vet for this machine, macOS, and Windows
 	go vet ./...
+	env GOOS=darwin go vet ./...
+	env GOOS=windows go vet ./...
 
 lint: ## Run golangci-lint with .golangci.yml
 	golangci-lint run ./...
@@ -69,8 +86,10 @@ check: vet lint test ## Run vet, lint, and tests; required before handing off wo
 
 ##@ Build
 
-build: ## Build bin/homeskillet for this machine (VERSION=v0.0.1 to stamp one)
-	go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/$(BINARY) .
+# CGO_ENABLED=0 makes the binary static, so it runs on any distribution or
+# container image of the same architecture, as the cross builds do.
+build: ## Build a static, stripped bin/homeskillet (VERSION=v0.0.1 to stamp one)
+	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/$(BINARY) .
 
 install: build ## Install the build as a new version and update latest/previous (PREFIX=~/.local)
 	$(BIN)/$(BINARY) self install $(if $(PREFIX),--prefix "$(PREFIX)")
@@ -79,8 +98,8 @@ cross: $(addprefix cross-,$(PLATFORMS)) ## Build bin/homeskillet-<os>-<arch> for
 
 # cross-<os>-<arch> builds one platform. `env` scopes GOOS and GOARCH to this
 # one go command, so cross targets never change how xplat or other targets
-# build. CGO_ENABLED=0 gives static, reproducible binaries; -trimpath keeps
-# local filesystem paths out of them.
+# build. CGO_ENABLED=0 gives static binaries, -trimpath keeps local filesystem
+# paths out of them, and LDFLAGS strips them (see above).
 cross-%:
 	env GOOS=$(word 1,$(subst -, ,$*)) GOARCH=$(word 2,$(subst -, ,$*)) CGO_ENABLED=0 \
 		go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/$(BINARY)-$* .

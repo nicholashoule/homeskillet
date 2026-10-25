@@ -178,6 +178,44 @@ func TestRunEnvironment(t *testing.T) {
 	}
 }
 
+func TestPrepareRejectsSymlinksLeavingRepository(t *testing.T) {
+	steps := []config.Step{{Name: "script", Run: []string{"sh", "setup/run.sh"}}}
+	repo, home := fixture(t, steps...)
+	// The script the step runs is a symlink into a directory anyone can
+	// write, so the code that runs is not the code the repository vouches for.
+	shared := filepath.Join(filepath.Dir(repo), "shared")
+	if err := os.Mkdir(shared, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shared, "run.sh"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, "setup"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	link := filepath.Join(repo, "setup", "run.sh")
+	if err := os.Symlink(filepath.Join("..", "..", "shared", "run.sh"), link); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Prepare(steps, repo, home); err == nil || !strings.Contains(err.Error(), "outside the repository") {
+		t.Fatalf("symlink to a shared script accepted: %v", err)
+	}
+	// The same link pointing at a private file in the repository is fine.
+	if err := os.WriteFile(filepath.Join(repo, "setup", "real.sh"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(link); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("real.sh", link); err != nil {
+		t.Fatal(err)
+	}
+	prepare(t, steps, repo, home)
+}
+
 func TestRunRepositoryScript(t *testing.T) {
 	steps := []config.Step{{Name: "script", Run: []string{"./setup/hello.sh"}}}
 	repo, home := fixture(t, steps...)
@@ -235,5 +273,99 @@ func TestQuote(t *testing.T) {
 		if got := Quote(argv); got != want {
 			t.Errorf("Quote(%q) = %s, want %s", argv, got, want)
 		}
+	}
+}
+
+func TestRunRequiresDirectories(t *testing.T) {
+	steps := []config.Step{touch("ran")}
+	repo, home := fixture(t, steps...)
+	plans := prepare(t, steps, repo, home)
+	// An unset Repo would run in the current directory and an unset Home
+	// would empty HOME, so each must be refused rather than defaulted.
+	for name, opts := range map[string]Options{
+		"zero":        {Yes: true},
+		"no repo":     {Home: home, Yes: true},
+		"no home":     {Repo: repo, Yes: true},
+		"system home": {Repo: repo, Home: "/etc", Yes: true},
+	} {
+		if err := Run(context.Background(), plans, opts); err == nil {
+			t.Errorf("%s: ran", name)
+		}
+	}
+	if exists(filepath.Join(home, "ran")) {
+		t.Fatal("a refused run executed a step")
+	}
+	for _, dir := range []string{"/", "/usr"} {
+		if _, err := Prepare(steps, repo, dir); err == nil {
+			t.Errorf("Prepare accepted home %s", dir)
+		}
+		if _, err := Prepare(steps, dir, home); err == nil {
+			t.Errorf("Prepare accepted repository %s", dir)
+		}
+	}
+}
+
+func TestRunNilStreams(t *testing.T) {
+	steps := []config.Step{touch("ran")}
+	repo, home := fixture(t, steps...)
+	plans := prepare(t, steps, repo, home)
+	// Without --yes, nil input declines and nil output discards the prompt.
+	//nolint:staticcheck // SA1012: a nil context is what this test checks
+	if err := Run(nil, plans, Options{Repo: repo, Home: home}); err != nil || exists(filepath.Join(home, "ran")) {
+		t.Fatalf("declined run: %v", err)
+	}
+	if err := Run(context.Background(), plans, Options{Repo: repo, Home: home, Yes: true}); err != nil || !exists(filepath.Join(home, "ran")) {
+		t.Fatalf("approved run: %v", err)
+	}
+	if err := Describe(nil, plans[0], repo); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestRunChecksEachStepAgain(t *testing.T) {
+	// The first step does the second's work, so the second is not run.
+	first := touch("a")
+	second := touch("b")
+	second.Creates = "a"
+	steps := []config.Step{first, second}
+	repo, home := fixture(t, steps...)
+	var output bytes.Buffer
+	err := Run(context.Background(), prepare(t, steps, repo, home), Options{Repo: repo, Home: home, Yes: true, Output: &output})
+	if err != nil || exists(filepath.Join(home, "b")) || !strings.Contains(output.String(), "done\tb") {
+		t.Fatalf("second step ran after the first did its work: %v\n%s", err, output.String())
+	}
+	// A step that loosens the repository stops the steps after it.
+	loosen := config.Step{Name: "loosen", Run: []string{"sh", "-c", `chmod 666 "$HOMESKILLET_REPO/dotfiles.json"`}}
+	steps = []config.Step{loosen, touch("after")}
+	repo, home = fixture(t, steps...)
+	err = Run(context.Background(), prepare(t, steps, repo, home), Options{Repo: repo, Home: home, Yes: true, Output: io.Discard})
+	if err == nil || exists(filepath.Join(home, "after")) {
+		t.Fatalf("a step ran after the repository became writable by others: %v", err)
+	}
+}
+
+func TestRunYesGivesStepsNoInput(t *testing.T) {
+	steps := []config.Step{{Name: "reads", Run: []string{"sh", "-c", `read -r line; printf '%s' "$line" > "$HOME/read"`}}}
+	repo, home := fixture(t, steps...)
+	err := Run(context.Background(), prepare(t, steps, repo, home), Options{
+		Repo: repo, Home: home, Yes: true, Input: strings.NewReader("secret\n"), Output: io.Discard, Errors: io.Discard,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(filepath.Join(home, "read")); err != nil || len(data) != 0 {
+		t.Fatalf("an unattended step read input: %q, %v", data, err)
+	}
+}
+
+func TestConfirmBoundsTheAnswer(t *testing.T) {
+	// A megabyte of y without a newline is not an approval, and is not
+	// kept in memory.
+	approved, err := confirm(strings.NewReader(strings.Repeat("y", 1<<20)), io.Discard)
+	if err != nil || approved {
+		t.Fatalf("approved %v, %v", approved, err)
+	}
+	if approved, err := confirm(strings.NewReader("  yes  \n"), io.Discard); err != nil || !approved {
+		t.Fatalf("yes declined: %v", err)
 	}
 }

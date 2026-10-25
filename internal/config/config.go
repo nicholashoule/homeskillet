@@ -19,6 +19,7 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,10 +27,11 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"slices"
 	"strings"
 	"unicode"
+
+	"github.com/nicholashoule/homeskillet/internal/safefile"
 )
 
 const (
@@ -42,6 +44,13 @@ const (
 
 // Manifest is what a repository declares, as returned by Load.
 type Manifest struct {
+	// Platforms is the default for every file and step, listed or
+	// discovered: the platforms they apply to, each an operating system such
+	// as "darwin" or an operating system and architecture such as
+	// "darwin/arm64" (see ParsePlatform). Empty means every supported
+	// platform. A repository for one operating system says so once here
+	// instead of on every entry.
+	Platforms []string `json:"platforms,omitempty"`
 	// Files lists the files to link. Load fills it from HomeDir when the
 	// manifest omits "files".
 	Files []Entry `json:"files,omitempty"`
@@ -56,13 +65,14 @@ type Entry struct {
 	Source string `json:"source"`
 	// Target is relative to the home directory.
 	Target string `json:"target"`
-	// Platforms limits the entry to the listed GOOS values, "linux" or
-	// "darwin". Empty means every supported platform.
+	// Platforms, when set, replaces Manifest.Platforms for this entry. Empty
+	// means the manifest's default. To apply everywhere despite a narrower
+	// default, list every platform.
 	Platforms []string `json:"platforms,omitempty"`
 }
 
-// Step is a command that prepares the environment, such as installing a
-// prompt engine like oh-my-posh. A step is code from the repository, so
+// Step is a command that prepares the environment, such as installing a tool
+// the linked files use. A step is code from the repository, so
 // package setup shows each one and runs it only after the user approves it.
 type Step struct {
 	// Name identifies the step in prompts and output.
@@ -72,7 +82,8 @@ type Step struct {
 	// step that needs pipes or other shell features says so explicitly with
 	// ["sh", "-c", "..."].
 	Run []string `json:"run"`
-	// Platforms limits the step like Entry.Platforms.
+	// Platforms, when set, replaces Manifest.Platforms for this step, as
+	// for Entry.Platforms.
 	Platforms []string `json:"platforms,omitempty"`
 	// Creates is a path relative to the home directory. If it exists, the
 	// step is already done and is not offered.
@@ -81,6 +92,10 @@ type Step struct {
 	// done and is not offered.
 	Provides string `json:"provides,omitempty"`
 }
+
+// ErrNothingToManage is returned by Load for a directory with nothing to
+// link or set up, which most likely is not a configuration repository at all.
+var ErrNothingToManage = errors.New("not a configuration repository")
 
 // Load reads the declarations of the configuration repository rooted at repo.
 //
@@ -116,9 +131,12 @@ func load(root *os.Root) (Manifest, error) {
 			return Manifest{}, err
 		}
 	}
+	if err := manifest.checkWindowsNames(); err != nil {
+		return Manifest{}, err
+	}
 	if !hasHome && len(manifest.Files) == 0 && len(manifest.Setup) == 0 {
-		return Manifest{}, fmt.Errorf("nothing to manage in %s: add a %s directory, or list files or setup steps in %s",
-			root.Name(), HomeDir, FileName)
+		return Manifest{}, fmt.Errorf("%s is %w (no %s directory, and no files or setup steps in %s)",
+			root.Name(), ErrNothingToManage, HomeDir, FileName)
 	}
 	return manifest, nil
 }
@@ -135,9 +153,18 @@ func readManifest(root *os.Root) (Manifest, error) {
 	if err != nil {
 		return Manifest{}, err
 	}
-	manifest, err := decode(file)
-	return manifest, errors.Join(err, file.Close())
+	data, err := safefile.ReadAll(file, maxManifest)
+	if err := errors.Join(err, file.Close()); err != nil {
+		return Manifest{}, fmt.Errorf("%s: %w", FileName, err)
+	}
+	return decode(bytes.NewReader(data))
 }
+
+// maxManifest bounds what readManifest reads. A manifest listing thousands of
+// files is a few hundred kilobytes, so a larger file is a mistake, such as a
+// device or a huge file swapped in for the manifest, and is refused before
+// it can exhaust memory.
+const maxManifest = 1 << 20
 
 // decode parses and validates a manifest.
 //
@@ -156,6 +183,9 @@ func decode(r io.Reader) (Manifest, error) {
 	}
 	// Errors name entries by position rather than quoting them, because a
 	// rejected value may itself be unsafe to print.
+	if err := validatePlatforms(manifest.Platforms); err != nil {
+		return Manifest{}, fmt.Errorf("%s platforms: %w", FileName, err)
+	}
 	for i, entry := range manifest.Files {
 		if err := entry.validate(); err != nil {
 			return Manifest{}, fmt.Errorf("%s file %d: %w", FileName, i+1, err)
@@ -238,30 +268,37 @@ func discover(root *os.Root) (entries []Entry, found bool, err error) {
 //   - macOS Finder creates .DS_Store in every directory it displays, and
 //     ~/.DS_Store exists on most Macs, so linking it would be a conflict that
 //     blocks every link.
+//   - Windows Explorer creates Thumbs.db and desktop.ini the same way, and
+//     folders such as Documents already hold a desktop.ini.
 //   - .git holds a nested repository's or submodule's metadata, which is not
 //     configuration.
 //
-// A repository that needs finer control lists its files in the manifest.
+// Case is ignored, as Windows and macOS file systems usually ignore it. A
+// repository that needs finer control lists its files in the manifest.
 func ignored(name string) bool {
-	return name == ".DS_Store" || name == ".git"
+	return slices.ContainsFunc([]string{".DS_Store", "Thumbs.db", "desktop.ini", ".git"}, func(skip string) bool {
+		return strings.EqualFold(name, skip)
+	})
 }
 
-// FilesFor returns the file entries that apply to goos, in manifest order.
-func (m Manifest) FilesFor(goos string) []Entry {
+// FilesFor returns the file entries that apply to p, in manifest order:
+// those whose own platforms, or else the manifest's, cover p.
+func (m Manifest) FilesFor(p Platform) []Entry {
 	var selected []Entry
 	for _, entry := range m.Files {
-		if appliesTo(entry.Platforms, goos) {
+		if m.appliesTo(entry.Platforms, p) {
 			selected = append(selected, entry)
 		}
 	}
 	return selected
 }
 
-// SetupFor returns the setup steps that apply to goos, in manifest order.
-func (m Manifest) SetupFor(goos string) []Step {
+// SetupFor returns the setup steps that apply to p, in manifest order,
+// chosen as in FilesFor.
+func (m Manifest) SetupFor(p Platform) []Step {
 	var selected []Step
 	for _, step := range m.Setup {
-		if appliesTo(step.Platforms, goos) {
+		if m.appliesTo(step.Platforms, p) {
 			selected = append(selected, step)
 		}
 	}
@@ -279,14 +316,142 @@ func Printable(s string) bool {
 	})
 }
 
-func appliesTo(platforms []string, goos string) bool {
-	return len(platforms) == 0 || slices.Contains(platforms, goos)
+// appliesTo reports whether an entry or step with its own platforms applies
+// to p. Its own list, when set, replaces the manifest's default rather than
+// narrowing it, so one entry can apply where the default does not.
+func (m Manifest) appliesTo(own []string, p Platform) bool {
+	platforms := own
+	if len(platforms) == 0 {
+		platforms = m.Platforms
+	}
+	return len(platforms) == 0 || slices.ContainsFunc(platforms, p.Matches)
+}
+
+// Platform is an operating system and a processor architecture, as Go names
+// them: GOOS "linux" or "darwin", and GOARCH "amd64" or "arm64". In a
+// manifest, or in --platform, Arch may be left out to mean any architecture.
+type Platform struct {
+	OS   string
+	Arch string // "" means any architecture
+}
+
+// The operating systems and architectures a platform may name. homeskillet
+// runs only on Linux and macOS so far, but a manifest may already target
+// windows, and --platform windows checks such a repository from Linux or
+// macOS: its files link into a scratch home and its steps can be listed, never
+// run. See docs/windows.md for what running on Windows still needs.
+var (
+	operatingSystems = []string{"linux", "darwin", "windows"}
+	architectures    = []string{"amd64", "arm64"}
+)
+
+// ParsePlatform parses "os" or "os/arch", such as "darwin" or "darwin/arm64".
+// Only supported operating systems and architectures are accepted, so a typo
+// such as "macos" or "darwin/arm" fails instead of silently matching nothing.
+func ParsePlatform(s string) (Platform, error) {
+	system, arch, hasArch := strings.Cut(s, "/")
+	if !slices.Contains(operatingSystems, system) || hasArch && !slices.Contains(architectures, arch) {
+		return Platform{}, fmt.Errorf("unknown platform %q: use %s, optionally followed by /%s",
+			s, strings.Join(operatingSystems, " or "), strings.Join(architectures, " or /"))
+	}
+	return Platform{OS: system, Arch: arch}, nil
+}
+
+// String returns p as ParsePlatform reads it.
+func (p Platform) String() string {
+	if p.Arch == "" {
+		return p.OS
+	}
+	return p.OS + "/" + p.Arch
+}
+
+// Matches reports whether value, a manifest platform such as "darwin" or
+// "darwin/arm64", covers p. A value without an architecture covers every
+// architecture of its operating system. A value with one never matches a p
+// whose architecture is unknown.
+func (p Platform) Matches(value string) bool {
+	want, err := ParsePlatform(value)
+	return err == nil && want.OS == p.OS && (want.Arch == "" || want.Arch == p.Arch)
+}
+
+// targets reports whether an entry or step with its own platforms is meant
+// for operating system goos: whether its platforms, or else the manifest's,
+// name goos, with or without an architecture. An entry with no platforms at
+// all is not counted, since the rules a target checks may not apply where it
+// was never meant to run.
+func (m Manifest) targets(own []string, goos string) bool {
+	platforms := own
+	if len(platforms) == 0 {
+		platforms = m.Platforms
+	}
+	return slices.ContainsFunc(platforms, func(value string) bool {
+		p, err := ParsePlatform(value)
+		return err == nil && p.OS == goos
+	})
+}
+
+// checkWindowsNames applies Windows' naming rules to every file and step
+// meant for Windows (see targets), so a repository checked on Linux or macOS
+// cannot hold names that Windows could not create: device names such as CON
+// or NUL, names ending in a dot or a space, the characters <>:"|?*\, and two
+// targets that differ only in case, which Windows treats as one file.
+func (m Manifest) checkWindowsNames() error {
+	seen := make(map[string]string)
+	for _, entry := range m.Files {
+		if !m.targets(entry.Platforms, "windows") {
+			continue
+		}
+		for _, path := range []string{entry.Source, entry.Target} {
+			if err := windowsPath(path); err != nil {
+				return fmt.Errorf("%s: %q cannot exist on Windows: %w", FileName, path, err)
+			}
+		}
+		key := strings.ToLower(filepath.ToSlash(entry.Target))
+		if other, ok := seen[key]; ok {
+			return fmt.Errorf("%s: targets %q and %q are the same file on Windows, which ignores case", FileName, other, entry.Target)
+		}
+		seen[key] = entry.Target
+	}
+	for _, step := range m.Setup {
+		if step.Creates != "" && m.targets(step.Platforms, "windows") {
+			if err := windowsPath(step.Creates); err != nil {
+				return fmt.Errorf("%s setup step %s: creates %q cannot exist on Windows: %w", FileName, step.Name, step.Creates, err)
+			}
+		}
+	}
+	return nil
+}
+
+// windowsReserved are the device names Windows reserves in every directory,
+// with or without an extension, so neither nul nor nul.txt can be a file.
+var windowsReserved = []string{
+	"CON", "PRN", "AUX", "NUL",
+	"COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9", "COM¹", "COM²", "COM³",
+	"LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9", "LPT¹", "LPT²", "LPT³",
+}
+
+// windowsPath checks each name in path, which separates names with '/' as
+// manifests do, against Windows' rules (see checkWindowsNames).
+func windowsPath(path string) error {
+	for name := range strings.SplitSeq(filepath.ToSlash(path), "/") {
+		switch {
+		case strings.ContainsAny(name, `<>:"|?*\`):
+			return fmt.Errorf("%q holds one of <>:\"|?*\\", name)
+		case strings.HasSuffix(name, ".") && name != "." && name != "..", strings.HasSuffix(name, " "):
+			return fmt.Errorf("%q ends in a dot or a space", name)
+		}
+		base, _, _ := strings.Cut(name, ".")
+		if slices.ContainsFunc(windowsReserved, func(reserved string) bool { return strings.EqualFold(base, reserved) }) {
+			return fmt.Errorf("%q is a reserved device name", name)
+		}
+	}
+	return nil
 }
 
 func validatePlatforms(platforms []string) error {
 	for _, platform := range platforms {
-		if platform != "linux" && platform != "darwin" {
-			return fmt.Errorf("unknown platform %q", platform)
+		if _, err := ParsePlatform(platform); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -313,12 +478,23 @@ func (e Entry) validate() error {
 	return validatePlatforms(e.Platforms)
 }
 
-// stepName keeps names short identifiers that are safe to print and to use
-// as keys in future state files.
-var stepName = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]*$`)
+// validName keeps step names short identifiers that are safe to print and to
+// use as keys in future state files: lowercase ASCII letters and digits, plus
+// '.', '_', and '-' after the first character.
+func validName(name string) bool {
+	for i, r := range name {
+		switch {
+		case 'a' <= r && r <= 'z', '0' <= r && r <= '9':
+		case i > 0 && (r == '.' || r == '_' || r == '-'):
+		default:
+			return false
+		}
+	}
+	return name != ""
+}
 
 func (s Step) validate() error {
-	if !stepName.MatchString(s.Name) {
+	if !validName(s.Name) {
 		return errors.New("name must be lowercase letters, digits, '.', '_', or '-', starting with a letter or digit")
 	}
 	if len(s.Run) == 0 || s.Run[0] == "" {

@@ -21,7 +21,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strconv"
 	"strings"
 	"syscall"
@@ -50,6 +49,9 @@ func CheckRepository(repo string) error {
 // be writable by others only if it is sticky, like /tmp, because the sticky bit
 // stops users from renaming entries they do not own.
 func CheckDirectory(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("%s is not an absolute path", printable(dir))
+	}
 	info, err := os.Stat(dir)
 	if err != nil {
 		return err
@@ -68,6 +70,58 @@ func CheckDirectory(dir string) error {
 		}
 	}
 	return nil
+}
+
+// Canonical returns path, which must be absolute, with symlinks resolved in
+// its longest existing prefix. The rest does not exist yet and is appended
+// unchanged. Like the paths the checks here receive, a canonical path can be
+// compared as a string, even for a directory homeskillet has yet to create.
+func Canonical(path string) (string, error) {
+	if !filepath.IsAbs(path) {
+		return "", fmt.Errorf("%s is not an absolute path", printable(path))
+	}
+	existing := filepath.Clean(path)
+	for {
+		_, err := os.Lstat(existing)
+		if err == nil {
+			break
+		}
+		parent := filepath.Dir(existing)
+		if !errors.Is(err, fs.ErrNotExist) || parent == existing {
+			return "", err
+		}
+		existing = parent
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return "", err
+	}
+	rest, err := filepath.Rel(existing, filepath.Clean(path))
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(resolved, rest), nil
+}
+
+// CheckCreatable applies CheckDirectory to dir if it exists, or else to its
+// nearest existing ancestor, which is where creating dir would start. A
+// directory homeskillet is about to create and write into is only as safe as
+// the directory it is created in.
+func CheckCreatable(dir string) error {
+	if !filepath.IsAbs(dir) {
+		return fmt.Errorf("%s is not an absolute path", printable(dir))
+	}
+	for {
+		_, err := os.Lstat(dir)
+		if err == nil {
+			return CheckDirectory(dir)
+		}
+		parent := filepath.Dir(dir)
+		if !errors.Is(err, fs.ErrNotExist) || parent == dir {
+			return err
+		}
+		dir = parent
+	}
 }
 
 // CheckProgram requires a program that homeskillet is about to copy to be a
@@ -93,17 +147,22 @@ func checkShared(path string, info os.FileInfo) error {
 	if owner != 0 && owner != os.Geteuid() {
 		return fmt.Errorf("%s is owned by another user", printable(path))
 	}
-	if info.Mode().Perm()&0o022 != 0 && info.Mode()&os.ModeSticky == 0 {
+	// The sticky bit stops others renaming or deleting a directory's entries,
+	// which is what makes a shared ancestor like /tmp safe. On a regular file
+	// it protects nothing: anyone with write permission can still change the
+	// contents, so it excuses only directories.
+	sticky := info.IsDir() && info.Mode()&os.ModeSticky != 0
+	if info.Mode().Perm()&0o022 != 0 && !sticky {
 		return writableError(path)
 	}
 	return nil
 }
 
-// checkManifest holds the manifest to the rules for a linked source: it must
-// resolve inside the repository, and every path to it must be private. A
-// manifest symlinked into a directory that others can write would otherwise
-// let them swap in their own entries and setup steps, even though the file it
-// points at is private.
+// checkManifest holds the manifest to the rules for a linked source (see
+// Resolve): every directory and symlink on the way to it must be private and
+// inside the repository. A manifest symlinked through a directory that others
+// can write would otherwise let them swap in their own entries and setup
+// steps, even though the file it points at is private.
 //
 // The manifest is optional (see config.Load). Its absence cannot be forged:
 // deleting or renaming it needs write access to the repository directory,
@@ -113,20 +172,91 @@ func checkManifest(repo string) error {
 	if _, err := os.Lstat(manifest); errors.Is(err, fs.ErrNotExist) {
 		return nil
 	}
-	resolved, err := filepath.EvalSymlinks(manifest)
+	_, err := Resolve(repo, manifest)
+	return err
+}
+
+// maxHops bounds the symlinks Resolve follows, as the kernel's own limit
+// (40 on Linux, 32 on macOS) does, so a loop fails instead of spinning.
+const maxHops = 40
+
+// Resolve returns path, which must be inside root, with every symlink
+// resolved. Along the way it requires each directory it passes through, and
+// the file it reaches, to be private (owned by the current user and writable
+// by nobody else), and every symlink it follows, not only the last, to lead
+// inside root. root must be absolute with symlinks resolved and already
+// checked, with its ancestors, by CheckDirectory.
+//
+// Checking only the path as written and its final destination misses the
+// hops between. A link that bounces through /tmp/shared/hop back into the
+// repository resolves inside it, yet whoever controls /tmp/shared can retarget
+// the hop after the check; a hop through a shared directory inside the
+// repository lies on neither path. Walking one component at a time, as the
+// kernel does, sees every directory and link that decides where the path
+// leads, and applies each ".." to the resolved path, never lexically. A
+// symlink's own permission bits are never used: the directory holding it,
+// checked here, is what protects it.
+//
+// A missing component is reported with an error that matches fs.ErrNotExist.
+func Resolve(root, path string) (string, error) {
+	if !filepath.IsAbs(root) || !Within(root, path) {
+		return "", fmt.Errorf("%s is not inside the absolute path %s", printable(path), printable(root))
+	}
+	rest, err := filepath.Rel(root, path)
 	if err != nil {
-		return err
+		return "", err
 	}
-	if !Within(repo, resolved) {
-		return fmt.Errorf("%s resolves outside the repository", printable(manifest))
+	separator := string(filepath.Separator)
+	pending := strings.Split(rest, separator)
+	resolved, hops := root, 0
+	for len(pending) > 0 {
+		component := pending[0]
+		pending = pending[1:]
+		switch component {
+		case "", ".":
+			continue
+		case "..":
+			resolved = filepath.Dir(resolved)
+			continue
+		}
+		next := filepath.Join(resolved, component)
+		if !Within(root, next) {
+			// Outside root, a path may only pass through root's ancestors
+			// on its way back down into it, as an absolute link naming a
+			// file in the repository does. CheckDirectory checked those.
+			if !Within(next, root) {
+				return "", fmt.Errorf("%s leads outside the repository %s", printable(path), printable(root))
+			}
+			resolved = next
+			continue
+		}
+		info, err := os.Lstat(next)
+		if err != nil {
+			return "", err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			if hops++; hops > maxHops {
+				return "", fmt.Errorf("%s: too many levels of symlinks", printable(path))
+			}
+			target, err := os.Readlink(next)
+			if err != nil {
+				return "", err
+			}
+			if filepath.IsAbs(target) {
+				resolved = separator
+			}
+			pending = append(strings.Split(target, separator), pending...)
+			continue
+		}
+		if err := checkPrivate(next, info); err != nil {
+			return "", err
+		}
+		resolved = next
 	}
-	if err := CheckPath(repo, manifest); err != nil {
-		return err
+	if !Within(root, resolved) {
+		return "", fmt.Errorf("%s leads outside the repository %s", printable(path), printable(root))
 	}
-	if resolved != manifest {
-		return CheckPath(repo, resolved)
-	}
-	return nil
+	return resolved, nil
 }
 
 // CheckPath requires each component of path below root to be private; path
@@ -135,6 +265,9 @@ func checkManifest(repo string) error {
 // that directory is checked. Callers check a symlink's resolved path
 // separately.
 func CheckPath(root, path string) error {
+	if !filepath.IsAbs(root) || !Within(root, path) {
+		return fmt.Errorf("%s is not inside the absolute path %s", printable(path), printable(root))
+	}
 	relative, err := filepath.Rel(root, path)
 	if err != nil {
 		return err
@@ -155,16 +288,57 @@ func CheckPath(root, path string) error {
 	return nil
 }
 
-// CheckTree requires everything under root, root included, to be private. A
-// setup step can read, source, or execute any file in the repository, so for
-// setup it is not enough to check only the manifest and the files it names.
-// Symlinks are skipped for the reason given in CheckPath.
+// CheckExisting applies CheckPath to the part of path that exists: each
+// existing component below root must be private, and the rest, which
+// homeskillet is about to create private, is not checked. A link is only as
+// safe as the directory holding it: anyone who can write to that directory can
+// replace the link with their own file, which then runs as the user.
+func CheckExisting(root, path string) error {
+	if !filepath.IsAbs(root) || !Within(root, path) {
+		return fmt.Errorf("%s is not inside the absolute path %s", printable(path), printable(root))
+	}
+	existing := path
+	for existing != root {
+		_, err := os.Lstat(existing)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		existing = filepath.Dir(existing)
+	}
+	return CheckPath(root, existing)
+}
+
+// CheckTree requires everything under root, root included, to be private, and
+// every symlink to lead, at every hop, to something under root (see Resolve).
+// A setup step can read, source, or execute any file in the repository, so
+// for setup it is not enough to check only the manifest and the files it
+// names.
+//
+// A symlink's own permission bits are never used (see CheckPath), but what it
+// points at is what a step runs. One that leads outside root, even to a
+// private file or only on its way back in, would run code through a path this
+// check never saw, possibly in a directory someone else can write; a dangling
+// one could be completed later by whoever can create its destination.
 func CheckTree(root string) error {
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+	if !filepath.IsAbs(root) {
+		return fmt.Errorf("%s is not an absolute path", printable(root))
+	}
+	// Symlinks name resolved paths, so walk from a resolved root.
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return err
+	}
+	return filepath.WalkDir(resolvedRoot, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
 		if entry.Type()&fs.ModeSymlink != 0 {
+			if _, err := Resolve(resolvedRoot, path); err != nil {
+				return fmt.Errorf("symlink %s cannot be checked inside the repository: %w", printable(path), err)
+			}
 			return nil
 		}
 		info, err := entry.Info()
@@ -181,6 +355,27 @@ func CheckTree(root string) error {
 func Within(root, path string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && filepath.IsLocal(relative)
+}
+
+// CheckOwner requires path, following symlinks, to be owned by the current
+// user or root. It is the weaker rule for files homeskillet only looks at and
+// never runs or links, such as a program a setup step's provides names:
+// ownership rules out another account, such as a user named linuxbrew on a
+// shared machine, while a group that may write, as Homebrew's admin group
+// does, can already act as root through sudo.
+func CheckOwner(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	owner, err := fileOwner(path, info)
+	if err != nil {
+		return err
+	}
+	if owner != 0 && owner != os.Geteuid() {
+		return fmt.Errorf("%s is owned by another user", printable(path))
+	}
+	return nil
 }
 
 // fileOwner returns the user ID that owns path, as described by info. On Linux
@@ -212,15 +407,24 @@ func checkPrivate(path string, info os.FileInfo) error {
 	return nil
 }
 
-// windowsDrive matches WSL's default mount points for Windows drives.
-var windowsDrive = regexp.MustCompile(`^/mnt/[A-Za-z](/|$)`)
+// windowsDrive reports whether path is a Windows drive at one of WSL's
+// default mount points, such as /mnt/c, or is below one.
+func windowsDrive(path string) bool {
+	rest, ok := strings.CutPrefix(path, "/mnt/")
+	if !ok || rest == "" {
+		return false
+	}
+	letter := rest[0]
+	isLetter := 'a' <= letter && letter <= 'z' || 'A' <= letter && letter <= 'Z'
+	return isLetter && (len(rest) == 1 || rest[1] == '/')
+}
 
 // writableError reports a path that others can write and says how to fix it.
 // On WSL, Windows drives mounted under /mnt report every file as 0777 and
 // silently ignore chmod unless mounted with the metadata option, so the usual
 // advice would fail there and the repository belongs in the Linux filesystem.
 func writableError(path string) error {
-	if os.Getenv("WSL_DISTRO_NAME") != "" && windowsDrive.MatchString(path) {
+	if os.Getenv("WSL_DISTRO_NAME") != "" && windowsDrive(path) {
 		return fmt.Errorf("%s is writable by group or others; on WSL, Windows drives ignore chmod, so clone the repository inside the Linux filesystem (for example under ~/)", printable(path))
 	}
 	return fmt.Errorf("%s is writable by group or others; run chmod go-w on it", printable(path))

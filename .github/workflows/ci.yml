@@ -1,0 +1,114 @@
+# CI: the checks `make check` runs, on every Go release from the go.mod floor to
+# the latest, on Linux and macOS; on Windows, the packages that build there and
+# the unsupported-system refusal; release cross builds; and golangci-lint. See
+# Continuous Integration in docs/development.md.
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Go ${{ matrix.go-version }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 1.24 is the go.mod floor; "stable" is the latest Go release.
+        go-version: ["1.24", "1.25", "stable"]
+        os: [ubuntu-latest, macos-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          # Nothing here pushes, so the token is not left in .git/config.
+          persist-credentials: false
+
+      - name: Set up Go ${{ matrix.go-version }}
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      # make vet also vets the macOS and Windows builds. On macOS the recipes
+      # run under its GNU Make 3.81, the oldest the Makefile supports.
+      - name: Vet
+        if: runner.os != 'Windows'
+        run: make vet
+
+      - name: Test
+        if: runner.os != 'Windows'
+        run: make test
+
+      # homeskillet refuses to run on Windows for now (docs/windows.md). What
+      # builds there is tested there: the packages without Unix-only code and
+      # the program's refusal.
+      - name: Vet and test (Windows)
+        if: runner.os == 'Windows'
+        run: |
+          go vet ./...
+          go test ./...
+
+      - name: Refuses to run (Windows)
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          go build -o homeskillet.exe .
+          if output=$(./homeskillet.exe 2>&1); then
+            echo "::error::homeskillet.exe succeeded on Windows: $output"
+            exit 1
+          fi
+          echo "$output"
+          [[ $output == *"Windows isn't supported"* ]]
+
+      - name: Release builds
+        if: matrix.go-version == 'stable' && runner.os == 'Linux'
+        run: make cross
+
+      - name: Coverage
+        if: matrix.go-version == 'stable' && runner.os == 'Linux'
+        run: go test -race -coverprofile=coverage.out -covermode=atomic ./...
+
+      - name: Upload coverage
+        if: matrix.go-version == 'stable' && runner.os == 'Linux'
+        uses: codecov/codecov-action@b9fd7d16f6d7d1b5d2bec1a2887e65ceed900238 # v4
+        with:
+          files: coverage.out
+          fail_ci_if_error: false
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          # golangci-lint cannot analyze standard-library files from a Go
+          # newer than the one it was built with, so this stays on the
+          # release line its binaries are built with.
+          go-version: "1.26.x"
+          cache: false
+
+      # Also checks formatting: .golangci.yml enables gofmt -s and goimports.
+      # Keep the version in step with the one used locally (make check).
+      - name: golangci-lint
+        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        with:
+          version: v2.15.0
+
+      # Markdown line limits and the agent-instruction layout, configured in
+      # .github/repogov-config.json. Pinned to a release, like the command in
+      # .github/copilot-instructions.md; bump both together.
+      - name: repogov
+        run: go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all

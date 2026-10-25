@@ -7,7 +7,7 @@ Run from the homeskillet repository root. `make` alone lists every target.
 ```sh
 make fmt              # golangci-lint fmt ./...
 make check            # go vet ./..., golangci-lint run ./..., go test -race ./...
-make build            # go build -trimpath -o bin/homeskillet .
+make build            # static, stripped bin/homeskillet (about 2.5 MiB)
 bin/homeskillet --help
 make install          # build, then bin/homeskillet self install
 ```
@@ -42,11 +42,54 @@ Tests cannot exercise the root refusal or files owned by another user without
 root. To check the refusal by hand, `unshare -r bin/homeskillet status` runs the
 binary as root inside a user namespace.
 
+## Continuous Integration
+
+[.github/workflows/ci.yml](../.github/workflows/ci.yml) runs on every push to
+`main` and every pull request:
+
+- `make vet` and `make test` on Linux and macOS, with every Go release from the
+  `go.mod` floor to the latest. The macOS runner also proves the Makefile works
+  with its GNU Make 3.81.
+- On Windows, `go vet` and `go test` for the packages that build there, and a
+  check that the program only says Windows isn't supported.
+- `make cross` and a coverage upload, once, on Linux with the latest Go.
+- golangci-lint, which also checks formatting, and repogov, which checks the
+  Markdown line limits in [.github/repogov-config.json](../.github/repogov-config.json).
+  Both are pinned; use the same versions locally so results match:
+
+```sh
+go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all
+```
+
+Actions are pinned by commit SHA. [Dependabot](../.github/dependabot.yml)
+proposes updates to them weekly, and to Go modules should one ever be added.
+It cannot update the golangci-lint and repogov versions; bump those by hand.
+
+## Binary Size
+
+Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table
+and DWARF data (about a third of the binary) while keeping function names and
+lines in panics, and set `CGO_ENABLED=0` for a static binary. Code avoids
+packages that cost more than they do here: `regexp` (about 260 KiB) gave way
+to small validators, SHA-256 (about 150 KiB, with Go's FIPS module) to a byte
+comparison, and `debug/buildinfo` (about 370 KiB, with its executable-format
+readers) to the `build.json` record install writes. To check what a change
+links in:
+
+```sh
+go list -deps . | grep -E '^(regexp|crypto|debug/|net)'   # expect no output
+make build && ls -l bin/homeskillet
+```
+
+UPX and similar packers are not used: they break macOS code signatures, slow
+startup, and trigger antivirus heuristics.
+
 ## Versions and Releases
 
 Go 1.24 and newer stamp each build from a Git checkout with the version
-(the tag, or a pseudo-version after it), the commit, its time, and whether the
-tree was modified, which adds `+dirty`. `homeskillet version` prints them, and
+(the tag, or a pseudo-version after it), the commit, and whether the tree was
+modified, which adds `+dirty`; the Makefile adds the build time (`BUILT`, from
+`tools/buildtime`, which honors `SOURCE_DATE_EPOCH`). `homeskillet version` prints them, and
 `self list` reads them from each installed binary. A release is therefore just
 a tag:
 
@@ -75,21 +118,17 @@ If the sibling `dotfiles-linux` checkout is present, run from homeskillet:
 
 ```sh
 make integration      # builds, then runs ../dotfiles-linux/tests/check.sh
-shellcheck --shell=bash --exclude=SC1090,SC1091 \
-  ../dotfiles-linux/home/.bashrc \
-  ../dotfiles-linux/home/.bash_profile \
-  ../dotfiles-linux/tests/check.sh
 ```
 
-Set `INTEGRATION_REPO=<path>` if the checkout is elsewhere. The target needs
-bash because the script is a bash script. The script checks optional Go handling, PATH idempotence, missing GNOME schemas,
-and installation of the actual manifest into a temporary home. It also verifies
-preview behavior, repeated linking, and unlinking. It never installs into the
-real home. Without a binary argument, it runs only shell regressions and needs
-neither Go nor homeskillet.
-
-SC1090 and SC1091 cover deliberately dynamic/external startup sources. Do not
-suppress behavioral warnings simply to make ShellCheck pass.
+Set `INTEGRATION_REPO=<path>` if the checkout is elsewhere, or to check another
+configuration repository whose `tests/check.sh` takes a manager binary, such as
+`../dotfiles-windows`, which acts for Windows with `--platform windows`. The target needs
+bash because the script is a bash script. Given the binary, the script links,
+relinks, checks, and unlinks the real manifest in a temporary home and lists
+the setup steps with `setup --dry-run`; it never touches the real home or
+runs a step. The configuration repository owns that script and its other
+checks, such as ShellCheck, so run those as its README describes rather than
+from a command copied here.
 
 ## Cross Builds
 
@@ -108,5 +147,4 @@ a Mac are still required before claiming runtime verification there.
 
 Inspect both worktrees before editing. Configuration and manager changes have
 separate Git histories. Do not revert unrelated or concurrent user edits, and
-do not commit either repository without a request. Keep project state in
-[handoff.md](handoff.md) current when transferring work to another agent.
+do not commit either repository without a request.

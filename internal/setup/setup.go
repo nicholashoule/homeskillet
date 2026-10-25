@@ -1,13 +1,15 @@
 //go:build linux || darwin
 
-// Package setup runs the setup steps a manifest declares, such as installing
-// oh-my-posh, after the user has reviewed and approved each one.
+// Package setup runs the setup steps a manifest declares, such as installing a
+// prompt, a font, or a language toolchain, after the user has reviewed and
+// approved each one. It knows nothing about any particular tool.
 //
 // A setup step is code from the configuration repository, which may be
 // someone else's. Its safety rests on review, not on sandboxing:
 //
 //   - The whole repository must pass trust.CheckTree, so nobody else can have
-//     changed what the user reviews, or a script that a step runs.
+//     changed what the user reviews, or a script that a step runs, and no
+//     symlink can lead a step to code outside the repository.
 //   - Each step is shown exactly as it will execute, with its argument vector
 //     and working directory, before it runs, and the default answer is no.
 //   - Steps run as argument vectors, never through an implicit shell, so
@@ -15,7 +17,8 @@
 //     invokes a shell for everyone to see.
 //   - HOME is set to the selected home directory, so a trial run against a
 //     scratch home does not install into the real one through tools that
-//     honor HOME.
+//     honor HOME. That home's .local/bin is appended to PATH, so one step can
+//     use a program an earlier step installed there (see searchPath).
 package setup
 
 import (
@@ -62,6 +65,11 @@ func Prepare(steps []config.Step, repo, home string) ([]Plan, error) {
 	if len(steps) == 0 {
 		return nil, nil
 	}
+	for _, dir := range []string{repo, home} {
+		if err := trust.CheckLocation(dir); err != nil {
+			return nil, err
+		}
+	}
 	if err := trust.CheckRepository(repo); err != nil {
 		return nil, err
 	}
@@ -89,15 +97,15 @@ func stepState(step config.Step, home string) (State, error) {
 			return "", err
 		}
 	}
-	if step.Provides != "" {
-		if _, err := exec.LookPath(step.Provides); err == nil {
-			return Done, nil
-		}
+	if step.Provides != "" && provided(step.Provides, home) {
+		return Done, nil
 	}
 	return Pending, nil
 }
 
-// Options configures Run.
+// Options configures Run. Repo and Home must be set, as Prepare received
+// them. A nil Input answers no to every prompt and gives steps no input;
+// nil Output and Errors discard what would be written there.
 type Options struct {
 	Repo string // working directory for every step
 	Home string // HOME for every step
@@ -105,7 +113,7 @@ type Options struct {
 	// bootstrap, such as a Dockerfile, where whoever wrote the build already
 	// chose the repository and its revision.
 	Yes    bool
-	Input  io.Reader // answers to prompts, then each step's stdin
+	Input  io.Reader // answers to prompts, then each step's stdin, unless Yes
 	Output io.Writer // descriptions, prompts, results, and each step's stdout
 	Errors io.Writer // each step's stderr
 }
@@ -114,9 +122,42 @@ type Options struct {
 // declined step is reported as skipped and the rest are still offered. A
 // failing step stops Run, because later steps may depend on it.
 func Run(ctx context.Context, plans []Plan, opts Options) error {
+	// An empty Repo would run steps in the current directory, and an empty
+	// Home would set HOME to nothing, so neither may default.
+	for _, dir := range []string{opts.Repo, opts.Home} {
+		if err := trust.CheckLocation(dir); err != nil {
+			return err
+		}
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if opts.Output == nil {
+		opts.Output = io.Discard
+	}
+	if opts.Errors == nil {
+		opts.Errors = io.Discard
+	}
 	for _, plan := range plans {
 		if plan.State != Pending {
 			continue
+		}
+		// An earlier step may have done this one's work, as an installer
+		// that also brings the program a later step provides, or changed
+		// the repository, whose rules every step relies on. Both are checked
+		// again before each step rather than once for the whole run.
+		state, err := stepState(plan.Step, opts.Home)
+		if err != nil {
+			return err
+		}
+		if state == Done {
+			if _, err := fmt.Fprintf(opts.Output, "done\t%s\n", plan.Step.Name); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := trust.CheckTree(opts.Repo); err != nil {
+			return fmt.Errorf("before setup step %s: %w", plan.Step.Name, err)
 		}
 		if err := Describe(opts.Output, plan, opts.Repo); err != nil {
 			return err
@@ -146,23 +187,39 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 // Describe writes a step's state and exactly what it would run. Run uses it
 // before each prompt, and dry runs use it to list every step.
 func Describe(w io.Writer, plan Plan, dir string) error {
+	if w == nil {
+		return nil
+	}
 	_, err := fmt.Fprintf(w, "%s\t%s\n  run: %s\n  in:  %s\n", plan.State, plan.Step.Name, Quote(plan.Step.Run), dir)
 	return err
 }
 
 func execute(ctx context.Context, step config.Step, opts Options) error {
 	// A relative command path such as ./setup/fonts.sh resolves against Dir,
-	// so repository scripts work without a shell. Bare names are searched on
-	// PATH; since Go 1.19, a match in the current directory is refused.
-	cmd := exec.CommandContext(ctx, step.Run[0], step.Run[1:]...) //nolint:gosec // G204: running the step the user just reviewed and approved is the purpose
+	// so repository scripts work without a shell. A bare name is searched on
+	// the same PATH the step receives (see searchPath and lookPath).
+	path := searchPath(opts.Home)
+	program, err := lookPath(step.Run[0], path)
+	if err != nil {
+		return err
+	}
+	cmd := exec.CommandContext(ctx, program, step.Run[1:]...) //nolint:gosec // G204: running the step the user just reviewed and approved is the purpose
+	// argv[0] stays the name the user reviewed, not the resolved path.
+	cmd.Args[0] = step.Run[0]
 	cmd.Dir = opts.Repo
 	// Later entries win, so these replace any inherited values.
 	cmd.Env = append(os.Environ(),
 		"HOME="+opts.Home,
 		"HOMESKILLET_HOME="+opts.Home,
 		"HOMESKILLET_REPO="+opts.Repo,
+		"PATH="+path,
 	)
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = opts.Input, opts.Output, opts.Errors
+	// Unattended, nobody can answer a step that prompts, so it reads end of
+	// input (a nil Stdin is /dev/null) rather than waiting forever.
+	if opts.Yes {
+		cmd.Stdin = nil
+	}
 	return cmd.Run()
 }
 
@@ -171,6 +228,7 @@ func execute(ctx context.Context, step config.Step, opts Options) error {
 // redirected stdin can never approve a step by accident. It reads one byte at
 // a time so it never consumes input that belongs to the step itself.
 func confirm(input io.Reader, output io.Writer) (bool, error) {
+	const maxAnswer = 64
 	if _, err := fmt.Fprint(output, "Run this step? [y/N] "); err != nil {
 		return false, err
 	}
@@ -186,7 +244,12 @@ func confirm(input io.Reader, output io.Writer) (bool, error) {
 			if buffer[0] == '\n' {
 				break
 			}
-			line = append(line, buffer[0])
+			// Only "y" or "yes", with some space around it, approves, so
+			// the rest of a long line is read but not kept: input without
+			// a newline cannot exhaust memory.
+			if len(line) < maxAnswer {
+				line = append(line, buffer[0])
+			}
 		}
 		if errors.Is(err, io.EOF) {
 			ended = true

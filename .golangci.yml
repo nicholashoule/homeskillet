@@ -127,8 +127,9 @@ linters:
     paths:
       - ^tools/xplat/
     rules:
-      # main is the one place allowed to print and exit.
-      - path: (^|/)main\.go$
+      # main is the one place allowed to print and exit, including the
+      # stand-in main for unsupported systems.
+      - path: (^|/)main(_[a-z]+)?\.go$
         linters: [forbidigo]
 
       # Tests: fixtures and long table-driven cases do not need godoc or

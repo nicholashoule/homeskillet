@@ -5,15 +5,16 @@
 // rewrites a binary in place and a bad update is undone by choosing another
 // version.
 //
-// Under a prefix such as ~/.local, the layout is:
+// With the default data directory, ~/.local/share/homeskillet, the layout
+// is:
 //
-//	share/homeskillet/versions/v0.0.1/homeskillet
-//	share/homeskillet/versions/v0.0.2/homeskillet
-//	share/homeskillet/versions/v0.0.3/homeskillet
-//	share/homeskillet/latest   -> versions/v0.0.3
-//	share/homeskillet/previous -> versions/v0.0.2
-//	share/homeskillet/current  -> latest
-//	bin/homeskillet            -> <prefix>/share/homeskillet/current/homeskillet
+//	~/.local/share/homeskillet/versions/v0.0.1/homeskillet
+//	~/.local/share/homeskillet/versions/v0.0.2/homeskillet
+//	~/.local/share/homeskillet/versions/v0.0.3/homeskillet
+//	~/.local/share/homeskillet/latest   -> versions/v0.0.3
+//	~/.local/share/homeskillet/previous -> versions/v0.0.2
+//	~/.local/share/homeskillet/current  -> latest
+//	~/.local/bin/homeskillet            -> ~/.local/share/homeskillet/current/homeskillet
 //
 // latest and previous always name the highest and second-highest installed
 // versions by semantic version precedence, a clean build ranking above a
@@ -33,7 +34,7 @@ package install
 import (
 	"bytes"
 	"cmp"
-	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -43,6 +44,7 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/nicholashoule/homeskillet/internal/safefile"
 	"github.com/nicholashoule/homeskillet/internal/trust"
 	"github.com/nicholashoule/homeskillet/internal/version"
 )
@@ -57,13 +59,20 @@ const (
 
 	current  = "current"
 	versions = "versions"
-	// tempPrefix starts the names of binaries still being written. Remove
-	// deletes leftovers from an interrupted install along with the binary.
-	tempPrefix = "." + Binary + "-"
+	// buildFile records, beside each binary, the version.Info of the build
+	// that installed it, which is the build being installed: Install copies
+	// the running program. Reading it costs nothing, where parsing build
+	// details out of the binary would need debug/buildinfo and the ELF,
+	// Mach-O, and PE readers it links in, about a sixth of the binary.
+	buildFile = "build.json"
+	// maxBuildFile bounds what Build reads; the file is a few hundred bytes.
+	maxBuildFile = 64 << 10
 )
 
 // Layout locates an installation. Both paths are absolute, with symlinks
-// resolved in the parts that exist.
+// resolved in the parts that exist; New returns such a layout. Every method
+// refuses a Layout whose paths fail trust.CheckLocation, including the zero
+// Layout, whose empty paths would otherwise mean the current directory.
 type Layout struct {
 	// Bin is the directory, normally on PATH, that holds the homeskillet
 	// command.
@@ -73,22 +82,33 @@ type Layout struct {
 	Data string
 }
 
-// New returns the layout under prefix, such as ~/.local. prefix must be
-// absolute. Symlinks are resolved where the paths exist, because the
-// ownership checks and the bin link compare and store path strings.
-func New(prefix string) (Layout, error) {
-	if !filepath.IsAbs(prefix) {
-		return Layout{}, fmt.Errorf("prefix %s is not absolute", prefix)
-	}
-	bin, err := resolve(filepath.Join(prefix, "bin"))
+// New returns the layout with the homeskillet command in bin, normally
+// ~/.local/bin, and versions in data, homeskillet's data directory. Both must
+// be absolute. Symlinks are resolved where the paths exist (see
+// trust.Canonical), because the ownership checks and the bin link compare and
+// store path strings.
+func New(bin, data string) (Layout, error) {
+	bin, err := trust.Canonical(bin)
 	if err != nil {
 		return Layout{}, err
 	}
-	data, err := resolve(filepath.Join(prefix, "share", Binary))
+	data, err = trust.Canonical(data)
 	if err != nil {
 		return Layout{}, err
 	}
-	return Layout{Bin: bin, Data: data}, nil
+	layout := Layout{Bin: bin, Data: data}
+	return layout, layout.check()
+}
+
+// check refuses a layout outside the places homeskillet may act, such as
+// --prefix /usr/local, whose bin and share belong to the system.
+func (l Layout) check() error {
+	for _, dir := range []string{l.Bin, l.Data} {
+		if err := trust.CheckLocation(dir); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // Command returns the path of the homeskillet command in Bin.
@@ -99,6 +119,31 @@ func (l Layout) Command() string {
 // Program returns the path of installed version v's binary.
 func (l Layout) Program(v string) string {
 	return filepath.Join(l.Data, versions, v, Binary)
+}
+
+func (l Layout) buildPath(v string) string {
+	return filepath.Join(l.Data, versions, v, buildFile)
+}
+
+// Build returns the build details recorded when version v was installed. A
+// version installed before homeskillet recorded them has none, which is
+// reported as an error.
+func (l Layout) Build(v string) (version.Info, error) {
+	if err := l.check(); err != nil {
+		return version.Info{}, err
+	}
+	if !version.Valid(v) {
+		return version.Info{}, fmt.Errorf("%q is not a version such as v0.0.1", v)
+	}
+	data, err := safefile.Read(l.buildPath(v), maxBuildFile)
+	if err != nil {
+		return version.Info{}, err
+	}
+	var info version.Info
+	if err := json.Unmarshal(data, &info); err != nil {
+		return version.Info{}, fmt.Errorf("%s: %w", l.buildPath(v), err)
+	}
+	return info, nil
 }
 
 // commandTarget is what the homeskillet command in Bin links to. It goes
@@ -141,6 +186,9 @@ func (s State) fromTop(n int) string {
 // such as a name that is not a version or a version without a binary, are
 // ignored.
 func (l Layout) Inspect() (State, error) {
+	if err := l.check(); err != nil {
+		return State{}, err
+	}
 	var state State
 	entries, err := os.ReadDir(filepath.Join(l.Data, versions))
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {
@@ -201,16 +249,23 @@ func order(a, b string) int {
 	return strings.Compare(a, b)
 }
 
-// Install copies the program at executable into the installation as version
-// v and recomputes latest and previous. It creates current, following
-// latest, and the homeskillet command in Bin if they do not exist yet.
+// Install copies the program at executable into the installation as the
+// version build describes, records build beside it (see Build), and
+// recomputes latest and previous. It creates current, following latest, and
+// the homeskillet command in Bin if they do not exist yet. build must
+// describe executable; the CLI passes the running program and
+// version.Current.
 //
-// It writes one line per change to log. With dryRun it writes the same lines
-// and changes nothing. Every check runs before the first change: the program
+// It writes one line per change to log, which may be nil. With dryRun it
+// writes the same lines and changes nothing. Every check runs before the first change: the program
 // must pass trust.CheckProgram, the directories it writes into must pass
 // trust.CheckDirectory, and an existing file at the command's path that is
 // not homeskillet's link is a conflict, never replaced.
-func (l Layout) Install(executable, v string, dryRun bool, log io.Writer) error {
+func (l Layout) Install(executable string, build version.Info, dryRun bool, log io.Writer) error {
+	v := build.Version
+	if err := l.check(); err != nil {
+		return err
+	}
 	if !version.Valid(v) {
 		// make install always rebuilds, so the remedy names it rather than
 		// make build. Tagging is preferred over stamping in a checkout: a
@@ -222,11 +277,12 @@ func (l Layout) Install(executable, v string, dryRun bool, log io.Writer) error 
 	if err != nil {
 		return err
 	}
-	err = l.install(source, v, dryRun, log)
+	err = l.install(source, build, dryRun, log)
 	return errors.Join(err, source.Close())
 }
 
-func (l Layout) install(source *os.File, v string, dryRun bool, log io.Writer) error {
+func (l Layout) install(source *os.File, build version.Info, dryRun bool, log io.Writer) error {
+	v := build.Version
 	info, err := source.Stat()
 	if err != nil {
 		return err
@@ -235,11 +291,7 @@ func (l Layout) install(source *os.File, v string, dryRun bool, log io.Writer) e
 		return err
 	}
 	for _, dir := range []string{filepath.Dir(l.Program(v)), l.Bin} {
-		existing, err := existingAncestor(dir)
-		if err != nil {
-			return err
-		}
-		if err := trust.CheckDirectory(existing); err != nil {
+		if err := trust.CheckCreatable(dir); err != nil {
 			return err
 		}
 	}
@@ -247,7 +299,7 @@ func (l Layout) install(source *os.File, v string, dryRun bool, log io.Writer) e
 	if err != nil {
 		return err
 	}
-	action, err := l.programAction(source, v)
+	action, err := l.programAction(source, build)
 	if err != nil {
 		return err
 	}
@@ -269,8 +321,15 @@ func (l Layout) install(source *os.File, v string, dryRun bool, log io.Writer) e
 	if err := say(log, "%s\t%s\t%s\n", action, v, l.Program(v)); err != nil {
 		return err
 	}
-	if action != "unchanged" && !dryRun {
-		if err := copyProgram(source, l.Program(v)); err != nil {
+	if !dryRun {
+		if action != "unchanged" {
+			if err := copyProgram(source, l.Program(v)); err != nil {
+				return err
+			}
+		}
+		// Rewritten even when the binary is unchanged, which restores a
+		// missing record; the same bytes always produce the same record.
+		if err := writeBuild(l.buildPath(v), build); err != nil {
 			return err
 		}
 	}
@@ -287,17 +346,8 @@ func (l Layout) install(source *os.File, v string, dryRun bool, log io.Writer) e
 			}
 		}
 	}
-	// Say when the version just installed is not the one that will run, so
-	// an install never looks like an update that did not happen.
-	switch latest := (State{Versions: after}).Latest(); {
-	case state.Current != "" && !state.Following:
-		if err := say(log, "pinned\t%s\trun homeskillet self use latest to follow the newest version\n", state.Current); err != nil {
-			return err
-		}
-	case latest != v:
-		if err := say(log, "note\t%s still runs because it is latest; homeskillet self use %s runs %s\n", latest, v, v); err != nil {
-			return err
-		}
+	if err := reportRunning(log, state, after, v); err != nil {
+		return err
 	}
 	if createCommand {
 		if err := say(log, "linked\t%s -> %s\n", l.Command(), l.commandTarget()); err != nil {
@@ -309,18 +359,41 @@ func (l Layout) install(source *os.File, v string, dryRun bool, log io.Writer) e
 			}
 			// os.Symlink never replaces an existing file, so a command
 			// created since the check makes this fail rather than be lost.
-			return os.Symlink(l.commandTarget(), l.Command())
+			if err := os.Symlink(l.commandTarget(), l.Command()); err != nil {
+				return err
+			}
+			return safefile.SyncDir(l.Bin)
 		}
 	}
 	return nil
 }
 
-// programAction decides what Install does with version v's binary:
-// "installed" when it is new, "unchanged" when the same bytes are already
-// installed, or "replaced" for a +dirty build with new contents. Rewriting
-// any other installed version is refused, because a version that silently
-// changed would no longer identify what is running.
-func (l Layout) programAction(source *os.File, v string) (string, error) {
+// reportRunning says when the version just installed is not the one that
+// will run, so an install never looks like an update that did not happen.
+// state is the installation before the install and after its versions
+// afterward.
+func reportRunning(log io.Writer, state State, after []string, v string) error {
+	switch latest := (State{Versions: after}).Latest(); {
+	case state.Current != "" && !state.Following:
+		return say(log, "pinned\t%s\trun homeskillet self use latest to follow the newest version\n", state.Current)
+	case latest != v:
+		return say(log, "note\t%s still runs because it is latest; homeskillet self use %s runs %s\n", latest, v, v)
+	}
+	return nil
+}
+
+// programAction decides what Install does with build's binary: "installed"
+// when its version is new, "unchanged" when the same bytes, or a build of the
+// same source (see version.Info.SameSource), are already installed, or
+// "replaced" for a +dirty build with new contents. Rewriting any other
+// installed version is refused, because a version that silently changed
+// would no longer identify what is running.
+//
+// A build of the same source counts as unchanged because builds are stamped
+// with their build time, so rebuilding a release never reproduces its bytes;
+// the installed binary is kept, so the version still names what it did.
+func (l Layout) programAction(source *os.File, build version.Info) (string, error) {
+	v := build.Version
 	path := l.Program(v)
 	info, err := os.Lstat(path)
 	if errors.Is(err, fs.ErrNotExist) {
@@ -340,9 +413,11 @@ func (l Layout) programAction(source *os.File, v string) (string, error) {
 		return "unchanged", nil
 	case version.Dirty(v):
 		return "replaced", nil
-	default:
-		return "", fmt.Errorf("%s is already installed with different contents; installed versions are never rewritten, so remove it first with homeskillet self remove %s", v, v)
 	}
+	if installed, err := l.Build(v); err == nil && installed.SameSource(build) {
+		return "unchanged", nil
+	}
+	return "", fmt.Errorf("%s is already installed with different contents; installed versions are never rewritten, so remove it first with homeskillet self remove %s", v, v)
 }
 
 // commandMissing reports whether the homeskillet command in Bin still has to
@@ -371,8 +446,8 @@ func (l Layout) commandMissing() (bool, error) {
 // version until Use is called again. Previous is resolved when Use runs, so
 // installing another version later does not change what runs.
 //
-// It writes the choice to log. With dryRun it writes the same line and
-// changes nothing.
+// It writes the choice to log, which may be nil. With dryRun it writes the
+// same line and changes nothing.
 func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 	if err := l.checkData(); err != nil {
 		return err
@@ -412,8 +487,8 @@ func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 // Use. It deletes only what Install creates, so a version directory holding
 // anything else is left alone and reported.
 //
-// It writes one line per change to log. With dryRun it writes the same lines
-// and changes nothing.
+// It writes one line per change to log, which may be nil. With dryRun it
+// writes the same lines and changes nothing.
 func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 	if !version.Valid(v) {
 		return fmt.Errorf("%q is not a version such as v0.0.1", v)
@@ -437,7 +512,11 @@ func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 		return err
 	}
 	for _, entry := range entries {
-		if name := entry.Name(); name != Binary && !strings.HasPrefix(name, tempPrefix) {
+		// Leftovers from an interrupted write are Install's too. Install
+		// creates no directories here, and removing one would fail only
+		// after latest and previous had moved, so any directory stops
+		// Remove before it changes anything.
+		if name := entry.Name(); entry.IsDir() || name != Binary && name != buildFile && !strings.HasPrefix(name, safefile.TempPrefix) {
 			return fmt.Errorf("%s contains %q, which homeskillet did not create; remove the directory by hand", dir, name)
 		}
 	}
@@ -464,6 +543,9 @@ func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 // checkData requires an existing, private data directory before Use or
 // Remove changes anything in it.
 func (l Layout) checkData() error {
+	if err := l.check(); err != nil {
+		return err
+	}
 	if _, err := os.Lstat(l.Data); errors.Is(err, fs.ErrNotExist) {
 		return fmt.Errorf("nothing is installed in %s", l.Data)
 	}
@@ -528,111 +610,114 @@ func applyLinks(changes []linkChange, dryRun bool, log io.Writer) error {
 // name, and rename(2) replaces a link in one step, so anything resolving name
 // sees the old target or the new one, never neither.
 func replaceLink(target, name string) error {
-	temporary := filepath.Join(filepath.Dir(name), "."+filepath.Base(name)+".new")
-	// A leftover from an interrupted run. The directory passed
-	// trust.CheckDirectory, so nobody else can have put it there.
-	if err := os.Remove(temporary); err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	if err := os.Symlink(target, temporary); err != nil {
-		return err
+	dir, base := filepath.Dir(name), filepath.Base(name)
+	// A temporary name of this process's own, so concurrent self commands
+	// never remove or rename each other's half-made link. symlink fails on
+	// an existing name, such as a leftover from an interrupted run, so the
+	// next number is tried. The directory passed trust.CheckDirectory, so
+	// nobody else can create names in it.
+	var temporary string
+	for n := 0; ; n++ {
+		temporary = filepath.Join(dir, fmt.Sprintf("%s%s.%d.%d", safefile.TempPrefix, base, os.Getpid(), n))
+		err := os.Symlink(target, temporary)
+		if err == nil {
+			break
+		}
+		if !errors.Is(err, fs.ErrExist) {
+			return err
+		}
 	}
 	if err := os.Rename(temporary, name); err != nil {
 		return errors.Join(err, os.Remove(temporary))
 	}
-	return nil
+	return safefile.SyncDir(dir)
 }
 
-// copyProgram writes source to path under a temporary name and renames it
-// into place, so path never holds a partial binary, even if the copy fails.
+// copyProgram writes source to path atomically (see safefile.Write) as an
+// executable only its owner may run, like everything else homeskillet
+// creates.
 func copyProgram(source *os.File, path string) error {
-	dir := filepath.Dir(path)
-	// New directories are private, as in package link.
-	if err := os.MkdirAll(dir, 0o700); err != nil {
+	return safefile.Write(path, 0o700, func(w io.Writer) error {
+		if _, err := source.Seek(0, io.SeekStart); err != nil {
+			return err
+		}
+		_, err := io.Copy(w, source)
 		return err
-	}
-	if _, err := source.Seek(0, io.SeekStart); err != nil {
-		return err
-	}
-	temporary, err := os.CreateTemp(dir, tempPrefix+"*")
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(temporary, source)
-	// Only the owner may run it, like everything else homeskillet creates.
-	err = errors.Join(err, temporary.Chmod(0o700), temporary.Sync(), temporary.Close())
-	if err == nil {
-		err = os.Rename(temporary.Name(), path)
-	}
-	if err != nil {
-		return errors.Join(err, os.Remove(temporary.Name()))
-	}
-	return nil
+	})
+}
+
+// writeBuild records build at path.
+func writeBuild(path string, build version.Info) error {
+	return safefile.Write(path, 0o600, func(w io.Writer) error {
+		return json.NewEncoder(w).Encode(build)
+	})
 }
 
 // sameContents reports whether source holds the same bytes as the file at
-// path.
+// path. It compares the bytes themselves, which is exact and needs no hash.
 func sameContents(source *os.File, path string) (bool, error) {
-	a, err := digest(source)
-	if err != nil {
-		return false, err
-	}
 	other, err := os.Open(path) //nolint:gosec // G304: path is inside the checked installation
 	if err != nil {
 		return false, err
 	}
-	b, err := digest(other)
-	err = errors.Join(err, other.Close())
-	return err == nil && bytes.Equal(a, b), err
+	same, err := equalFiles(source, other)
+	if err := errors.Join(err, other.Close()); err != nil {
+		return false, err
+	}
+	return same, nil
 }
 
-func digest(file *os.File) ([]byte, error) {
-	if _, err := file.Seek(0, io.SeekStart); err != nil {
-		return nil, err
-	}
-	hash := sha256.New()
-	if _, err := io.Copy(hash, file); err != nil {
-		return nil, err
-	}
-	return hash.Sum(nil), nil
-}
-
-// resolve returns path with symlinks resolved in its longest existing prefix.
-// The rest does not exist yet and is appended unchanged.
-func resolve(path string) (string, error) {
-	existing, err := existingAncestor(path)
+// equalFiles compares a and b from their beginnings, first by size, then
+// block by block.
+func equalFiles(a, b *os.File) (bool, error) {
+	infoA, err := a.Stat()
 	if err != nil {
-		return "", err
+		return false, err
 	}
-	resolved, err := filepath.EvalSymlinks(existing)
+	infoB, err := b.Stat()
 	if err != nil {
-		return "", err
+		return false, err
 	}
-	rest, err := filepath.Rel(existing, path)
-	if err != nil {
-		return "", err
+	if infoA.Size() != infoB.Size() {
+		return false, nil
 	}
-	return filepath.Join(resolved, rest), nil
-}
-
-// existingAncestor returns path, or its nearest ancestor that exists.
-func existingAncestor(path string) (string, error) {
+	for _, file := range []*os.File{a, b} {
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			return false, err
+		}
+	}
+	blockA, blockB := make([]byte, 64<<10), make([]byte, 64<<10)
 	for {
-		_, err := os.Lstat(path)
-		if err == nil {
-			return path, nil
+		nA, errA := io.ReadFull(a, blockA)
+		nB, errB := io.ReadFull(b, blockB)
+		if !bytes.Equal(blockA[:nA], blockB[:nB]) {
+			return false, nil
 		}
-		parent := filepath.Dir(path)
-		if !errors.Is(err, fs.ErrNotExist) || parent == path {
-			return "", err
+		endA, endB := ended(errA), ended(errB)
+		if errA != nil && !endA {
+			return false, errA
 		}
-		path = parent
+		if errB != nil && !endB {
+			return false, errB
+		}
+		if endA || endB {
+			return endA && endB, nil
+		}
 	}
+}
+
+// ended reports whether err from io.ReadFull means the file ran out, rather
+// than that reading failed.
+func ended(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
 }
 
 // say writes one line of output, so every write's error is checked the same
-// way.
+// way. A nil writer discards it.
 func say(w io.Writer, format string, args ...any) error {
+	if w == nil {
+		return nil
+	}
 	_, err := fmt.Fprintf(w, format, args...)
 	return err
 }

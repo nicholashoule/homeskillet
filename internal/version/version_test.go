@@ -1,9 +1,7 @@
 package version
 
 import (
-	"os"
 	"slices"
-	"strings"
 	"testing"
 )
 
@@ -97,26 +95,10 @@ func TestDirty(t *testing.T) {
 	}
 }
 
-func TestCurrentAndRead(t *testing.T) {
+func TestCurrent(t *testing.T) {
 	current := Current()
-	if current.Go == "" || current.Platform == "" {
-		t.Fatalf("missing toolchain details: %+v", current)
-	}
-	// The test binary is itself a Go binary, so Read must find the same
-	// toolchain recorded in it.
-	executable, err := os.Executable()
-	if err != nil {
-		t.Fatal(err)
-	}
-	read, err := Read(executable)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if read.Go != current.Go || read.Platform != current.Platform {
-		t.Fatalf("Read = %+v, Current = %+v", read, current)
-	}
-	if _, err := Read(os.DevNull); err == nil {
-		t.Fatal("read build info from a non-binary")
+	if current.Version == "" || current.Go == "" || current.Platform == "" {
+		t.Fatalf("missing build details: %+v", current)
 	}
 }
 
@@ -132,21 +114,57 @@ func TestDescriptions(t *testing.T) {
 	info := Info{
 		Version:  "v1.2.3",
 		Revision: "0123456789abcdef0123456789abcdef01234567",
-		Time:     "2026-10-25T12:00:00Z",
+		Built:    "2026-10-25T12:00:00Z",
 		Modified: true,
 		Go:       "go1.24.2",
 		Platform: "linux/amd64",
 	}
-	if got, want := info.Summary(), "commit 0123456789ab (modified), go1.24.2, linux/amd64"; got != want {
+	if got, want := info.Summary(), "commit 0123456789ab (modified), built 2026-10-25T12:00:00Z, go1.24.2, linux/amd64"; got != want {
 		t.Errorf("Summary = %q, want %q", got, want)
 	}
-	details := info.Details()
-	for _, want := range []string{info.Revision + " (uncommitted changes)", info.Time, info.Go, info.Platform} {
-		if !strings.Contains(details, want) {
-			t.Errorf("Details lacks %q:\n%s", want, details)
-		}
+	want := "  commit:    0123456789ab (modified)\n  built:     2026-10-25T12:00:00Z\n  go:        go1.24.2\n"
+	if got := info.Details(); got != want {
+		t.Errorf("Details = %q, want %q", got, want)
 	}
 	if got := (Info{Go: "go1.24.2"}).Summary(); got != "go1.24.2" {
 		t.Errorf("unknown details not omitted: %q", got)
+	}
+}
+
+func TestBuilt(t *testing.T) {
+	defer func(saved string) { built = saved }(built)
+	for value, want := range map[string]string{
+		"2026-10-25T12:00:00Z":        "2026-10-25T12:00:00Z",
+		"":                            "",
+		"yesterday":                   "",
+		"2026-10-25T12:00:00Z\x1b[2K": "",
+	} {
+		built = value
+		if got := Current().Built; got != want {
+			t.Errorf("built %q: Built = %q, want %q", value, got, want)
+		}
+	}
+}
+
+func TestSameSource(t *testing.T) {
+	a := Info{Version: "v1.2.3", Revision: "0123456789ab", Go: "go1.24.2", Platform: "linux/amd64", Built: "2026-10-25T12:00:00Z"}
+	b := a
+	b.Built = "2026-10-26T12:00:00Z"
+	if !a.SameSource(b) {
+		t.Error("a rebuild of the same commit is not the same source")
+	}
+	for name, change := range map[string]func(*Info){
+		"version":   func(i *Info) { i.Version = "v1.2.4" },
+		"commit":    func(i *Info) { i.Revision = "ba9876543210" },
+		"modified":  func(i *Info) { i.Modified = true },
+		"toolchain": func(i *Info) { i.Go = "go1.25.0" },
+		"platform":  func(i *Info) { i.Platform = "darwin/arm64" },
+		"no commit": func(i *Info) { i.Revision = "" },
+	} {
+		c := a
+		change(&c)
+		if c.SameSource(a) || a.SameSource(c) {
+			t.Errorf("different %s counted as the same source", name)
+		}
 	}
 }

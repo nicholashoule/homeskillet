@@ -46,6 +46,11 @@ const (
 	// NoSource means the source is absent from the repository, so there is
 	// nothing to link to. Prepare reports it only when preparing to link.
 	NoSource State = "no-source"
+	// Orphaned means the target is a link homeskillet made from this
+	// repository, as its record shows, for an entry the repository no longer
+	// declares, such as a file since deleted from home/. Create and Remove
+	// both delete it, so the home directory again matches the repository.
+	Orphaned State = "orphaned"
 )
 
 // Plan is the prepared action for one entry.
@@ -56,8 +61,9 @@ type Plan struct {
 }
 
 // ErrBlocked is returned by Create, and by callers that stop for the same
-// reason, when any plan is a Conflict or NoSource.
-var ErrBlocked = errors.New("conflicts or missing sources found; no files changed")
+// reason, when any plan is a Conflict or NoSource. "Missing" names a target
+// not linked yet, which blocks nothing, so the message avoids the word.
+var ErrBlocked = errors.New("blocked by conflicts or sources absent from the repository")
 
 // Blocked reports whether any plan prevents linking.
 func Blocked(plans []Plan) bool {
@@ -71,37 +77,92 @@ func Blocked(plans []Plan) bool {
 
 // Prepare resolves entries against repo and home and reports each target's
 // state. Entries come from config.Load, listed in the manifest or discovered
-// under the repository's home directory; both get the same checks. repo and
-// home must be absolute with symlinks already resolved, because containment
-// and link ownership are decided by comparing path strings.
+// under the repository's home directory; both get the same checks. data is
+// homeskillet's data directory, which holds the record of links. repo, home,
+// and data must be absolute with symlinks already resolved (see
+// trust.Canonical), because containment and link ownership are decided by
+// comparing path strings.
 //
-// When unlinking is false, Prepare requires the repository to be private (see
-// trust.CheckRepository) and reports absent sources as NoSource. When unlinking is
-// true it skips the privacy checks and ignores absent sources. Removing links
-// that point into the repository cannot run anyone's code, and unlinking is how
-// the user recovers from a deleted source or a repository whose permissions
-// went wrong, so it must not be blocked by either.
-func Prepare(entries []config.Entry, repo, home string, unlinking bool) ([]Plan, error) {
+// After the plans for entries come Orphaned plans for links the repository
+// made earlier but no longer declares (see Save and record.go).
+//
+// All three directories must pass trust.CheckLocation. When unlinking is false,
+// Prepare requires the repository, home and every existing directory a link
+// goes into, and the data directory to be private (see trust.CheckRepository,
+// trust.CheckDirectory, trust.CheckExisting, and trust.CheckCreatable) and
+// reports absent sources as NoSource. When unlinking is true it skips the
+// privacy checks and ignores absent sources. Removing links that point into the repository cannot
+// run anyone's code, and unlinking is how the user recovers from a deleted
+// source or a repository whose permissions went wrong, so it must not be
+// blocked by either.
+func Prepare(entries []config.Entry, repo, home, data string, unlinking bool) ([]Plan, error) {
+	return PrepareSelected(entries, repo, home, data, unlinking, nil)
+}
+
+// PrepareSelected is Prepare for only the entries and recorded links that
+// selected accepts, given their absolute target and source; nil selects
+// everything. The checks of the repository as a whole, and of how entries
+// relate to each other, still cover every entry, but the checks of each
+// source, target, and target directory cover only the selected ones, so a
+// problem with one file never blocks acting on another. Every entry still
+// counts as declared, so an unselected one is never reported as orphaned.
+func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking bool, selected func(target, source string) bool) ([]Plan, error) {
+	// Even unlinking stays out of system directories: removing links there
+	// is no more homeskillet's business than creating them.
+	for _, dir := range []string{repo, home, data} {
+		if err := trust.CheckLocation(dir); err != nil {
+			return nil, err
+		}
+	}
 	if !unlinking {
 		if err := trust.CheckRepository(repo); err != nil {
 			return nil, err
 		}
+		// Links live in home, so anyone who could write to it could
+		// replace them. The data directory's check covers home only when
+		// the data directory is inside it.
+		if err := trust.CheckDirectory(home); err != nil {
+			return nil, err
+		}
+	}
+	// A data directory in the repository would put the record in version
+	// control, where every machine's links would overwrite each other's.
+	if trust.Within(repo, data) {
+		return nil, fmt.Errorf("data directory %s is inside the repository", data)
+	}
+	if !unlinking {
+		if err := trust.CheckCreatable(data); err != nil {
+			return nil, err
+		}
 	}
 	var plans []Plan
+	declared := make([]string, 0, len(entries))
 	for _, entry := range entries {
 		source := filepath.Join(repo, entry.Source)
 		target := filepath.Join(home, entry.Target)
+		// homeskillet's own data, including the record and backups, must
+		// never be replaced by a link, nor sit inside a target that link
+		// --force could move aside.
+		if trust.Within(data, target) || trust.Within(target, data) {
+			return nil, fmt.Errorf("target %s overlaps homeskillet's data directory %s", target, data)
+		}
 		// When home is the repository or contains it, a target could replace
-		// repository files, including other entries' sources.
-		if trust.Within(repo, target) {
-			return nil, fmt.Errorf("target %s would modify the repository", target)
+		// repository files, including other entries' sources; a target that
+		// contains the repository, such as .config for a clone in
+		// ~/.config/dotfiles, could take the whole repository with it.
+		if trust.Within(repo, target) || trust.Within(target, repo) {
+			return nil, fmt.Errorf("target %s overlaps the repository %s", target, repo)
 		}
 		// Overlapping targets such as "a" and "a/b" would make the second link
 		// be created through the first.
-		for _, previous := range plans {
-			if trust.Within(previous.Target, target) || trust.Within(target, previous.Target) {
-				return nil, fmt.Errorf("overlapping targets: %s and %s", previous.Target, target)
+		for _, previous := range declared {
+			if trust.Within(previous, target) || trust.Within(target, previous) {
+				return nil, fmt.Errorf("overlapping targets: %s and %s", previous, target)
 			}
+		}
+		declared = append(declared, target)
+		if selected != nil && !selected(target, source) {
+			continue
 		}
 		missing, err := checkSource(repo, source, unlinking)
 		if err != nil {
@@ -109,6 +170,11 @@ func Prepare(entries []config.Entry, repo, home string, unlinking bool) ([]Plan,
 		}
 		if err := checkParents(home, target); err != nil {
 			return nil, err
+		}
+		if !unlinking {
+			if err := trust.CheckExisting(home, filepath.Dir(target)); err != nil {
+				return nil, err
+			}
 		}
 		state, err := targetState(source, target)
 		if err != nil {
@@ -119,25 +185,43 @@ func Prepare(entries []config.Entry, repo, home string, unlinking bool) ([]Plan,
 		}
 		plans = append(plans, Plan{Source: source, Target: target, State: state})
 	}
+	found, err := orphans(repo, home, data, declared)
+	if err != nil {
+		return nil, err
+	}
+	for _, orphan := range found {
+		if selected == nil || selected(orphan.Target, orphan.Source) {
+			plans = append(plans, orphan)
+		}
+	}
 	return plans, nil
 }
 
-// checkSource verifies that source is a regular file that resolves inside repo
-// and, unless unlinking, that nobody else can modify it. It reports whether the
-// source is absent instead of failing, so callers can report that per entry.
+// checkSource verifies that source is a regular file inside repo and, unless
+// unlinking, that every directory and symlink on the way to it is private and
+// inside repo (see trust.Resolve). It reports whether the source is absent
+// instead of failing, so callers can report that per entry.
 func checkSource(repo, source string, unlinking bool) (missing bool, err error) {
-	resolved, err := filepath.EvalSymlinks(source)
+	var resolved string
+	if unlinking {
+		// Unlinking only needs to know the link is homeskillet's, not that
+		// the repository is still safe (see Prepare).
+		resolved, err = filepath.EvalSymlinks(source)
+		if err == nil && !trust.Within(repo, resolved) {
+			return false, fmt.Errorf("source %s resolves outside the repository", source)
+		}
+	} else {
+		// A source that leads outside the repository at any hop, for
+		// example through a symlink in /tmp that another user controls,
+		// would make the link's content depend on files the repository
+		// checks never examine.
+		resolved, err = trust.Resolve(repo, source)
+	}
 	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
 	}
 	if err != nil {
 		return false, fmt.Errorf("source %s: %w", source, err)
-	}
-	// A source that is a symlink leaving the repository, for example to a
-	// file in /tmp that another user controls, would make the link's content
-	// depend on a file that the repository checks never examine.
-	if !trust.Within(repo, resolved) {
-		return false, fmt.Errorf("source %s resolves outside the repository", source)
 	}
 	info, err := os.Stat(resolved)
 	if err != nil {
@@ -148,19 +232,6 @@ func checkSource(repo, source string, unlinking bool) (missing bool, err error) 
 	// examined.
 	if !info.Mode().IsRegular() {
 		return false, fmt.Errorf("source %s is not a regular file", source)
-	}
-	if !unlinking {
-		// Check the path as written and as resolved. The written path covers
-		// directories that hold symlinks (whoever can write to them can swap
-		// the symlink), and the resolved path covers the real file.
-		if err := trust.CheckPath(repo, source); err != nil {
-			return false, err
-		}
-		if resolved != source {
-			if err := trust.CheckPath(repo, resolved); err != nil {
-				return false, err
-			}
-		}
 	}
 	return false, nil
 }

@@ -1,0 +1,16 @@
+# Keep the GitHub Actions used by CI current. They are pinned by commit SHA,
+# which Dependabot updates along with the version comment. homeskillet has no
+# module dependencies (see AGENTS.md); the gomod entry watches go.mod so one
+# added later is kept current too.
+# https://docs.github.com/code-security/dependabot/working-with-dependabot/dependabot-options-reference
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: gomod
+    directory: /
+    schedule:
+      interval: weekly

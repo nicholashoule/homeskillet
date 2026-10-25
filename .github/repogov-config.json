@@ -1,0 +1,15 @@
+{
+  "default": 300,
+  "descriptive_names": false,
+  "warning_threshold": "85%",
+  "skip_dirs": [".git", "vendor", "workflows"],
+  "include_exts": [".md", ".mdc"],
+  "rules": [
+    {"glob": ".github/rules/*.md", "limit": 300},
+    {"glob": "docs/*", "limit": 500}
+  ],
+  "files": {
+    ".github/copilot-instructions.md": 50,
+    "AGENTS.md": 200
+  }
+}

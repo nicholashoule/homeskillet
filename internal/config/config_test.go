@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strings"
 	"testing"
 )
 
@@ -105,7 +106,7 @@ func TestFilesFor(t *testing.T) {
 	}
 	for goos, want := range map[string][]string{"linux": {"both", "linux"}, "darwin": {"both", "mac"}} {
 		var got []string
-		for _, entry := range manifest.FilesFor(goos) {
+		for _, entry := range manifest.FilesFor(on(goos)) {
 			got = append(got, entry.Source)
 		}
 		if !slices.Equal(got, want) {
@@ -124,7 +125,7 @@ func TestSetupFor(t *testing.T) {
 	}
 	for goos, want := range map[string][]string{"linux": {"oh-my-posh", "fonts"}, "darwin": {"fonts"}} {
 		var got []string
-		for _, step := range manifest.SetupFor(goos) {
+		for _, step := range manifest.SetupFor(on(goos)) {
 			got = append(got, step.Name)
 		}
 		if !slices.Equal(got, want) {
@@ -145,7 +146,7 @@ func TestLoadRejectsUnsafeSetup(t *testing.T) {
 		"creates escape":  {Name: "x", Run: []string{"true"}, Creates: "../outside"},
 		"creates root":    {Name: "x", Run: []string{"true"}, Creates: "."},
 		"provides a path": {Name: "x", Run: []string{"true"}, Provides: "/usr/bin/tool"},
-		"bad platform":    {Name: "x", Run: []string{"true"}, Platforms: []string{"windows"}},
+		"bad platform":    {Name: "x", Run: []string{"true"}, Platforms: []string{"macos"}},
 	}
 	for name, step := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -190,6 +191,9 @@ func TestLoadDiscoversHome(t *testing.T) {
 				"home/.config/app/config.toml",
 				"home/.DS_Store",
 				"home/.config/.DS_Store",
+				"home/Thumbs.db",
+				"home/Documents/desktop.ini",
+				"home/Documents/Desktop.INI",
 				"home/.vim/pack/plugin/.git/config",
 				"home/.vim/pack/plugin/.git/HEAD",
 				"outside/ignored",
@@ -320,5 +324,203 @@ func TestLoadRejectsUnprintableHomeNames(t *testing.T) {
 	}
 	if _, err := Load(repo); err == nil || !Printable(err.Error()) {
 		t.Fatalf("unreadable directory: %q", err)
+	}
+}
+
+func TestLoadRejectsOversizedManifest(t *testing.T) {
+	// Valid JSON, so only the size limit can reject it.
+	padding := strings.Repeat(" ", maxManifest)
+	repo := write(t, `{"setup": [{"name": "a", "run": ["true"]}]}`+padding)
+	if _, err := Load(repo); err == nil || !strings.Contains(err.Error(), "larger than") {
+		t.Fatalf("oversized manifest: %v", err)
+	}
+	repo = write(t, `{"setup": [{"name": "a", "run": ["true"]}]}`+padding[:maxManifest-100])
+	if _, err := Load(repo); err != nil {
+		t.Fatalf("manifest within the limit: %v", err)
+	}
+}
+
+func TestValidName(t *testing.T) {
+	for name, want := range map[string]bool{
+		"oh-my-posh": true, "a": true, "0": true, "fonts.meslo_v2": true,
+		"": false, "-a": false, ".a": false, "_a": false, "Oh": false, "a b": false,
+		"a/b": false, "a\x1b": false, "\u00e9": false,
+	} {
+		if got := validName(name); got != want {
+			t.Errorf("validName(%q) = %v, want %v", name, got, want)
+		}
+	}
+}
+
+func TestDefaultPlatforms(t *testing.T) {
+	repo := write(t, `{
+		"platforms": ["darwin"],
+		"files": [
+			{"source": "home/default", "target": "default"},
+			{"source": "home/linux", "target": "linux", "platforms": ["linux"]},
+			{"source": "home/everywhere", "target": "everywhere", "platforms": ["linux", "darwin"]}
+		],
+		"setup": [
+			{"name": "default", "run": ["true"]},
+			{"name": "linux", "run": ["true"], "platforms": ["linux"]}
+		]
+	}`)
+	manifest, err := Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for goos, want := range map[string][2][]string{
+		"darwin": {{"default", "everywhere"}, {"default"}},
+		"linux":  {{"linux", "everywhere"}, {"linux"}},
+	} {
+		var files, steps []string
+		for _, entry := range manifest.FilesFor(on(goos)) {
+			files = append(files, entry.Target)
+		}
+		for _, step := range manifest.SetupFor(on(goos)) {
+			steps = append(steps, step.Name)
+		}
+		if !slices.Equal(files, want[0]) || !slices.Equal(steps, want[1]) {
+			t.Errorf("%s: files %v, steps %v; want %v", goos, files, steps, want)
+		}
+	}
+}
+
+func TestDefaultPlatformsApplyToDiscoveredFiles(t *testing.T) {
+	repo := write(t, `{"platforms": ["darwin"]}`)
+	touch(t, repo, "home/.zshrc")
+	manifest, err := Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifest.FilesFor(on("linux")); len(got) != 0 {
+		t.Errorf("linux got %v", pairs(got))
+	}
+	if got := pairs(manifest.FilesFor(on("darwin"))); !slices.Equal(got, []string{"home/.zshrc>.zshrc"}) {
+		t.Errorf("darwin got %v", got)
+	}
+}
+
+func TestDefaultPlatformsValidated(t *testing.T) {
+	for _, data := range []string{
+		`{"platforms": ["macos"], "setup": [{"name": "a", "run": ["true"]}]}`,
+		`{"platforms": ["darwin/arm"], "setup": [{"name": "a", "run": ["true"]}]}`,
+		`{"platforms": "darwin", "setup": [{"name": "a", "run": ["true"]}]}`,
+	} {
+		if _, err := Load(write(t, data)); err == nil {
+			t.Errorf("accepted %s", data)
+		}
+	}
+}
+
+// on returns the platform goos on arm64, as detection reports a Mac or an
+// arm64 Linux machine.
+func on(goos string) Platform {
+	return Platform{OS: goos, Arch: "arm64"}
+}
+
+func TestParsePlatform(t *testing.T) {
+	for value, want := range map[string]Platform{
+		"linux":         {OS: "linux"},
+		"darwin":        {OS: "darwin"},
+		"darwin/arm64":  {OS: "darwin", Arch: "arm64"},
+		"linux/amd64":   {OS: "linux", Arch: "amd64"},
+		"windows":       {OS: "windows"},
+		"windows/arm64": {OS: "windows", Arch: "arm64"},
+	} {
+		got, err := ParsePlatform(value)
+		if err != nil || got != want || got.String() != value {
+			t.Errorf("ParsePlatform(%q) = %v, %v", value, got, err)
+		}
+	}
+	for _, value := range []string{"", "macos", "win", "Windows", "darwin/", "darwin/arm", "darwin/arm64/x", "Linux", "/amd64"} {
+		if got, err := ParsePlatform(value); err == nil {
+			t.Errorf("ParsePlatform(%q) = %v", value, got)
+		}
+	}
+}
+
+func TestPlatformMatches(t *testing.T) {
+	mac := Platform{OS: "darwin", Arch: "arm64"}
+	for value, want := range map[string]bool{
+		"darwin": true, "darwin/arm64": true, "darwin/amd64": false,
+		"linux": false, "linux/arm64": false, "bogus": false,
+	} {
+		if got := mac.Matches(value); got != want {
+			t.Errorf("%v.Matches(%q) = %v", mac, value, got)
+		}
+	}
+	// An unknown architecture matches only values that name none.
+	if (Platform{OS: "darwin"}).Matches("darwin/arm64") || !(Platform{OS: "darwin"}).Matches("darwin") {
+		t.Error("unknown architecture matched wrongly")
+	}
+}
+
+func TestArchitecturePlatforms(t *testing.T) {
+	repo := write(t, `{
+		"platforms": ["darwin"],
+		"setup": [
+			{"name": "any-mac", "run": ["true"]},
+			{"name": "apple-silicon", "run": ["true"], "platforms": ["darwin/arm64"]},
+			{"name": "intel", "run": ["true"], "platforms": ["darwin/amd64"]}
+		]
+	}`)
+	manifest, err := Load(repo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for arch, want := range map[string][]string{"arm64": {"any-mac", "apple-silicon"}, "amd64": {"any-mac", "intel"}} {
+		var got []string
+		for _, step := range manifest.SetupFor(Platform{OS: "darwin", Arch: arch}) {
+			got = append(got, step.Name)
+		}
+		if !slices.Equal(got, want) {
+			t.Errorf("%s: got %v, want %v", arch, got, want)
+		}
+	}
+}
+
+func TestWindowsNames(t *testing.T) {
+	entry := func(target string) string {
+		return `{"source": "home/x", "target": "` + target + `"}`
+	}
+	for _, target := range []string{"CON", "nul.txt", "Documents/COM1.log", "lpt9", "COM¹", "notes.", "trailing ", "a:b", "what?", `back\\slash`, "a|b"} {
+		data := `{"platforms": ["windows"], "files": [` + entry(target) + `]}`
+		if _, err := Load(write(t, data)); err == nil || !strings.Contains(err.Error(), "Windows") {
+			t.Errorf("%q accepted for Windows: %v", target, err)
+		}
+	}
+	for _, target := range []string{"Documents/PowerShell/profile.ps1", "AppData/Roaming/app/settings.json", "console.log", "CONFIG", "nullable", ".vimrc"} {
+		data := `{"platforms": ["windows"], "files": [` + entry(target) + `]}`
+		if _, err := Load(write(t, data)); err != nil {
+			t.Errorf("%q refused: %v", target, err)
+		}
+	}
+	// Targets differing only in case are one file on Windows.
+	data := `{"platforms": ["windows"], "files": [` + entry("Documents/a.txt") + `, ` + entry("documents/A.txt") + `]}`
+	if _, err := Load(write(t, data)); err == nil || !strings.Contains(err.Error(), "ignores case") {
+		t.Errorf("case collision accepted: %v", err)
+	}
+	// The rules apply only where Windows is a target, by default or per entry.
+	for _, data := range []string{
+		`{"files": [` + entry("a:b") + `]}`,
+		`{"platforms": ["linux"], "files": [` + entry("a:b") + `]}`,
+		`{"platforms": ["windows"], "files": [{"source": "home/x", "target": "a:b", "platforms": ["darwin"]}]}`,
+	} {
+		if _, err := Load(write(t, data)); err != nil {
+			t.Errorf("%s refused: %v", data, err)
+		}
+	}
+	if _, err := Load(write(t, `{"files": [{"source": "home/x", "target": "nul", "platforms": ["windows/arm64"]}]}`)); err == nil {
+		t.Error("per-entry windows platform not checked")
+	}
+	// Discovered files and setup records are checked too.
+	repo := write(t, `{"platforms": ["windows"]}`)
+	touch(t, repo, "home/AUX.json")
+	if _, err := Load(repo); err == nil {
+		t.Error("discovered reserved name accepted")
+	}
+	if _, err := Load(write(t, `{"platforms": ["windows"], "setup": [{"name": "a", "run": ["true"], "creates": "PRN"}]}`)); err == nil {
+		t.Error("reserved creates accepted")
 	}
 }

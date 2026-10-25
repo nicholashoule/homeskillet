@@ -23,9 +23,9 @@ func TestCheckTree(t *testing.T) {
 	if err := os.WriteFile(file, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	// Symlink permission bits are meaningless, so a link (0777 on Linux) and
-	// a dangling one must both be accepted.
-	if err := os.Symlink("/nonexistent", filepath.Join(root, "dangling")); err != nil {
+	// Symlink permission bits are meaningless, so a link (0777 on Linux) to a
+	// private file in the tree must be accepted.
+	if err := os.Symlink(filepath.Join("a", "b", "file"), filepath.Join(root, "alias")); err != nil {
 		t.Fatal(err)
 	}
 	if err := CheckTree(root); err != nil {
@@ -47,6 +47,102 @@ func TestCheckTree(t *testing.T) {
 		if err := os.Chmod(test.path, test.own); err != nil {
 			t.Fatal(err)
 		}
+	}
+}
+
+func TestCheckTreeSymlinks(t *testing.T) {
+	for name, test := range map[string]struct {
+		destination string
+		accept      bool
+	}{
+		"file in the tree":      {"file", true},
+		"back into the tree":    {filepath.Join("..", "tree", "file"), true},
+		"directory in the tree": {"dir", true},
+		"file outside":          {filepath.Join("..", "outside", "file"), false},
+		"directory outside":     {filepath.Join("..", "outside"), false},
+		"absolute path outside": {"/etc/passwd", false},
+		"dangling outside":      {"/nonexistent", false},
+		"dangling in the tree":  {"missing", false},
+		"loop":                  {"loop", false},
+		// The kernel passes through outside on the way back in, so
+		// whoever controls outside controls where the link leads.
+		// A literal path: filepath.Join would clean the hop away.
+		"through a directory outside": {"../outside/../tree/file", false},
+		"absolute path into the tree": {"", true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			root, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			tree, outside := filepath.Join(root, "tree"), filepath.Join(root, "outside")
+			for _, dir := range []string{tree, filepath.Join(tree, "dir"), outside} {
+				if err := os.Mkdir(dir, 0o755); err != nil {
+					t.Fatal(err)
+				}
+			}
+			for _, file := range []string{filepath.Join(tree, "file"), filepath.Join(outside, "file")} {
+				if err := os.WriteFile(file, nil, 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			// Even a private destination outside the tree is refused: the
+			// check vouches only for what is inside it.
+			destination := test.destination
+			if destination == "" {
+				destination = filepath.Join(tree, "file")
+			}
+			if err := os.Symlink(destination, filepath.Join(tree, "loop")); err != nil {
+				t.Fatal(err)
+			}
+			err = CheckTree(tree)
+			if test.accept && err != nil {
+				t.Fatalf("symlink to %s rejected: %v", destination, err)
+			}
+			if !test.accept && err == nil {
+				t.Fatalf("symlink to %s accepted", destination)
+			}
+		})
+	}
+}
+
+// withMode reports a different mode for a real file, keeping its ownership,
+// for modes a test cannot set, such as the sticky bit on a regular file, which
+// macOS refuses to set for an unprivileged user.
+type withMode struct {
+	os.FileInfo
+	mode os.FileMode
+}
+
+func (w withMode) Mode() os.FileMode { return w.mode }
+
+func TestStickyExcusesOnlyDirectories(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(root, "program")
+	if err := os.WriteFile(program, nil, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	info, err := os.Stat(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckProgram(program, info); err != nil {
+		t.Fatalf("private program rejected: %v", err)
+	}
+	// The sticky bit restricts renaming a directory's entries; it does
+	// nothing to stop others writing to a regular file.
+	if err := CheckProgram(program, withMode{info, os.ModeSticky | 0o777}); err == nil {
+		t.Fatal("world-writable program accepted because of the sticky bit")
+	}
+	dir, err := os.Stat(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := checkShared(root, withMode{dir, os.ModeDir | os.ModeSticky | 0o777}); err != nil {
+		t.Fatalf("sticky directory rejected: %v", err)
 	}
 }
 
