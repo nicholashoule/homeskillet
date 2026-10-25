@@ -1,0 +1,149 @@
+# golangci-lint configuration (v2 format).
+#
+#   Lint:    golangci-lint run ./...
+#   Format:  golangci-lint fmt ./...
+#   Verify:  golangci-lint config verify
+#   Install: https://golangci-lint.run/welcome/install/
+#
+# Correctness and security linters are strict; style linters are limited to
+# checks with little churn. Nothing project-specific is assumed beyond Go
+# conventions, so the file can follow the module as it grows. Prefer fixing a
+# finding over excluding it; when an exclusion is right, scope it narrowly and
+# say why.
+
+version: "2"
+
+formatters:
+  enable:
+    - gofmt       # canonical formatting, including -s simplifications
+    - goimports   # import grouping; removes unused imports
+  settings:
+    gofmt:
+      simplify: true
+  exclusions:
+    # Vendored byte-identical; see linters.exclusions.paths.
+    paths:
+      - ^tools/xplat/
+
+linters:
+  default: none
+  enable:
+    # Correctness
+    - govet          # suspicious constructs (printf arguments, copied locks, ...)
+    - staticcheck    # broad static analysis, including former gosimple/stylecheck
+    - errcheck       # unchecked errors, including writes and Close
+    - errorlint      # ==, switch, or type assertions that break on wrapped errors
+    - nilerr         # returning nil right after checking err != nil
+    - forcetypeassert # unchecked type assertions panic instead of erroring
+    - ineffassign    # assignments whose values are never used
+    - unused         # unused constants, variables, functions, and types
+    - bodyclose      # unclosed HTTP response bodies leak connections
+    - sqlclosecheck  # unclosed sql.Rows or sql.Stmt leak pool connections
+    - noctx          # HTTP requests without a context cannot be canceled
+    # Security
+    - gosec          # file permissions, path inclusion, exec, weak crypto, ...
+    # Maintainability
+    - revive         # idiomatic Go, including godoc on exported symbols
+    - gocritic       # diagnostic and performance checks
+    - godot          # top-level comments end with a period
+    - misspell       # common misspellings, US spelling
+    - nolintlint     # //nolint must name the linter and give a reason
+    - funlen         # function-length ceiling
+    - forbidigo      # printing and exiting outside main
+    - modernize      # newer language and library idioms, gated by go.mod's go version
+    - usetesting     # t.TempDir, t.Setenv, and t.Context over os and context helpers
+
+  settings:
+    govet:
+      # Every analyzer, minus two that mostly produce noise:
+      #   fieldalignment: struct reordering for negligible memory savings.
+      #   shadow: flags the idiomatic `if err := f(); err != nil` inside
+      #           functions that already declare err.
+      enable-all: true
+      disable:
+        - fieldalignment
+        - shadow
+
+    revive:
+      # Keep revive's defaults and tighten the exported-symbol rule.
+      enable-default-rules: true
+      rules:
+        - name: exported
+          arguments:
+            - checkPrivateReceivers
+            - sayRepetitiveInsteadOfStutters
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - performance
+      settings:
+        hugeParam:
+          # The default (80 bytes) flags ordinary option and config structs.
+          # Copying a few hundred bytes costs less than the aliasing and nil
+          # checks a pointer brings, so only flag genuinely large copies.
+          sizeThreshold: 256
+
+    godot:
+      scope: toplevel
+      capital: false   # sentences may start with a lowercase identifier
+
+    misspell:
+      locale: US
+
+    nolintlint:
+      require-explanation: true
+      require-specific: true
+
+    funlen:
+      # Ceilings above funlen's defaults (60 lines, 40 statements) so that
+      # flat command dispatch fits, low enough to flag functions that do too
+      # much. Split a function that exceeds them rather than raising them.
+      lines: 100
+      statements: 60
+      ignore-comments: true
+
+    forbidigo:
+      # Code below main receives its output streams (an io.Writer) and
+      # returns errors. That keeps output testable and redirectable, and lets
+      # deferred cleanup run. Only main may print directly or exit.
+      forbid:
+        - pattern: ^fmt\.Print(f|ln)?$
+          msg: write to an injected io.Writer instead of stdout
+        - pattern: ^(print|println)$
+          msg: write to an injected io.Writer instead of the built-in print
+        - pattern: ^os\.Exit$
+          msg: return an error; only main should exit (os.Exit skips deferred calls)
+        - pattern: ^log\.(Fatal|Panic)
+          msg: return an error; log.Fatal exits and log.Panic panics past callers
+      analyze-types: true
+
+  exclusions:
+    # Skip files with a "Code generated ... DO NOT EDIT." header.
+    generated: lax
+    # Vendored code is maintained upstream. tools/xplat is a byte-identical
+    # copy of github.com/nicholashoule/go-webapp/tools/xplat: fix findings
+    # there and copy it again, never edit it here.
+    paths:
+      - ^tools/xplat/
+    rules:
+      # main is the one place allowed to print and exit.
+      - path: (^|/)main\.go$
+        linters: [forbidigo]
+
+      # Tests: fixtures and long table-driven cases do not need godoc or
+      # length limits, and may print or call os.Exit from TestMain.
+      - path: _test\.go
+        linters: [godot, revive, funlen, forbidigo]
+
+      # Tests create fixtures with ordinary permissions (G301, G302, G306)
+      # and read files they chose themselves (G304). Every other gosec rule
+      # still applies to tests.
+      - path: _test\.go
+        linters: [gosec]
+        text: "G30[1246]"
+
+issues:
+  # Report everything instead of the first few findings per linter.
+  max-issues-per-linter: 0
+  max-same-issues: 0

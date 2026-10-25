@@ -1,0 +1,100 @@
+# Normalize line endings to LF by default. Rules below override per type;
+# binary files are marked so Git never rewrites their bytes or tries a text diff.
+* text=auto eol=lf
+
+# ---------------------------------------------------------------------------
+# Go
+# ---------------------------------------------------------------------------
+# Go files must stay LF: CRLF sources compile, but gofmt and golangci-lint
+# report every line as misformatted. go.sum is a generated checksum list, so
+# its diffs are collapsed and it is left out of language statistics.
+*.go     text eol=lf diff=golang
+go.mod   text eol=lf
+go.sum   text eol=lf linguist-generated=true
+go.work  text eol=lf
+go.work.sum text eol=lf linguist-generated=true
+
+# Common generated Go. Marking them collapses review diffs and keeps them out
+# of language statistics. Only add patterns that cannot match hand-written
+# files: a collapsed diff is easy to approve without reading.
+*.pb.go           linguist-generated=true
+*_gen.go          linguist-generated=true
+zz_generated*.go  linguist-generated=true
+
+# Vendored modules, when present, are third-party code.
+vendor/** linguist-vendored=true
+
+# ---------------------------------------------------------------------------
+# Docs, config, and data
+# ---------------------------------------------------------------------------
+*.md    text eol=lf linguist-documentation=true
+*.txt   text eol=lf
+*.json  text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.toml  text eol=lf
+*.ini   text eol=lf
+*.conf  text eol=lf
+*.tmpl  text eol=lf
+*.tpl   text eol=lf
+*.html  text eol=lf
+*.css   text eol=lf
+*.js    text eol=lf
+*.svg   text eol=lf
+*.sql   text eol=lf
+*.proto text eol=lf
+
+# Extensionless project files.
+Makefile        text eol=lf
+Dockerfile      text eol=lf
+Dockerfile.*    text eol=lf
+LICENSE         text eol=lf
+.gitignore      text eol=lf
+.gitattributes  text eol=lf
+.dockerignore   text eol=lf
+.editorconfig   text eol=lf
+
+# Environment and key material is normally gitignored. It is pinned to LF
+# anyway so a stray commit cannot carry CRLF into a parser.
+.env    text eol=lf
+.env.*  text eol=lf
+*.pem   text eol=lf
+*.crt   text eol=lf
+*.key   text eol=lf
+
+# ---------------------------------------------------------------------------
+# Scripts
+# ---------------------------------------------------------------------------
+# Unix shells fail on CRLF ("bad interpreter"). Windows batch files need CRLF.
+*.sh    text eol=lf
+*.bash  text eol=lf
+*.ps1   text eol=lf
+*.bat   text eol=crlf
+*.cmd   text eol=crlf
+
+# ---------------------------------------------------------------------------
+# Binary files: never normalize line endings or text-diff.
+# ---------------------------------------------------------------------------
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.ico    binary
+*.webp   binary
+*.pdf    binary
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+*.gz     binary
+*.tgz    binary
+*.zip    binary
+*.zst    binary
+*.wasm   binary
+*.exe    binary
+*.so     binary
+*.dylib  binary
+*.dll    binary
+*.a      binary
+*.db     binary
+*.sqlite binary

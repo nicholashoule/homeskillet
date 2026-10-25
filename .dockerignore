@@ -1,0 +1,58 @@
+# Keep the Docker build context small and free of secrets. A Go build needs
+# go.mod, go.sum, the .go sources, and any files they embed or read in tests
+# (testdata/); everything below is excluded because no build step uses it.
+
+# Version control and CI
+.git/
+.github/
+.gitignore
+.gitattributes
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Secrets: never bake these into an image layer
+.env
+.env.*
+*.pem
+*.key
+
+# Build output and test artifacts
+bin/
+dist/
+build/
+*.exe
+*.test
+*.out
+*.prof
+coverage.*
+
+# Logs and temporary files
+*.log
+logs/
+tmp/
+temp/
+*.tmp
+
+# Documentation. Remove these lines if a package embeds docs with go:embed.
+docs/
+*.md
+LICENSE
+
+# Container definitions: the build does not read them, and excluding them
+# means editing one does not invalidate the cached build context.
+Dockerfile
+Dockerfile.*
+.dockerignore
+docker-compose*.yml
+compose*.yml
+
+# Vendored modules are normally needed. Uncomment only if the image runs
+# `go mod download` instead of building with -mod=vendor.
+# vendor/

@@ -1,0 +1,50 @@
+# Build output: make writes to bin/; a bare `go build` writes the binary,
+# named after the module, to the repository root.
+bin/
+dist/
+/homeskillet
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+
+# Test binaries (go test -c) and coverage profiles
+*.test
+*.out
+coverage.html
+
+# Dependencies and local workspaces
+vendor/
+go.work
+go.work.sum
+
+# Editors and operating systems
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# Local environment files; commit only the template
+.env*
+!.env.example
+
+# Logs and temporary files
+*.log
+tmp/
+*.tmp
+
+# Keys and certificates must never be committed
+*.crt
+*.key
+*.pem
+*.p12
+*.pfx
+
+# Agent local state
+.claude/
+.copilot/
+.openai/
