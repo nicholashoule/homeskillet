@@ -484,9 +484,17 @@ func TestWindowsNames(t *testing.T) {
 	entry := func(target string) string {
 		return `{"source": "home/x", "target": "` + target + `"}`
 	}
+	// On a Windows host, filepath.IsLocal refuses device names and drive
+	// letters itself, before the Windows rules run, and \ separates names, so
+	// the rules alone can be seen only from Linux and macOS.
+	windowsHost := runtime.GOOS == "windows"
 	for _, target := range []string{"CON", "nul.txt", "Documents/COM1.log", "lpt9", "COM¹", "notes.", "trailing ", "a:b", "what?", `back\\slash`, "a|b"} {
+		if windowsHost && strings.Contains(target, `\`) {
+			continue
+		}
 		data := `{"platforms": ["windows"], "files": [` + entry(target) + `]}`
-		if _, err := Load(write(t, data)); err == nil || !strings.Contains(err.Error(), "Windows") {
+		_, err := Load(write(t, data))
+		if err == nil || !windowsHost && !strings.Contains(err.Error(), "Windows") {
 			t.Errorf("%q accepted for Windows: %v", target, err)
 		}
 	}
@@ -502,12 +510,13 @@ func TestWindowsNames(t *testing.T) {
 		t.Errorf("case collision accepted: %v", err)
 	}
 	// The rules apply only where Windows is a target, by default or per entry.
+	// A Windows host refuses a:b anyway, as a path on drive A.
 	for _, data := range []string{
 		`{"files": [` + entry("a:b") + `]}`,
 		`{"platforms": ["linux"], "files": [` + entry("a:b") + `]}`,
 		`{"platforms": ["windows"], "files": [{"source": "home/x", "target": "a:b", "platforms": ["darwin"]}]}`,
 	} {
-		if _, err := Load(write(t, data)); err != nil {
+		if _, err := Load(write(t, data)); err != nil && !windowsHost {
 			t.Errorf("%s refused: %v", data, err)
 		}
 	}

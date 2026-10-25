@@ -52,18 +52,26 @@ binary as root inside a user namespace.
   with its GNU Make 3.81.
 - On Windows, `go vet` and `go test` for the packages that build there, and a
   check that the program only says Windows isn't supported.
-- `make cross` and a coverage upload, once, on Linux with the latest Go.
-- golangci-lint, which also checks formatting, and repogov, which checks the
-  Markdown line limits in [.github/repogov-config.json](../.github/repogov-config.json).
-  Both are pinned; use the same versions locally so results match:
+- `make cross`, once, on Linux with the latest Go.
+- golangci-lint, which also checks formatting; repogov, which checks the
+  Markdown line limits in [.github/repogov-config.json](../.github/repogov-config.json);
+  and demojify, which fails on emoji in Go, Markdown, YAML, and JSON files.
+  demojify only reports, and skips `_test.go` files, which may hold emoji as
+  test input. Each is pinned; use the same versions locally so results match:
 
 ```sh
 go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all
+go run github.com/nicholashoule/demojify-sanitize/cmd/demojify@v1.2.0 -root . -exts .go,.md,.yml,.yaml,.json
 ```
 
 Actions are pinned by commit SHA. [Dependabot](../.github/dependabot.yml)
 proposes updates to them weekly, and to Go modules should one ever be added.
-It cannot update the golangci-lint and repogov versions; bump those by hand.
+It cannot update the golangci-lint, repogov, and demojify versions; bump those
+by hand.
+Write each action's exact release in the comment after its SHA, such as
+`# v4.3.1` rather than `# v4`. Dependabot rewrites the comment only while it
+names a tag on the pinned commit, and a major tag such as `v4` moves on to
+later releases, which leaves the comment behind.
 
 ## Binary Size
 
