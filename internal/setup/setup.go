@@ -361,6 +361,12 @@ func runDetached(cmd *exec.Cmd) error {
 		}
 	}
 	if interrupted != nil {
+		// The step may have exited while children that ignore the signal
+		// go on: with output in files rather than pipes, Wait returns as
+		// soon as the leader is gone, before the grace period above fires.
+		// The group keeps its ID while any member lives, so it is killed
+		// here as well; nothing remains to signal otherwise.
+		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 		return errors.Join(fmt.Errorf("stopped by %v", interrupted), err)
 	}
 	return err

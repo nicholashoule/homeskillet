@@ -577,3 +577,63 @@ func TestRunYesCancellationStopsChildren(t *testing.T) {
 		t.Fatalf("canceled step: %v after %v", err, time.Since(start))
 	}
 }
+
+// TestRunYesInterruptKillsOrphans checks that an interrupt also stops a
+// step's background children when the step's output goes to files: the shell
+// then exits at once, before the grace period, and Wait returns while the
+// children, which ignore the interrupt, would otherwise go on.
+func TestRunYesInterruptKillsOrphans(t *testing.T) {
+	grace := interruptGrace
+	interruptGrace = 2 * time.Second
+	t.Cleanup(func() { interruptGrace = grace })
+	steps := []config.Step{{Name: "background", Run: config.Commands{{"sh", "-c", `sleep 30 & echo $! > "$HOME/child"; : > "$HOME/started"; wait`}}}}
+	repo, home := fixture(t, steps...)
+	plans := prepare(t, steps, repo, home)
+	output, err := os.CreateTemp(t.TempDir(), "output")
+	if err != nil {
+		t.Fatal(err)
+	}
+	result := make(chan error, 1)
+	go func() {
+		result <- Run(context.Background(), plans, Options{Repo: repo, Home: home, Yes: true, Output: output, Errors: output})
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for !exists(filepath.Join(home, "started")) {
+		if time.Now().After(deadline) {
+			t.Fatal("the step did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("the interrupted step succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("setup did not stop")
+	}
+	if err := output.Close(); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join(home, "child"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var child int
+	if _, err := fmt.Sscan(string(data), &child); err != nil {
+		t.Fatal(err)
+	}
+	// Right after Run returns, the child must be gone, not merely doomed by
+	// a grace period that was canceled.
+	deadline = time.Now().Add(time.Second)
+	for syscall.Kill(child, 0) == nil {
+		if time.Now().After(deadline) {
+			_ = syscall.Kill(child, syscall.SIGKILL)
+			t.Fatal("a background child outlived the interrupted step")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
