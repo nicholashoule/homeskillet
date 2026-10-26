@@ -242,20 +242,60 @@ func TestWritableErrorWSLHint(t *testing.T) {
 	}
 }
 
-// TestWithinIgnoresCase checks that containment, like CheckLocation, does not
-// depend on case, since macOS file systems usually do not.
-func TestWithinIgnoresCase(t *testing.T) {
+// TestWithinIsExact checks that containment compares paths exactly: on a
+// case-sensitive volume, ~/Repo is not inside ~/repo, and a symlink that
+// resolves there must not count as staying in the repository.
+func TestWithinIsExact(t *testing.T) {
+	if Within("/home/u/dotfiles", "/home/u/Dotfiles/x") || !Within("/home/u/dotfiles", "/home/u/dotfiles/x") {
+		t.Fatal("Within must compare exactly")
+	}
 	for _, test := range []struct {
-		root, path string
-		want       bool
+		a, b string
+		want bool
 	}{
 		{"/home/u/dotfiles", "/home/u/Dotfiles/.git/hooks", true},
-		{"/home/u/dotfiles", "/home/u/dotfiles", true},
+		{"/home/u/Dotfiles/.git", "/home/u/dotfiles", true},
 		{"/home/u/dotfiles", "/home/u/dotfiles-other", false},
-		{"/home/u/Dotfiles", "/home/u", false},
 	} {
-		if got := Within(test.root, test.path); got != test.want {
-			t.Errorf("Within(%q, %q) = %v, want %v", test.root, test.path, got, test.want)
+		if got := Overlaps(test.a, test.b); got != test.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", test.a, test.b, got, test.want)
 		}
+	}
+}
+
+// TestResolveRefusesCaseDistinctDirectory checks that a symlink in the
+// repository to a sibling directory whose name differs only by case leads
+// outside the repository on a case-sensitive volume: the sibling is another
+// directory, which CheckTree never walks, so a script there would otherwise
+// run unchecked.
+func TestResolveRefusesCaseDistinctDirectory(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo, sibling := filepath.Join(root, "repo"), filepath.Join(root, "Repo")
+	for _, dir := range []string{repo, sibling} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repoInfo, _ := os.Stat(repo)
+	if siblingInfo, err := os.Stat(sibling); err == nil && os.SameFile(repoInfo, siblingInfo) {
+		t.Skip("case-insensitive file system: Repo is the repository")
+	}
+	if err := os.WriteFile(filepath.Join(sibling, "install.sh"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../Repo", filepath.Join(repo, "scripts")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve(repo, filepath.Join(repo, "scripts", "install.sh")); err == nil {
+		t.Fatal("a symlink to a case-distinct sibling directory resolved inside the repository")
+	}
+	if err := CheckTree(repo); err == nil {
+		t.Fatal("CheckTree accepted a tree with a symlink leaving it")
 	}
 }

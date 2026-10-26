@@ -147,20 +147,20 @@ func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking 
 		// homeskillet's own data, including the record and backups, must
 		// never be replaced by a link, nor sit inside a target that link
 		// --force could move aside.
-		if trust.Within(data, target) || trust.Within(target, data) {
+		if trust.Overlaps(data, target) {
 			return nil, fmt.Errorf("target %s overlaps homeskillet's data directory %s", target, data)
 		}
 		// When home is the repository or contains it, a target could replace
 		// repository files, including other entries' sources; a target that
 		// contains the repository, such as .config for a clone in
 		// ~/.config/dotfiles, could take the whole repository with it.
-		if trust.Within(repo, target) || trust.Within(target, repo) {
+		if trust.Overlaps(repo, target) {
 			return nil, fmt.Errorf("target %s overlaps the repository %s", target, repo)
 		}
 		// Overlapping targets such as "a" and "a/b" would make the second link
 		// be created through the first.
 		for _, previous := range declared {
-			if trust.Within(previous, target) || trust.Within(target, previous) {
+			if trust.Overlaps(previous, target) {
 				return nil, fmt.Errorf("overlapping targets: %s and %s", previous, target)
 			}
 		}

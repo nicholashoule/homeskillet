@@ -485,6 +485,16 @@ func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 	if pinned != "" {
 		target, line = filepath.Join(versions, pinned), pinned+" (pinned)"
 	}
+	// latest and previous are brought up to date with the versions that
+	// exist first: after a version directory was deleted by hand, they may
+	// still name it, and current following a stale latest would dangle.
+	links, err := l.linkChanges(state.Versions)
+	if err != nil {
+		return err
+	}
+	if err := applyLinks(links, dryRun, log); err != nil {
+		return err
+	}
 	if err := say(log, "current\t%s\n", line); err != nil || dryRun {
 		return err
 	}

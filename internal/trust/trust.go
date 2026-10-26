@@ -353,14 +353,21 @@ func CheckTree(root string) error {
 // path strings only, so both must be clean and absolute, with symlinks already
 // resolved wherever the answer guards a filesystem change.
 func Within(root, path string) bool {
-	// Compared without regard to case, as CheckLocation does: macOS file
-	// systems are usually case-insensitive, so a repository opened as
-	// ~/dotfiles is the same directory as ~/Dotfiles there, and a target
-	// spelled the other way must still count as inside it. On Linux this
-	// refuses only paths that differ from the repository or data directory
-	// by case alone.
-	relative, err := filepath.Rel(strings.ToLower(root), strings.ToLower(path))
+	relative, err := filepath.Rel(root, path)
 	return err == nil && filepath.IsLocal(relative)
+}
+
+// Overlaps reports whether one of a and b is the other or lies below it,
+// compared without regard to case. It is for refusals only, such as a link
+// target that may not lie inside the repository: on macOS, whose file systems
+// are usually case-insensitive, ~/Dotfiles is the repository opened as
+// ~/dotfiles, so a target spelled either way must be refused. It never
+// decides that a path is safely inside a root; Within does that, exactly,
+// because on a case-sensitive volume ~/Repo is a different directory than
+// ~/repo, and treating it as inside would let a symlink reach it unchecked.
+func Overlaps(a, b string) bool {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	return Within(a, b) || Within(b, a)
 }
 
 // CheckOwner requires path, following symlinks, to be owned by the current

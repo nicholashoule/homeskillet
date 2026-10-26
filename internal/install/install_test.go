@@ -613,3 +613,28 @@ func TestUnchangedInstallKeepsRecord(t *testing.T) {
 		t.Fatalf("command runs %q", got)
 	}
 }
+
+// TestUseRepairsStaleLatest checks that when the deleted pinned version was
+// also the highest, so latest still names it, self use latest refreshes
+// latest and previous first and the command runs an installed version.
+func TestUseRepairsStaleLatest(t *testing.T) {
+	layout, builds := fixture(t)
+	install(t, layout, program(t, builds, "one"), "v1.0.0")
+	install(t, layout, program(t, builds, "two"), "v1.1.0")
+	if err := layout.Use("v1.1.0", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(layout.Data, versions, "v1.1.0")); err != nil {
+		t.Fatal(err)
+	}
+	var log bytes.Buffer
+	if err := layout.Use(Latest, false, &log); err != nil {
+		t.Fatal(err)
+	}
+	if got := runs(t, layout); got != "one" {
+		t.Fatalf("command runs %q; log:\n%s", got, log.String())
+	}
+	if latest, previous := links(t, layout); latest != "versions/v1.0.0" || previous != "" {
+		t.Fatalf("links after repair: %q, %q", latest, previous)
+	}
+}

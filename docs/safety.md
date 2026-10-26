@@ -42,9 +42,11 @@ at its path in home with the Unix time appended, then links:
   anything it replaced can be restored by moving it back.
 - It never moves a directory. A directory where the repository has a file
   can hold anything, even the repository itself, so moving it is left to you.
-- No target may contain the repository or the data directory, with or
-  without `--force`, so a target such as `.config` for a clone in
-  `~/.config/dotfiles` is refused.
+- No target may contain or lie inside the repository or the data directory,
+  with or without `--force`, so a target such as `.config` for a clone in
+  `~/.config/dotfiles` is refused. Paths are compared without regard to case
+  here, since macOS file systems usually are, while every check that a path
+  stays inside the repository compares exactly.
 - An absent source still blocks it, so nothing moves when linking would fail.
 - If any move fails, the moves already made are undone. If linking fails after
   the moves, each file not yet replaced by its link is moved back, and the
