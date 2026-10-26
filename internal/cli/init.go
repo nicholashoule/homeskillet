@@ -41,14 +41,19 @@ func runInit(inv invocation, output io.Writer) error {
 		return fmt.Errorf("repository: %w", err)
 	}
 	path := filepath.Join(repo, config.FileName)
+	exists := fmt.Errorf("%s already exists; init never replaces it", path)
+	// Checked first for a clear error before anything is created; the write
+	// itself refuses a manifest that appears after this (see safefile.Create).
 	if _, err := os.Lstat(path); err == nil {
-		return fmt.Errorf("%s already exists; init never replaces it", path)
+		return exists
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
-	// Only the user can then create files in the repository, so nothing else
-	// can put a manifest in place between the check above and the write.
 	if err := trust.CheckRepository(repo); err != nil {
+		return err
+	}
+	createHome, err := homeToCreate(repo)
+	if err != nil {
 		return err
 	}
 	detected, _ := host.Detect()
@@ -66,11 +71,6 @@ func runInit(inv invocation, output io.Writer) error {
 	}
 	manifest := fmt.Sprintf("{\n  \"platforms\": [%s],\n  \"setup\": []\n}\n", quoted)
 	home := filepath.Join(repo, config.HomeDir)
-	_, err = os.Lstat(home)
-	createHome := errors.Is(err, fs.ErrNotExist)
-	if err != nil && !createHome {
-		return err
-	}
 
 	if inv.dryRun {
 		text := ""
@@ -89,10 +89,13 @@ func runInit(inv invocation, output io.Writer) error {
 			return err
 		}
 	}
-	err = safefile.Write(path, 0o644, func(w io.Writer) error {
+	err = safefile.Create(path, 0o644, func(w io.Writer) error {
 		_, err := io.WriteString(w, manifest)
 		return err
 	})
+	if errors.Is(err, fs.ErrExist) {
+		err = exists
+	}
 	if err != nil {
 		// Leave the repository as it was: home/ was empty when made here.
 		if createHome {
@@ -102,4 +105,35 @@ func runInit(inv invocation, output io.Writer) error {
 	}
 	_, err = fmt.Fprintf(output, "created\t%s\nnote\tfiles under %s/ are found without a list; add setup steps under \"setup\"\n", path, config.HomeDir)
 	return err
+}
+
+// homeToCreate reports whether repo has no home directory, which init then
+// creates. An existing one must be what config.Load accepts: a directory, or
+// a symlink to one inside the repository. Anything else, such as a file, a
+// dangling symlink, or one leading out of the repository, is refused before
+// init writes anything, rather than leaving a manifest Load rejects. The
+// checks go through an os.Root, which resolves symlinks as Load does.
+func homeToCreate(repo string) (bool, error) {
+	root, err := os.OpenRoot(repo)
+	if err != nil {
+		return false, err
+	}
+	create, err := checkHome(root)
+	return create, errors.Join(err, root.Close())
+}
+
+func checkHome(root *os.Root) (bool, error) {
+	if _, err := root.Lstat(config.HomeDir); errors.Is(err, fs.ErrNotExist) {
+		return true, nil
+	} else if err != nil {
+		return false, err
+	}
+	info, err := root.Stat(config.HomeDir)
+	if err != nil {
+		return false, fmt.Errorf("%s in %s: %w", config.HomeDir, root.Name(), err)
+	}
+	if !info.IsDir() {
+		return false, fmt.Errorf("%s in %s is not a directory", config.HomeDir, root.Name())
+	}
+	return false, nil
 }

@@ -446,10 +446,15 @@ func TestRunYesDetachesSteps(t *testing.T) {
 	}
 }
 
-// TestRunYesPassesInterrupts checks that Ctrl-C, which the terminal sends
-// only to homeskillet's process group, still stops a step run under --yes.
-func TestRunYesPassesInterrupts(t *testing.T) {
-	steps := []config.Step{{Name: "slow", Run: config.Commands{{"sh", "-c", `: > "$HOME/started"; sleep 30`}}}}
+// interrupt runs steps under --yes, sends this process SIGINT, as Ctrl-C
+// would, once the first step has created $HOME/started, and returns Run's
+// error. It fails the test if Run has not returned ten seconds later.
+func interrupt(t *testing.T, steps ...config.Step) (home string, err error) {
+	t.Helper()
+	// Kill what ignores the interrupt quickly, to keep the tests fast.
+	grace := interruptGrace
+	interruptGrace = 200 * time.Millisecond
+	t.Cleanup(func() { interruptGrace = grace })
 	repo, home := fixture(t, steps...)
 	plans := prepare(t, steps, repo, home)
 	result := make(chan error, 1)
@@ -468,11 +473,39 @@ func TestRunYesPassesInterrupts(t *testing.T) {
 	}
 	select {
 	case err := <-result:
-		if err == nil {
-			t.Fatal("the interrupted step succeeded")
-		}
+		return home, err
 	case <-time.After(10 * time.Second):
-		t.Fatal("the interrupt did not reach the step")
+		t.Fatal("setup did not stop after the interrupt")
+		return home, nil
+	}
+}
+
+// TestRunYesPassesInterrupts checks that Ctrl-C, which the terminal sends
+// only to homeskillet's process group, still stops a step run under --yes.
+func TestRunYesPassesInterrupts(t *testing.T) {
+	if _, err := interrupt(t, config.Step{Name: "slow", Run: config.Commands{{"sh", "-c", `: > "$HOME/started"; sleep 30`}}}); err == nil {
+		t.Fatal("the interrupted step succeeded")
+	}
+}
+
+// TestRunYesStopsWhatIgnoresInterrupts checks that Ctrl-C stops a step whose
+// background job ignores SIGINT, as a non-interactive shell's background jobs
+// do, rather than waiting for the job while it holds the step's output.
+func TestRunYesStopsWhatIgnoresInterrupts(t *testing.T) {
+	if _, err := interrupt(t, config.Step{Name: "background", Run: config.Commands{{"sh", "-c", `: > "$HOME/started"; sleep 30 & wait`}}}); err == nil {
+		t.Fatal("the interrupted step succeeded")
+	}
+}
+
+// TestRunYesInterruptStopsSetup checks that Ctrl-C stops setup even when the
+// step catches the signal and exits successfully: no later step runs.
+func TestRunYesInterruptStopsSetup(t *testing.T) {
+	home, err := interrupt(t,
+		config.Step{Name: "catches", Run: config.Commands{{"sh", "-c", `trap 'exit 0' INT; : > "$HOME/started"; while :; do sleep 1; done`}}},
+		touch("after"),
+	)
+	if err == nil || exists(filepath.Join(home, "after")) {
+		t.Fatalf("setup went on after the interrupt: %v", err)
 	}
 }
 

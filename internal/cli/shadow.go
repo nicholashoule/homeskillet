@@ -20,8 +20,8 @@ import (
 var userBins = []string{filepath.Join(".local", "bin"), "bin"}
 
 // shadowed returns, for each plan that is or will be linked where a shell
-// finds it before a command of the same name elsewhere on PATH, that other
-// command: a linked ~/.local/bin/sudo, say, runs instead of /usr/bin/sudo.
+// finds it before a command of the same name later on PATH, and after none
+// earlier, that later command: a linked ~/.local/bin/sudo, say, runs instead of /usr/bin/sudo.
 // Linking one is allowed, as a newer tool or a wrapper in ~/.local/bin is
 // common, but it is pointed out, because a repository from someone else could
 // use one to capture what is typed into it, a sudo password included. With
@@ -59,16 +59,30 @@ func shadowed(plans []link.Plan, home string, force bool) map[string]string {
 		if at < 0 || err != nil || !executable(source) {
 			continue
 		}
-		for _, dir := range dirs[at+1:] {
-			other := filepath.Join(dir, filepath.Base(plan.Target))
-			//nolint:gosec // G703: only stats a command name in a PATH directory, as a shell's search does, and opens nothing
-			if info, err := os.Stat(other); err == nil && executable(info) && !os.SameFile(info, source) {
-				found[plan.Target] = other
-				break
-			}
+		// A command of the same name earlier on PATH runs instead of the
+		// link, so the link takes the place of nothing.
+		name := filepath.Base(plan.Target)
+		if command(dirs[:at], name, source) != "" {
+			continue
+		}
+		if other := command(dirs[at+1:], name, source); other != "" {
+			found[plan.Target] = other
 		}
 	}
 	return found
+}
+
+// command returns the first executable named name in dirs, as a shell's
+// search would find it, leaving out source itself, or "" if there is none.
+func command(dirs []string, name string, source os.FileInfo) string {
+	for _, dir := range dirs {
+		path := filepath.Join(dir, name)
+		//nolint:gosec // G703: only stats a command name in a PATH directory, as a shell's search does, and opens nothing
+		if info, err := os.Stat(path); err == nil && executable(info) && !os.SameFile(info, source) {
+			return path
+		}
+	}
+	return ""
 }
 
 // executable reports whether info describes a regular file that someone may

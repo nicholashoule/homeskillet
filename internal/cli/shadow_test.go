@@ -40,6 +40,8 @@ func TestShadowed(t *testing.T) {
 	}
 	system := filepath.Join(filepath.Dir(home), "system")
 	installed(t, system, "tool", "plain")
+	fallback := filepath.Join(filepath.Dir(home), "fallback")
+	installed(t, fallback, "tool")
 	// tools is a PATH directory in home other than userBins, which count as
 	// first wherever PATH lists them.
 	tools := filepath.Join(home, "tools")
@@ -60,6 +62,9 @@ func TestShadowed(t *testing.T) {
 		{"user bin listed last", path(system, filepath.Join(home, ".local", "bin")), plan(".local/bin/tool", "tool", link.Missing), false, shadows},
 		{"ahead on PATH", path(tools, system), plan("tools/tool", "tool", link.Missing), false, shadows},
 		{"behind on PATH", path(system, tools), plan("tools/tool", "tool", link.Missing), false, ""},
+		// An earlier command already wins, so the link replaces nothing that
+		// would run, though a later one shares its name.
+		{"earlier command wins", path(system, tools, fallback), plan("tools/tool", "tool", link.Missing), false, ""},
 		{"not on PATH", path(system), plan(".config/tool", "tool", link.Missing), false, ""},
 		{"not executable", path(system), plan(".local/bin/plain", "plain", link.Missing), false, ""},
 		{"no other command", path(system), plan(".local/bin/unique", "unique", link.Missing), false, ""},

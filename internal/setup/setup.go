@@ -35,6 +35,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/trust"
@@ -292,6 +293,12 @@ func executeCommand(ctx context.Context, command []string, opts Options) error {
 // on to the step's process group. The step leads that group, as Setsid makes
 // it, so a negative process ID reaches everything it started; cancellation
 // stops the whole group the same way.
+//
+// A step need not stop for the signal: a non-interactive shell starts its
+// background jobs ignoring SIGINT, and a step may catch it. So whatever is
+// still running interruptGrace after the first signal is killed, which no
+// process can ignore, and the step fails even if it exited successfully, so
+// setup stops rather than run the commands and steps after it.
 func runDetached(cmd *exec.Cmd) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
@@ -301,16 +308,25 @@ func runDetached(cmd *exec.Cmd) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
-	done := make(chan struct{})
+	done, stopped := make(chan struct{}), make(chan struct{})
+	var interrupted os.Signal
 	go func() {
+		defer close(stopped)
+		var kill <-chan time.Time
 		for {
 			select {
 			case received := <-signals:
+				// The step may already have exited, leaving nothing to
+				// signal.
 				if number, ok := received.(syscall.Signal); ok {
-					// The step may already have exited, leaving nothing to
-					// signal.
 					_ = syscall.Kill(-cmd.Process.Pid, number)
 				}
+				if interrupted == nil {
+					interrupted = received
+					kill = time.After(interruptGrace)
+				}
+			case <-kill:
+				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
 			case <-done:
 				return
 			}
@@ -318,8 +334,23 @@ func runDetached(cmd *exec.Cmd) error {
 	}()
 	err := cmd.Wait()
 	close(done)
+	<-stopped
+	// A signal that arrived as the step finished still counts.
+	if interrupted == nil {
+		select {
+		case interrupted = <-signals:
+		default:
+		}
+	}
+	if interrupted != nil {
+		return errors.Join(fmt.Errorf("stopped by %v", interrupted), err)
+	}
 	return err
 }
+
+// interruptGrace is how long a step run under --yes has to stop after an
+// interrupt before its process group is killed (see runDetached).
+var interruptGrace = 5 * time.Second
 
 // confirm asks whether to run the step just described. Only "y" or "yes"
 // approves. Anything else, including end of input, declines, so a closed or

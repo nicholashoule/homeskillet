@@ -54,7 +54,8 @@ and demojify, the checks CI runs, and stops when any fails:
 - It checks the working tree, which can differ from what is staged. CI checks
   what was committed.
 - The installed hook is a copy. Run `make hooks` again after the hook changes.
-- `make hooks` never replaces a hook it did not install, and refuses when
+- `make hooks` never replaces a hook it did not install, such as one written by
+  hand or a symlink, and refuses when
   `core.hooksPath` is set, since that directory may serve every repository.
 - The first commit downloads the pinned repogov and demojify, so it needs the
   network. `git commit --no-verify` skips the hook once.

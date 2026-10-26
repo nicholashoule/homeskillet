@@ -22,8 +22,8 @@ An empty option value or argument, as from an unset variable in
 `--home "$SCRATCH"` or `unlink ~/dotfiles "$FILE"`, is refused. Read as the
 default, it would mean your real home, or every file.
 
-A linked executable that a shell finds before a command of the same name
-elsewhere on `PATH`, such as `~/.local/bin/sudo` ahead of `/usr/bin/sudo`, is
+A linked executable that a shell finds first, ahead of a command of the same
+name later on `PATH`, such as `~/.local/bin/sudo` ahead of `/usr/bin/sudo`, is
 linked, but `status` and `link` list it under "Shadowing commands" (scripts
 get a line on standard error). `~/.local/bin` and `~/bin` count as first on
 `PATH` even before your shell adds them, as many systems' startup files do. A
@@ -138,8 +138,9 @@ A setup step is code from the repository, which may be someone else's, so
   however a step reaches `sudo`: through `sh -c`, a script, or `eval` of hex
   or base64 text, which would defeat any check of the command's words. It
   cannot stop `sudo` set up to need no password (`NOPASSWD`) or to share one
-  cached password across terminals (`timestamp_type=global`). Ctrl-C still
-  stops the step and everything it started. Steps you approve one at a time
+  cached password across terminals (`timestamp_type=global`). Ctrl-C stops
+  the step, kills whatever it started that is still running a few seconds
+  later, and stops setup even if the step then exits successfully. Steps you approve one at a time
   keep the terminal.
 - A Homebrew directory counts for `provides` only when you or root own it, so
   another account, such as a user named `linuxbrew`, cannot make a step look
@@ -151,9 +152,11 @@ will do once it runs.
 ## Starter Manifests and Completion
 
 - `init` writes `dotfiles.json` only where none exists, not even as a symlink,
-  and refuses a repository directory another user could write to, since the
-  manifest decides what runs. It creates a missing `home/` private, and removes
-  it again if writing the manifest fails.
+  and never over one that appears while it runs, and refuses a repository
+  directory another user could write to, since the manifest decides what runs.
+  An existing `home/` must be a directory, or a symlink to one inside the
+  repository, as linking requires. It creates a missing `home/` private, and
+  removes it again if writing the manifest fails.
 - Shell completion only reads, as `status` and `self list` do: it never runs a
   setup step or writes a file. Running as root, it reads nothing without
   `--allow-root`, and it never offers a candidate with control or formatting

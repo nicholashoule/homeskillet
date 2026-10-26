@@ -98,8 +98,8 @@ A command runs in this order:
    steps' commands in order, stopping at the first failure. Before each step it checks again whether the step is done and
    that the tree passes `trust.CheckTree`, since an earlier step may have
    changed either. Under `--yes`, steps get no input and run in a session
-   of their own, without the terminal (`runDetached`), with interrupts
-   passed on to them. Before each step,
+   of their own, without the terminal (`runDetached`); an interrupt is
+   passed on to them, and stops setup. Before each step,
    `searchPath` appends the home's `.local/bin` to
    `PATH` if it exists and passes `trust.CheckDirectory`; `provides`, the
    step's program, and the step's own environment all use that `PATH`, so a

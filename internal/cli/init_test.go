@@ -157,6 +157,50 @@ func TestInitRefusesSharedRepository(t *testing.T) {
 	}
 }
 
+// TestInitRefusesUnusableHome checks that init writes nothing when home/
+// exists but Load would refuse it, and accepts a symlink to a directory
+// inside the repository, as Load does.
+func TestInitRefusesUnusableHome(t *testing.T) {
+	outside := t.TempDir()
+	for name, test := range map[string]struct {
+		make func(t *testing.T, repo string)
+		ok   bool
+	}{
+		"a file": {func(t *testing.T, repo string) {
+			if err := os.WriteFile(filepath.Join(repo, config.HomeDir), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"a dangling symlink": {func(t *testing.T, repo string) {
+			if err := os.Symlink("missing", filepath.Join(repo, config.HomeDir)); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"a symlink out of the repository": {func(t *testing.T, repo string) {
+			if err := os.Symlink(outside, filepath.Join(repo, config.HomeDir)); err != nil {
+				t.Fatal(err)
+			}
+		}, false},
+		"a symlink to a directory inside": {func(t *testing.T, repo string) {
+			if err := os.Mkdir(filepath.Join(repo, "laptop"), 0o700); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Symlink("laptop", filepath.Join(repo, config.HomeDir)); err != nil {
+				t.Fatal(err)
+			}
+		}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			repo := emptyRepository(t)
+			test.make(t, repo)
+			_, err := initialize(repo)
+			if written := exists(filepath.Join(repo, config.FileName)); (err == nil) != test.ok || written != test.ok {
+				t.Fatalf("error %v, manifest written %v", err, written)
+			}
+		})
+	}
+}
+
 func TestInitArguments(t *testing.T) {
 	repo := emptyRepository(t)
 	for _, args := range [][]string{

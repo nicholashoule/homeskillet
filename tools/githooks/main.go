@@ -67,15 +67,28 @@ func run(ctx context.Context) (string, string, error) {
 // install writes hook to dir/pre-commit, unless a hook this command did not
 // install is already there. It reports "installed", "updated", or
 // "unchanged".
+//
+// It looks at the entry itself before reading through it: reading follows a
+// symlink, and a dangling one reads as absent, which would let the write
+// replace it. This command only ever writes a regular file, so a symlink or
+// anything else in its place is someone else's.
 func install(hook []byte, dir string) (string, error) {
 	if !bytes.Contains(hook, []byte(marker)) {
 		return "", fmt.Errorf("the hook lacks the line %q, so it could never be updated", marker)
 	}
 	path := filepath.Join(dir, "pre-commit")
+	info, err := os.Lstat(path)
+	switch {
+	case errors.Is(err, fs.ErrNotExist):
+	case err != nil:
+		return "", err
+	case !info.Mode().IsRegular():
+		return "", fmt.Errorf("%s is not a regular file, so make hooks did not install it; move it aside, then run make hooks again", path)
+	}
 	existing, err := safefile.Read(path, maxHook)
 	status := "installed"
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
+	case errors.Is(err, fs.ErrNotExist) && info == nil:
 	case err != nil:
 		return "", err
 	case bytes.Equal(existing, hook):

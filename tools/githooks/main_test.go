@@ -45,6 +45,31 @@ func TestInstallKeepsOtherHooks(t *testing.T) {
 	}
 }
 
+// TestInstallRefusesSymlinks checks that a pre-commit symlink, dangling or
+// not, is never replaced: the installer writes only regular files, so a
+// symlink is someone else's.
+func TestInstallRefusesSymlinks(t *testing.T) {
+	hook := []byte("#!/bin/sh\n" + marker + "\n")
+	for name, target := range map[string]string{"dangling": "missing-hook", "to this hook": "real-hook"} {
+		t.Run(name, func(t *testing.T) {
+			dir := t.TempDir()
+			if err := os.WriteFile(filepath.Join(dir, "real-hook"), hook, 0o700); err != nil {
+				t.Fatal(err)
+			}
+			path := filepath.Join(dir, "pre-commit")
+			if err := os.Symlink(target, path); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := install(hook, dir); err == nil {
+				t.Error("installed over a symlink")
+			}
+			if got, err := os.Readlink(path); err != nil || got != target {
+				t.Fatalf("symlink replaced: %q, %v", got, err)
+			}
+		})
+	}
+}
+
 func TestInstallNeedsMarker(t *testing.T) {
 	dir := t.TempDir()
 	if _, err := install([]byte("#!/bin/sh\n"), dir); err == nil {
