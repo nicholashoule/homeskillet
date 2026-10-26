@@ -199,4 +199,6 @@ home directory.
 - [Installing and Updating](docs/install.md): versions, rollback, and build details.
 - [Architecture](docs/architecture.md): ownership, execution flow, and safety limits.
 - [Development](docs/development.md): build, test, CI, and cross-repository checks.
+- [Releasing](docs/release.md): versions, the changelog, and what a pushed tag publishes.
 - [Windows](docs/windows.md): what works for Windows today and what native support needs.
+- [CHANGELOG.md](CHANGELOG.md): what changed in each release; [SECURITY.md](SECURITY.md): how to report a vulnerability.

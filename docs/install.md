@@ -22,7 +22,7 @@ chmod +x homeskillet-linux-amd64
 build (see [Versions and Updates](#versions-and-updates)); delete the download
 afterward. Release builds are reproducible: building the tag with the Go
 release the workflow used gives the same `SHA256SUMS`
-([docs/development.md](development.md#versions-and-releases)).
+([release.md](release.md#tagging)).
 
 ## Shell Completion
 

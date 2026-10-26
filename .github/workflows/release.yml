@@ -1,6 +1,7 @@
 # Release: when a version tag is pushed, build the release binaries with make
-# cross and publish them as a GitHub Release, with a SHA256SUMS file to check
-# them against. See Releases in docs/development.md.
+# cross and publish them as a GitHub Release, with the tag's CHANGELOG.md
+# section as the notes and a SHA256SUMS file to check the binaries against.
+# See docs/release.md.
 name: Release
 
 on:
@@ -44,6 +45,23 @@ jobs:
             exit 1
           fi
 
+      # The release notes are the tag's section of CHANGELOG.md, the lines
+      # after its "## [X.Y.Z]" heading up to the next heading. A tag without
+      # one is refused, so a release cannot go out unexplained. Links to files
+      # in the repository are relative there, and the Release page is not in
+      # the tree, so they are pointed at the tag's copy of each file.
+      - name: Take the notes from CHANGELOG.md
+        run: |
+          awk -v heading="[${TAG#v}]" '
+            /^## / { wanted = ($2 == heading); next }
+            wanted' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "::error::CHANGELOG.md has no section for ${TAG#v}; add one before tagging (docs/release.md)"
+            exit 1
+          fi
+          sed -i "s#](\(\(docs/\)\?[A-Za-z0-9_.-]*\.md[^)]*\))#](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/blob/${TAG}/\1)#g" notes.md
+          cat notes.md
+
       # SOURCE_DATE_EPOCH stamps the commit's time as the build time, so
       # building the tag again with the same Go release gives identical files.
       - name: Build
@@ -55,7 +73,7 @@ jobs:
 
       # Go stamps the version from the tag, but only from a clean tree and a
       # tag valid for the module path, so check that every binary reports the
-      # tag exactly (docs/development.md, Versions and Releases).
+      # tag exactly (docs/release.md, Versions).
       - name: Check versions
         run: |
           module=$(go list -m)
@@ -72,19 +90,22 @@ jobs:
           done
 
       # A tag with a pre-release part, such as v1.2.3-rc.1, makes a pre-release.
-      # A rerun after a failed upload adds the files to the Release it finds.
+      # A Release that already exists, after a failed upload or one made by
+      # hand in the web interface, is brought to the same state a fresh run
+      # creates: title, notes, pre-release flag, and files.
       - name: Create the Release
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          prerelease=()
+          prerelease=false
           if [[ $TAG == *-* ]]; then
-            prerelease=(--prerelease)
+            prerelease=true
           fi
           if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --title "homeskillet $TAG" --notes-file notes.md --prerelease="$prerelease"
             gh release upload "$TAG" bin/homeskillet-*-* bin/SHA256SUMS --clobber
           else
-            gh release create "$TAG" bin/homeskillet-*-* bin/SHA256SUMS \
-              --verify-tag --title "homeskillet $TAG" --generate-notes "${prerelease[@]}"
+            gh release create "$TAG" bin/homeskillet-*-* bin/SHA256SUMS --verify-tag \
+              --title "homeskillet $TAG" --notes-file notes.md --prerelease="$prerelease"
           fi
