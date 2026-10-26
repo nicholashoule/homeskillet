@@ -1,3 +1,6 @@
+// Tests of version validity and ordering, dirty builds, and the build details
+// a binary reports.
+
 package version
 
 import (

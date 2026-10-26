@@ -1,5 +1,8 @@
 //go:build linux || darwin
 
+// Tests of the ownership and permission rules for repositories, trees, and
+// symlinks, and of the errors they print.
+
 package trust
 
 import (
@@ -14,6 +17,11 @@ import (
 func TestCheckTree(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Not left to the umask: the rules under test need the ancestors not
+	// writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	nested, file := filepath.Join(root, "a", "b"), filepath.Join(root, "a", "b", "file")
@@ -75,6 +83,11 @@ func TestCheckTreeSymlinks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Not left to the umask: the rules under test need the ancestors not
+			// writable by others.
+			if err := os.Chmod(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
 			tree, outside := filepath.Join(root, "tree"), filepath.Join(root, "outside")
 			for _, dir := range []string{tree, filepath.Join(tree, "dir"), outside} {
 				if err := os.Mkdir(dir, 0o755); err != nil {
@@ -121,6 +134,11 @@ func TestStickyExcusesOnlyDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Not left to the umask: the rules under test need the ancestors not
+	// writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	program := filepath.Join(root, "program")
 	if err := os.WriteFile(program, nil, 0o700); err != nil {
 		t.Fatal(err)
@@ -149,6 +167,11 @@ func TestStickyExcusesOnlyDirectories(t *testing.T) {
 func TestCheckRepositoryManifest(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Not left to the umask: the rules under test need the ancestors not
+	// writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	repo, outside := filepath.Join(root, "repo"), filepath.Join(root, "outside")
@@ -216,5 +239,63 @@ func TestWritableErrorWSLHint(t *testing.T) {
 		if got := strings.Contains(writableError(path).Error(), hint); got != want {
 			t.Errorf("%s: hint %v, want %v", path, got, want)
 		}
+	}
+}
+
+// TestWithinIsExact checks that containment compares paths exactly: on a
+// case-sensitive volume, ~/Repo is not inside ~/repo, and a symlink that
+// resolves there must not count as staying in the repository.
+func TestWithinIsExact(t *testing.T) {
+	if Within("/home/u/dotfiles", "/home/u/Dotfiles/x") || !Within("/home/u/dotfiles", "/home/u/dotfiles/x") {
+		t.Fatal("Within must compare exactly")
+	}
+	for _, test := range []struct {
+		a, b string
+		want bool
+	}{
+		{"/home/u/dotfiles", "/home/u/Dotfiles/.git/hooks", true},
+		{"/home/u/Dotfiles/.git", "/home/u/dotfiles", true},
+		{"/home/u/dotfiles", "/home/u/dotfiles-other", false},
+	} {
+		if got := Overlaps(test.a, test.b); got != test.want {
+			t.Errorf("Overlaps(%q, %q) = %v, want %v", test.a, test.b, got, test.want)
+		}
+	}
+}
+
+// TestResolveRefusesCaseDistinctDirectory checks that a symlink in the
+// repository to a sibling directory whose name differs only by case leads
+// outside the repository on a case-sensitive volume: the sibling is another
+// directory, which CheckTree never walks, so a script there would otherwise
+// run unchecked.
+func TestResolveRefusesCaseDistinctDirectory(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	repo, sibling := filepath.Join(root, "repo"), filepath.Join(root, "Repo")
+	for _, dir := range []string{repo, sibling} {
+		if err := os.MkdirAll(dir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+	}
+	repoInfo, _ := os.Stat(repo)
+	if siblingInfo, err := os.Stat(sibling); err == nil && os.SameFile(repoInfo, siblingInfo) {
+		t.Skip("case-insensitive file system: Repo is the repository")
+	}
+	if err := os.WriteFile(filepath.Join(sibling, "install.sh"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("../Repo", filepath.Join(repo, "scripts")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Resolve(repo, filepath.Join(repo, "scripts", "install.sh")); err == nil {
+		t.Fatal("a symlink to a case-distinct sibling directory resolved inside the repository")
+	}
+	if err := CheckTree(repo); err == nil {
+		t.Fatal("CheckTree accepted a tree with a symlink leaving it")
 	}
 }

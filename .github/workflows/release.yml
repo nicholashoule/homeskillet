@@ -1,0 +1,90 @@
+# Release: when a version tag is pushed, build the release binaries with make
+# cross and publish them as a GitHub Release, with a SHA256SUMS file to check
+# them against. See Releases in docs/development.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the Release
+    env:
+      TAG: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so the next step can find the tag on main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          # A release builds from nothing a cache from another run could have
+          # planted.
+          cache: false
+
+      # Versions are tagged on main after merging, so a tag anywhere else would
+      # publish code that never passed CI on main.
+      - name: Check the tag is on main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::$TAG is not on main; tag a commit on main after merging"
+            exit 1
+          fi
+
+      # SOURCE_DATE_EPOCH stamps the commit's time as the build time, so
+      # building the tag again with the same Go release gives identical files.
+      - name: Build
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) make cross
+          cd bin
+          sha256sum homeskillet-*-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # Go stamps the version from the tag, but only from a clean tree and a
+      # tag valid for the module path, so check that every binary reports the
+      # tag exactly (docs/development.md, Versions and Releases).
+      - name: Check versions
+        run: |
+          module=$(go list -m)
+          for binary in bin/homeskillet-*-*; do
+            go version -m "$binary" | awk -v tag="$TAG" -v module="$module" -v binary="$binary" '
+              $1 == "mod" && $2 == module { version = $3 }
+              $1 == "build" && $2 == "vcs.modified=false" { clean = 1 }
+              END {
+                if (version != tag || !clean) {
+                  printf "::error::%s reports version %s from a %s tree, not %s from a clean one\n", binary, version, clean ? "clean" : "modified", tag
+                  exit 1
+                }
+              }'
+          done
+
+      # A tag with a pre-release part, such as v1.2.3-rc.1, makes a pre-release.
+      # A rerun after a failed upload adds the files to the Release it finds.
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prerelease=()
+          if [[ $TAG == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" bin/homeskillet-*-* bin/SHA256SUMS --clobber
+          else
+            gh release create "$TAG" bin/homeskillet-*-* bin/SHA256SUMS \
+              --verify-tag --title "homeskillet $TAG" --generate-notes "${prerelease[@]}"
+          fi

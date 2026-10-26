@@ -1,0 +1,32 @@
+#!/bin/sh
+# homeskillet pre-commit hook: make check, then repogov and demojify, the
+# checks CI runs. It checks the working tree, which can differ from what is
+# staged; CI checks what was committed. It only reports, never rewrites or
+# stages files. Skip it for one commit with git commit --no-verify.
+#
+# Installed by make hooks from tools/githooks/pre-commit.
+# The installed hook is a copy: run make hooks again after changing this file.
+# repogov and demojify are pinned like in CI; bump them together (see
+# .github/copilot-instructions.md).
+
+root=$(git rev-parse --show-toplevel) || exit 1
+cd "$root" || exit 1
+
+# Git exports these to hooks, and during a commit GIT_INDEX_FILE names a
+# temporary index. A test or tool that runs git in a directory of its own would
+# act on this repository instead.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+failed=
+make check || failed="$failed make-check"
+go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all ||
+	failed="$failed repogov"
+go run github.com/nicholashoule/demojify-sanitize/cmd/demojify@v1.2.0 -root . -exts .go,.md,.yml,.yaml,.json ||
+	failed="$failed demojify"
+
+if [ -n "$failed" ]; then
+	echo "pre-commit: failed:$failed" >&2
+	echo "  make fmt fixes formatting; the output above names everything else." >&2
+	echo "  git commit --no-verify skips this hook once." >&2
+	exit 1
+fi

@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/nicholashoule/homeskillet/internal/safefile"
 )
@@ -77,11 +78,12 @@ type Entry struct {
 type Step struct {
 	// Name identifies the step in prompts and output.
 	Name string `json:"name"`
-	// Run is the command and its arguments. It is executed directly, not
-	// through a shell, so the text shown for review is exactly what runs. A
-	// step that needs pipes or other shell features says so explicitly with
-	// ["sh", "-c", "..."].
-	Run []string `json:"run"`
+	// Run is what the step executes: one command, or several that belong
+	// together, such as a brew install per tap, run in order as one step
+	// (see Commands). Each is executed directly, not through a shell, so the
+	// text shown for review is exactly what runs. A step that needs pipes or
+	// other shell features says so explicitly with ["sh", "-c", "..."].
+	Run Commands `json:"run"`
 	// Platforms, when set, replaces Manifest.Platforms for this step, as
 	// for Entry.Platforms.
 	Platforms []string `json:"platforms,omitempty"`
@@ -124,8 +126,8 @@ func load(root *os.Root) (Manifest, error) {
 	}
 	// Files is nil only when no manifest exists or it omits "files". An
 	// explicit [] decodes to an empty, non-nil slice and disables discovery.
-	hasHome := false
-	if manifest.Files == nil {
+	hasHome, listed := false, manifest.Files != nil
+	if !listed {
 		manifest.Files, hasHome, err = discover(root)
 		if err != nil {
 			return Manifest{}, err
@@ -135,8 +137,17 @@ func load(root *os.Root) (Manifest, error) {
 		return Manifest{}, err
 	}
 	if !hasHome && len(manifest.Files) == 0 && len(manifest.Setup) == 0 {
-		return Manifest{}, fmt.Errorf("%s is %w (no %s directory, and no files or setup steps in %s)",
-			root.Name(), ErrNothingToManage, HomeDir, FileName)
+		// Saying exactly what is missing tells a wrong directory, which has
+		// neither a manifest nor a home directory, from a manifest that lists
+		// nothing. HomeDir gets its slash so that it never reads as the home
+		// directory homeskillet links into.
+		why := fmt.Sprintf("it has no %s and no %s/ directory", FileName, HomeDir)
+		if _, err := root.Lstat(FileName); err == nil && listed {
+			why = fmt.Sprintf("its %s lists no files or setup steps", FileName)
+		} else if err == nil {
+			why = fmt.Sprintf("it has no %s/ directory, and its %s lists no setup steps", HomeDir, FileName)
+		}
+		return Manifest{}, fmt.Errorf("%s is %w: %s", root.Name(), ErrNothingToManage, why)
 	}
 	return manifest, nil
 }
@@ -311,8 +322,11 @@ func (m Manifest) SetupFor(p Platform) []Step {
 // OVERRIDE reorder text, so either could disguise what a link or setup step
 // really does.
 func Printable(s string) bool {
-	return !strings.ContainsFunc(s, func(r rune) bool {
-		return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	// Invalid UTF-8 is refused too: a raw byte such as 0x9B is a control
+	// character to a terminal that is not in UTF-8 mode, and encoding/json
+	// would replace it, so a record could no longer name the file.
+	return utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 	})
 }
 
@@ -344,6 +358,19 @@ var (
 	operatingSystems = []string{"linux", "darwin", "windows"}
 	architectures    = []string{"amd64", "arm64"}
 )
+
+// PlatformValues lists every value ParsePlatform accepts, for shell
+// completion: each operating system alone, then with each architecture.
+func PlatformValues() []string {
+	var values []string
+	for _, system := range operatingSystems {
+		values = append(values, system)
+		for _, arch := range architectures {
+			values = append(values, system+"/"+arch)
+		}
+	}
+	return values
+}
 
 // ParsePlatform parses "os" or "os/arch", such as "darwin" or "darwin/arm64".
 // Only supported operating systems and architectures are accepted, so a typo
@@ -493,18 +520,53 @@ func validName(name string) bool {
 	return name != ""
 }
 
+// Commands is a setup step's run: argument vectors, executed in order. In a
+// manifest, "run" holds one command, ["brew", "install", "jq"], or a list of
+// them, [["brew", "update"], ["brew", "install", "jq"]]. The list is shown
+// and approved as one step and stops at the first command that fails.
+type Commands [][]string
+
+// UnmarshalJSON reads either form of "run" (see Commands).
+func (c *Commands) UnmarshalJSON(data []byte) error {
+	var one []string
+	if err := json.Unmarshal(data, &one); err == nil {
+		*c = Commands{one}
+		return nil
+	}
+	var several [][]string
+	if err := json.Unmarshal(data, &several); err != nil {
+		return errors.New(`run must be a command, such as ["brew", "install", "jq"], or a list of commands`)
+	}
+	*c = several
+	return nil
+}
+
+// MarshalJSON writes one command in the plain form, as a manifest would
+// hold it, and several as a list.
+func (c Commands) MarshalJSON() ([]byte, error) {
+	if len(c) == 1 {
+		return json.Marshal(c[0])
+	}
+	return json.Marshal([][]string(c))
+}
+
 func (s Step) validate() error {
 	if !validName(s.Name) {
 		return errors.New("name must be lowercase letters, digits, '.', '_', or '-', starting with a letter or digit")
 	}
-	if len(s.Run) == 0 || s.Run[0] == "" {
+	if len(s.Run) == 0 {
 		return errors.New("run must name a command")
 	}
-	// The command is shown for approval. Any argument that could rewrite the
-	// terminal could hide part of what the user is approving.
-	for _, arg := range s.Run {
-		if !Printable(arg) {
-			return errors.New("run must not contain control or formatting characters")
+	for _, command := range s.Run {
+		if len(command) == 0 || command[0] == "" {
+			return errors.New("run must name a command")
+		}
+		// The command is shown for approval. Any argument that could rewrite
+		// the terminal could hide part of what the user is approving.
+		for _, arg := range command {
+			if !Printable(arg) {
+				return errors.New("run must not contain control or formatting characters")
+			}
 		}
 	}
 	if s.Creates != "" && (!localFile(s.Creates) || !Printable(s.Creates)) {

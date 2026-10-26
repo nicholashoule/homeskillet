@@ -357,6 +357,19 @@ func Within(root, path string) bool {
 	return err == nil && filepath.IsLocal(relative)
 }
 
+// Overlaps reports whether one of a and b is the other or lies below it,
+// compared without regard to case. It is for refusals only, such as a link
+// target that may not lie inside the repository: on macOS, whose file systems
+// are usually case-insensitive, ~/Dotfiles is the repository opened as
+// ~/dotfiles, so a target spelled either way must be refused. It never
+// decides that a path is safely inside a root; Within does that, exactly,
+// because on a case-sensitive volume ~/Repo is a different directory than
+// ~/repo, and treating it as inside would let a symlink reach it unchecked.
+func Overlaps(a, b string) bool {
+	a, b = strings.ToLower(a), strings.ToLower(b)
+	return Within(a, b) || Within(b, a)
+}
+
 // CheckOwner requires path, following symlinks, to be owned by the current
 // user or root. It is the weaker rule for files homeskillet only looks at and
 // never runs or links, such as a program a setup step's provides names:

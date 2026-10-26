@@ -1,4 +1,29 @@
 {
+  "_agent_hints": {
+    "about": "Keys starting with _ guide AI agents; repogov ignores them.",
+    "on_fail": "Over its limit: split the file or move detail to docs/. Raise a limit only if the user asks.",
+    "on_warn": "Near its limit: trim before adding.",
+    "on_pitfall": "The agent silently ignores that file: apply the FIX hint.",
+    "on_settings": "An agent settings finding: report it to the user; never widen permissions.",
+    "exempt": "Limit 0 under files, only for generated or append-only files; tell the user.",
+    "never": [
+      "Edit files outside of this repo.",
+      "Read or paste secrets: .env, keys, certificates.",
+      "Bypass security controls (signing, hooks, permissions) to finish a task."
+    ],
+    "verify": "Run 'repogov -root . all' and the tests; apply each FIX hint.",
+    "keys": {
+      "language": "Prose language (BCP 47, e.g. en-US): write docs, comments and commits in it.",
+      "default": "Fallback line limit (500).",
+      "warning_threshold": "Percent of a limit where WARN starts (85 or \"85%\").",
+      "skip_dirs": "Directories never scanned.",
+      "include_exts": "Extensions scanned; [] scans all.",
+      "rules": "Line limits by glob; first match wins.",
+      "max_bytes": "Byte limits by glob; some agents truncate large files.",
+      "files": "Per-file line limits; 0 exempts."
+    }
+  },
+  "language": "en-US",
   "default": 300,
   "descriptive_names": false,
   "warning_threshold": "85%",

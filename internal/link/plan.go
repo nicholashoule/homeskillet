@@ -86,15 +86,15 @@ func Blocked(plans []Plan) bool {
 // After the plans for entries come Orphaned plans for links the repository
 // made earlier but no longer declares (see Save and record.go).
 //
-// All three directories must pass trust.CheckLocation. When unlinking is false,
-// Prepare requires the repository, home and every existing directory a link
-// goes into, and the data directory to be private (see trust.CheckRepository,
-// trust.CheckDirectory, trust.CheckExisting, and trust.CheckCreatable) and
-// reports absent sources as NoSource. When unlinking is true it skips the
-// privacy checks and ignores absent sources. Removing links that point into the repository cannot
-// run anyone's code, and unlinking is how the user recovers from a deleted
-// source or a repository whose permissions went wrong, so it must not be
-// blocked by either.
+// All three directories must pass trust.CheckLocation, and the data directory
+// must be private (see trust.CheckCreatable). When unlinking is false, Prepare
+// also requires the repository, home, and every existing directory a link goes
+// into to be private (see trust.CheckRepository, trust.CheckDirectory, and
+// trust.CheckExisting) and reports absent sources as NoSource. When unlinking
+// is true it skips those checks and ignores absent sources. Removing links
+// that point into the repository cannot run anyone's code, and unlinking is
+// how the user recovers from a deleted source or a repository whose
+// permissions went wrong, so it must not be blocked by either.
 func Prepare(entries []config.Entry, repo, home, data string, unlinking bool) ([]Plan, error) {
 	return PrepareSelected(entries, repo, home, data, unlinking, nil)
 }
@@ -130,10 +130,14 @@ func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking 
 	if trust.Within(repo, data) {
 		return nil, fmt.Errorf("data directory %s is inside the repository", data)
 	}
-	if !unlinking {
-		if err := trust.CheckCreatable(data); err != nil {
-			return nil, err
-		}
+	// Checked even to unlink. The record decides which links count as
+	// homeskillet's, and unlink removes the orphaned ones it lists, so one
+	// another user could have planted must not be read. Unlink must also be
+	// able to save the record afterward; checking only then would remove the
+	// links first and fail after, as when root unlinks in another user's
+	// home, whose data directory root does not own.
+	if err := trust.CheckCreatable(data); err != nil {
+		return nil, err
 	}
 	var plans []Plan
 	declared := make([]string, 0, len(entries))
@@ -143,20 +147,20 @@ func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking 
 		// homeskillet's own data, including the record and backups, must
 		// never be replaced by a link, nor sit inside a target that link
 		// --force could move aside.
-		if trust.Within(data, target) || trust.Within(target, data) {
+		if trust.Overlaps(data, target) {
 			return nil, fmt.Errorf("target %s overlaps homeskillet's data directory %s", target, data)
 		}
 		// When home is the repository or contains it, a target could replace
 		// repository files, including other entries' sources; a target that
 		// contains the repository, such as .config for a clone in
 		// ~/.config/dotfiles, could take the whole repository with it.
-		if trust.Within(repo, target) || trust.Within(target, repo) {
+		if trust.Overlaps(repo, target) {
 			return nil, fmt.Errorf("target %s overlaps the repository %s", target, repo)
 		}
 		// Overlapping targets such as "a" and "a/b" would make the second link
 		// be created through the first.
 		for _, previous := range declared {
-			if trust.Within(previous, target) || trust.Within(target, previous) {
+			if trust.Overlaps(previous, target) {
 				return nil, fmt.Errorf("overlapping targets: %s and %s", previous, target)
 			}
 		}
@@ -202,21 +206,17 @@ func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking 
 // inside repo (see trust.Resolve). It reports whether the source is absent
 // instead of failing, so callers can report that per entry.
 func checkSource(repo, source string, unlinking bool) (missing bool, err error) {
-	var resolved string
+	// Unlinking removes symlinks in home and runs nothing, so what the
+	// source is now, a directory, a symlink leading anywhere, or gone, is
+	// beside the point; a source replaced in the repository must not stop
+	// its link from being removed (see Prepare).
 	if unlinking {
-		// Unlinking only needs to know the link is homeskillet's, not that
-		// the repository is still safe (see Prepare).
-		resolved, err = filepath.EvalSymlinks(source)
-		if err == nil && !trust.Within(repo, resolved) {
-			return false, fmt.Errorf("source %s resolves outside the repository", source)
-		}
-	} else {
-		// A source that leads outside the repository at any hop, for
-		// example through a symlink in /tmp that another user controls,
-		// would make the link's content depend on files the repository
-		// checks never examine.
-		resolved, err = trust.Resolve(repo, source)
+		return false, nil
 	}
+	// A source that leads outside the repository at any hop, for example
+	// through a symlink in /tmp that another user controls, would make the
+	// link's content depend on files the repository checks never examine.
+	resolved, err := trust.Resolve(repo, source)
 	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
 	}

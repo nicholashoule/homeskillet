@@ -1,5 +1,8 @@
 //go:build windows
 
+// Detecting translation on Windows: whether an x64 build runs emulated on
+// Windows on Arm (see Detect).
+
 package host
 
 import (

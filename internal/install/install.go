@@ -161,6 +161,10 @@ type State struct {
 	// Following reports whether current follows latest rather than being
 	// pinned to one version.
 	Following bool
+	// Broken is what current points at when that is not an installed
+	// version, as after its directory was deleted by hand; Current is then
+	// "". Use repairs it, so the command works again.
+	Broken string
 }
 
 // Latest returns the highest installed version, or "" if there is none.
@@ -224,7 +228,8 @@ func (l Layout) Inspect() (State, error) {
 	default:
 		v, ok := strings.CutPrefix(target, versions+string(filepath.Separator))
 		if !ok || !slices.Contains(state.Versions, v) {
-			return State{}, fmt.Errorf("%s points to %q, not an installed version; choose one with homeskillet self use", link, target)
+			state.Broken = target
+			break
 		}
 		state.Current = v
 	}
@@ -327,10 +332,14 @@ func (l Layout) install(source *os.File, build version.Info, dryRun bool, log io
 				return err
 			}
 		}
-		// Rewritten even when the binary is unchanged, which restores a
-		// missing record; the same bytes always produce the same record.
-		if err := writeBuild(l.buildPath(v), build); err != nil {
-			return err
+		// The record describes the installed bytes. An unchanged install
+		// keeps the record it has, which a rebuild from the same source
+		// would otherwise overwrite with its own build time; a missing
+		// record is restored.
+		if _, err := l.Build(v); action != "unchanged" || err != nil {
+			if err := writeBuild(l.buildPath(v), build); err != nil {
+				return err
+			}
 		}
 	}
 	if err := applyLinks(links, dryRun, log); err != nil {
@@ -475,6 +484,16 @@ func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 	target, line := Latest, Latest+" ("+state.Latest()+")"
 	if pinned != "" {
 		target, line = filepath.Join(versions, pinned), pinned+" (pinned)"
+	}
+	// latest and previous are brought up to date with the versions that
+	// exist first: after a version directory was deleted by hand, they may
+	// still name it, and current following a stale latest would dangle.
+	links, err := l.linkChanges(state.Versions)
+	if err != nil {
+		return err
+	}
+	if err := applyLinks(links, dryRun, log); err != nil {
+		return err
 	}
 	if err := say(log, "current\t%s\n", line); err != nil || dryRun {
 		return err

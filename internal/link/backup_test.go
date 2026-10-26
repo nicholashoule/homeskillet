@@ -1,5 +1,8 @@
 //go:build linux || darwin
 
+// Tests of link --force backups: undoing the moves when one fails, and moving
+// nothing when a source is absent.
+
 package link
 
 import (

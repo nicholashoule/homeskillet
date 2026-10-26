@@ -9,12 +9,14 @@ only the standard library.
 
 Configuration repositories own the installable files, an optional
 `dotfiles.json` manifest, and any configuration-specific checks. The interface
-between the two is small and documented in the README:
+between the two is small and documented in the README and
+[manifest.md](manifest.md):
 
 - Files under the repository's `home/` directory mirror the home directory and
   are linked when the manifest is absent or omits `files`.
 - A manifest's `files` list replaces that convention with explicit entries,
   and its `setup` list declares setup steps, which are never inferred.
+  `homeskillet init` writes a starter manifest, never replacing one.
 
 Do not move Go code back into a configuration repository or add runtime
 dependencies on the sibling checkout.
@@ -25,7 +27,7 @@ dependencies on the sibling checkout.
 
 | Package | Owns |
 |---|---|
-| `internal/cli` | Arguments, root refusal, path canonicalization, printed output |
+| `internal/cli` | Arguments, root refusal, path canonicalization, printed output, help, shell completion, and `init` |
 | `internal/config` | Reading a repository: manifest decoding, `home/` discovery, lexical validation |
 | `internal/trust` | Ownership and permission rules for the repository |
 | `internal/link` | Link planning and changes: states, conflicts, containment, the record of links and orphans |
@@ -39,10 +41,15 @@ A command runs in this order:
 
 1. `cli.Run` parses the command and flags. The default is `status`. A flag
    that does not apply to the command is an error rather than silently
-   ignored. `version` prints `version.Current` and stops. Every other command
-   refuses to run as root without `--allow-root`, and refuses a home directory
-   that fails `trust.CheckLocation`; `self` then continues as described under
-   [Installing homeskillet](#installing-homeskillet).
+   ignored, and so is an empty option value or argument
+   ([safety.md](safety.md#links-and-conflicts)). `help` and `--help` print
+   the help text to standard output, `version` prints `version.Current`,
+   `completion` prints a shell script, and the hidden `__complete` command
+   those scripts call works out candidates (see completion.go); each then
+   stops. Every other command refuses to run as root without `--allow-root`.
+   `init` then writes its starter manifest (see init.go). The rest refuse a
+   home directory that fails `trust.CheckLocation`; `self` then continues as
+   described under [Installing homeskillet](#installing-homeskillet).
 2. `canonicalDirectory` resolves the repository and existing home directory.
    Packages link and trust compare path strings, which is only sound for
    canonical paths. The resolved repository must pass `trust.CheckLocation`.
@@ -59,15 +66,16 @@ A command runs in this order:
    applies and the manifest declares platforms, every command but `unlink`
    fails rather than reporting success for doing nothing.
 4. For links, the CLI resolves the data directory (see `dataDir`). Then
-   `link.Prepare` checks repository, home, target directory, and data
-   directory ownership (except for `unlink`) and validates every selected
+   `link.Prepare` checks data directory ownership, and repository, home, and
+   target directory ownership except for `unlink`, and validates every selected
    source, target parent, and target
    state, then adds an `Orphaned` plan for each recorded link the repository
    no longer declares. It changes nothing, so any failure leaves the home
    directory untouched. Files named after the repository narrow it to those
    entries (`link.PrepareSelected`, with the CLI's `matcher`): only their
    sources and targets are checked, every entry still counts as declared,
-   and a name matching nothing fails before any change. The CLI
+   and a name matching nothing fails before any change. The CLI notes each
+   link a shell would run instead of another command (`shadowed`), then
    prints the plans for status, dry runs, or blocked links. Otherwise
    `link.Backup` (only for `link --force`) moves conflicts into the data
    directory's `backups/`, `link.Create` removes orphans and makes missing
@@ -78,15 +86,20 @@ A command runs in this order:
    when files were named. In a terminal, `cli`'s view (report.go) prints a header, groups,
    and a closing line; otherwise each entry or change is one tab-separated
    line, the format scripts parse.
-5. For setup, `setup.Prepare` returns at once when there are no steps for this
-   OS. Otherwise it requires the whole repository tree to be private and marks
-   steps done when their `creates` path exists or their `provides` command is
-   found, without running anything. Dry runs list the steps. Otherwise
-   `setup.Run` shows each pending step, asks for approval (default no) unless
-   `--yes` was given, and runs approved steps in order, stopping at the first
-   failure. Before each step it checks again whether the step is done and
+5. For setup, the CLI keeps only the steps named after `setup`, if any, in
+   manifest order, failing first on a name that matches no step for this
+   platform (`selectSteps`). `setup.Prepare` returns at once when there are no
+   steps. Otherwise it requires the whole repository tree to be private and
+   marks steps done when their `creates` path exists or their `provides`
+   command is found, recording what it found, without running anything. Dry
+   runs list the steps. Otherwise `setup.Run` lists each done step with what
+   was found, shows each pending step with every command in its `run`, asks
+   for approval (default no) unless `--yes` was given, and runs approved
+   steps' commands in order, stopping at the first failure. Before each step it checks again whether the step is done and
    that the tree passes `trust.CheckTree`, since an earlier step may have
-   changed either. Under `--yes`, steps get no input. Before each step,
+   changed either. Under `--yes`, steps get no input and run in a session
+   of their own, without the terminal (`runDetached`); an interrupt is
+   passed on to them, and stops setup. Before each step,
    `searchPath` appends the home's `.local/bin` to
    `PATH` if it exists and passes `trust.CheckDirectory`; `provides`, the
    step's program, and the step's own environment all use that `PATH`, so a
@@ -154,6 +167,10 @@ and dry runs stop after the checks.
   written. The CLI, `link.Prepare`, `setup.Prepare` and `setup.Run`, and every
   `install.Layout` method apply it, and it also rejects relative and unclean
   paths, so an empty path never means the current directory.
+- `init` checks the repository with `trust.CheckRepository` before writing,
+  and shell completion reaches files only through `openRepository` and
+  `selfLayout`, as `status` and `self list` do; [safety.md](safety.md#starter-manifests-and-completion)
+  has the rules both follow.
 - Sources are regular files inside the selected configuration repository.
 - Targets are relative to the selected home and may neither lie inside nor
   contain the repository or the data directory.
@@ -200,6 +217,8 @@ and dry runs stop after the checks.
   Command lookup skips relative `PATH` entries, and the program receives the
   reviewed name as `argv[0]`.
 - Setup names and arguments may not contain control or formatting characters.
+- A step's commands are shown and approved together, and each is looked up on
+  a `PATH` computed again just before it runs.
 - Setup steps for an operating system other than the detected one are listed
   with `--dry-run` only, never run.
 - `self install` copies only a regular file owned by the current user or root

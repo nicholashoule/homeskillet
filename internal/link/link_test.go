@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Tests of planning and making links: conflicts, absent sources, overlapping
+// targets, symlink escapes, ownership and permission refusals, and selected
+// entries.
+
 package link
 
 import (
@@ -7,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -24,6 +29,11 @@ func fixture(t *testing.T, entries ...config.Entry) (repo, home string) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Not left to the umask: the ownership rules need the ancestors of a
+	// repository, home, or prefix not writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	repo, home = filepath.Join(root, "repo"), filepath.Join(root, "home")
@@ -261,7 +271,18 @@ func TestRepositoryMustBePrivate(t *testing.T) {
 			if _, err := Prepare(entries, repo, home, dataDir(home), false); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
 				t.Fatalf("accepted shared %s: %v", name, err)
 			}
-			if _, err := Prepare(entries, repo, home, dataDir(home), true); err != nil {
+			// Unlinking skips the repository's checks but not the data
+			// directory's. The fixture's ancestor also holds home and the data
+			// directory in it, so a data directory elsewhere keeps that case
+			// about the repository alone.
+			data, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(data, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Prepare(entries, repo, home, data, true); err != nil {
 				t.Fatalf("unlinking blocked by shared %s: %v", name, err)
 			}
 		})
@@ -389,6 +410,11 @@ func TestTargetsMayNotContainRepositoryOrData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Not left to the umask: the ownership rules need the ancestors of a
+	// repository, home, or prefix not writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	home := filepath.Join(root, "home")
 	// The repository is cloned inside home, as ~/.config/dotfiles.
 	repo := filepath.Join(home, ".config", "dotfiles")
@@ -433,5 +459,89 @@ func TestForceMovesNoDirectories(t *testing.T) {
 	}
 	if data, err := os.ReadFile(filepath.Join(home, "a")); err != nil || string(data) != "a" {
 		t.Fatalf("file moved although Backup failed: %q, %v", data, err)
+	}
+}
+
+// TestRemoveNeverDeletesDirectories checks that a directory that took a
+// link's place after Prepare looked is left alone: unlink removes symlinks
+// only, never anything homeskillet did not create.
+func TestRemoveNeverDeletesDirectories(t *testing.T) {
+	entries := []config.Entry{{Source: "a", Target: "a"}}
+	repo, home := fixture(t, entries...)
+	apply(t, entries, repo, home, false)
+	plans, err := Prepare(entries, repo, home, dataDir(home), true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	target := filepath.Join(home, "a")
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := Remove(plans, nil); err == nil {
+		t.Fatal("removing a directory in a link's place succeeded")
+	}
+	if info, err := os.Lstat(target); err != nil || !info.IsDir() {
+		t.Fatalf("directory deleted: %v, %v", info, err)
+	}
+}
+
+// TestBackupRechecksTargets checks that --force moves nothing that changed
+// since it was checked: a directory in a conflicting file's place stays.
+func TestBackupRechecksTargets(t *testing.T) {
+	entries := []config.Entry{{Source: "a", Target: "a"}}
+	repo, home := fixture(t, entries...)
+	target := filepath.Join(home, "a")
+	if err := os.WriteFile(target, []byte("mine"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := Prepare(entries, repo, home, dataDir(home), false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := CheckForce(plans); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(target); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(target, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := Backup(plans, home, dataDir(home), nil); err == nil {
+		t.Fatal("a directory was moved into the backup")
+	}
+	if info, err := os.Lstat(target); err != nil || !info.IsDir() {
+		t.Fatalf("directory moved: %v, %v", info, err)
+	}
+}
+
+// TestUnlinkIgnoresReplacedSources checks that unlink still removes every
+// link when a source has become a directory or a symlink leading outside the
+// repository: it removes symlinks in home and runs nothing, so the source no
+// longer matters.
+func TestUnlinkIgnoresReplacedSources(t *testing.T) {
+	entries := []config.Entry{{Source: "a", Target: "a"}, {Source: "b", Target: "b"}, {Source: "c", Target: "c"}}
+	repo, home := fixture(t, entries...)
+	apply(t, entries, repo, home, false)
+	if err := os.Remove(filepath.Join(repo, "b")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(repo, "b"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(repo, "c")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(t.TempDir(), "elsewhere"), filepath.Join(repo, "c")); err != nil {
+		t.Fatal(err)
+	}
+	apply(t, entries, repo, home, true)
+	for _, name := range []string{"a", "b", "c"} {
+		if _, err := os.Lstat(filepath.Join(home, name)); !errors.Is(err, fs.ErrNotExist) {
+			t.Errorf("%s remains after unlink: %v", name, err)
+		}
 	}
 }

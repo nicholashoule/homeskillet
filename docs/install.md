@@ -4,6 +4,47 @@ How homeskillet records its version and keeps installed versions side by side.
 [README.md](../README.md#build-and-install) covers building and the first
 install.
 
+## Downloading a Release
+
+Each version tag publishes the static binaries `make cross` builds, for Linux
+and macOS, on the repository's Releases page: one `homeskillet-<os>-<arch>` per
+platform, with a `SHA256SUMS` file to check them against. In the commands
+below, `OWNER` is the GitHub account that hosts homeskillet.
+
+```sh
+gh release download v0.1.1 --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS
+grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
+chmod +x homeskillet-linux-amd64
+./homeskillet-linux-amd64 self install
+```
+
+`self install` installs the downloaded binary as `make install` installs a
+build (see [Versions and Updates](#versions-and-updates)); delete the download
+afterward. Release builds are reproducible: building the tag with the Go
+release the workflow used gives the same `SHA256SUMS`
+([docs/development.md](development.md#versions-and-releases)).
+
+## Shell Completion
+
+`homeskillet completion bash` and `homeskillet completion zsh` print a
+completion script for commands, options, platforms, setup step names, and
+installed versions. Load it from your shell's startup file, so it always
+matches the installed version:
+
+```sh
+# ~/.bashrc
+command -v homeskillet >/dev/null && eval "$(homeskillet completion bash)"
+# ~/.zshrc, after compinit
+command -v homeskillet >/dev/null && eval "$(homeskillet completion zsh)"
+```
+
+For zsh, the script may instead be saved as `_homeskillet` in a directory on
+`fpath`. The bash script works with bash 3.2, which macOS ships, and later.
+
+The scripts are fixed text and ask homeskillet for each completion through a
+hidden `homeskillet __complete` command, which only reads
+([safety.md](safety.md#starter-manifests-and-completion)).
+
 ## Version Information
 
 `homeskillet version` (or `--version`) prints the version and the build
@@ -78,7 +119,8 @@ homeskillet self install --dry-run    # preview; the self commands all take it
 ```
 
 A pinned version stays pinned when you install another; `self install` says
-so. `self remove` refuses the version that runs. An installed version is never
+so. If the pinned version's directory is deleted by hand, the command dangles;
+`self list` says so, and `homeskillet self use latest` repairs it. `self remove` refuses the version that runs. An installed version is never
 rewritten: installing the same version with different contents is refused,
 except for `+dirty` builds, which name no exact build. Rebuilding a release
 from the same commit, with the same Go and platform, differs only in its build

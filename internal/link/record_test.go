@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Tests of the record of links: orphans, keeping repositories and homes apart,
+// and refusing a record that is invalid or that someone else could have
+// planted.
+
 package link
 
 import (
@@ -207,13 +211,13 @@ func TestSharedRecordDirectoryRefused(t *testing.T) {
 	if err := os.Chmod(dataDir(home), 0o777); err != nil {
 		t.Fatal(err)
 	}
-	// Another user could have planted the record, so linking refuses it.
-	if _, err := Prepare(entries, repo, home, dataDir(home), false); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
-		t.Fatalf("shared record directory accepted: %v", err)
-	}
-	// Unlinking still works, as it does for a shared repository.
-	if _, err := Prepare(entries, repo, home, dataDir(home), true); err != nil {
-		t.Fatalf("unlinking blocked: %v", err)
+	// Another user could have planted the record, so linking refuses it, and
+	// so does unlinking, which removes the orphaned links the record lists
+	// and could not save the record afterward.
+	for _, unlinking := range []bool{false, true} {
+		if _, err := Prepare(entries, repo, home, dataDir(home), unlinking); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+			t.Fatalf("unlinking %v: shared record directory accepted: %v", unlinking, err)
+		}
 	}
 }
 

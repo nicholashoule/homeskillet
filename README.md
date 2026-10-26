@@ -47,8 +47,16 @@ The command lands in `~/.local/bin`; homeskillet says so if that directory is
 not on your PATH, which on macOS it usually is not. `make install PREFIX=<dir>`
 installs under another prefix.
 
+Without Go, download a release for your OS and architecture from the Releases
+page, make it executable, and run its `self install`
+([docs/install.md](docs/install.md#downloading-a-release)).
+
+For tab completion in bash or zsh, see
+[docs/install.md](docs/install.md#shell-completion).
+
 `make build` alone leaves the binary in `bin/` without installing it. Both
-produce a static, stripped binary of about 2.5 MiB that runs on any Linux
+produce a static, stripped binary
+([docs/development.md](docs/development.md#binary-size)) that runs on any Linux
 distribution or macOS release for its architecture. Run `make` to list every
 target; the Makefile works with macOS's GNU Make 3.81 and on any Linux, WSL,
 or container ([docs/development.md](docs/development.md)).
@@ -74,7 +82,8 @@ homeskillet link ~/dotfiles                   # link every file
 homeskillet link ~/dotfiles .bashrc           # link only ~/.bashrc
 homeskillet link ~/dotfiles .bashrc --force   # replace ~/.bashrc, keeping a backup
 homeskillet unlink ~/dotfiles
-homeskillet setup ~/dotfiles
+homeskillet setup ~/dotfiles                  # offer each setup step
+homeskillet setup ~/dotfiles uv               # only the step named uv
 ```
 
 Files after the repository limit `status`, `link`, and `unlink` to them: a
@@ -82,9 +91,9 @@ target (`.bashrc`), a source (`home/.bashrc`), or a directory of either
 (`.bashrc.d`). The repository defaults to the current directory or, when that
 is not one, to the one repository already linked into the home, so after the
 first link, `homeskillet link` alone works anywhere. Options go anywhere after
-the command. Without a command, `status` runs, and the repository must plainly
-be a path (`.`, `..`, or containing `/`), so a mistyped command is never read
-as a directory. `--home` selects another home, `--dry-run` changes nothing,
+the command, and `homeskillet help` (or `-h`) lists every command and option. Without a command, `status` runs. There, and after `setup`, where
+other words name steps, the repository must plainly be a path (`.`, `..`, or
+containing `/`), so a mistyped command is never read as a directory. `--home` selects another home, `--dry-run` changes nothing,
 `--quiet` prints nothing but errors (not for `setup`, whose steps must be
 shown), and `setup --yes` runs every pending step without asking, for
 unattended builds such as a Dockerfile.
@@ -133,139 +142,43 @@ usually means the repository path names the wrong directory.
 
 ### The Manifest
 
-For more control, place `dotfiles.json` at the repository root. When it lists
-`files`, exactly those are linked and `home/` gets no special treatment:
-
-```json
-{
-  "files": [
-    { "source": "home/.bashrc", "target": ".bashrc" },
-    {
-      "source": "home/.config/example/config.toml",
-      "target": ".config/example/config.toml",
-      "platforms": ["linux"]
-    }
-  ]
-}
-```
-
-Sources are relative to the configuration repository. Targets are relative to
-the selected home directory. All sources must be regular files; no particular
-source directory layout is required. Files not listed are ignored.
-
-### Platforms
-
-A repository for one operating system says so once, at the top of its
-manifest, and that applies to every file and setup step, including files
-found under `home/`:
+A repository needs no manifest: files under `home/` are linked as they are.
+Add `dotfiles.json` at its root only for what `home/` cannot say: `platforms`,
+the systems the repository is for; `setup`, commands that install what the
+linked files use, run only when you approve them; or `files`, an explicit list
+that replaces `home/`. `homeskillet init` writes a starter, and never replaces
+an existing manifest:
 
 ```json
 {
   "platforms": ["darwin"],
   "setup": [
     { "name": "homebrew", "run": ["bash", "setup/homebrew.sh"], "provides": "brew" },
-    { "name": "rosetta", "run": ["softwareupdate", "--install-rosetta", "--agree-to-license"],
-      "platforms": ["darwin/arm64"] }
+    { "name": "brew-tools", "run": [["brew", "install", "ripgrep"], ["brew", "install", "jq"]],
+      "provides": "rg" }
   ]
 }
 ```
 
-A platform is an operating system, `linux`, `darwin`, or `windows`, optionally
-with an architecture, `amd64` or `arm64`, as in `darwin/arm64`. homeskillet
-does not run on Windows yet, but a repository may target it already; files
-and steps meant for Windows must use names Windows can create (see
-[docs/windows.md](docs/windows.md)). Without an
-architecture it covers both. An entry or step that sets its own `platforms`
-replaces the manifest's default rather than narrowing it; to apply everywhere
-despite a narrower default, list both operating systems. Omit `platforms`
-entirely to apply everywhere. Unknown values are rejected, so a typo such as
-`macos` or `darwin/arm` fails instead of silently matching nothing.
-
-homeskillet detects the platform it runs on, its operating system and
-architecture (see `homeskillet version`). If nothing in the repository applies
-to that platform, `status`, `link`, and `setup` fail and say so, rather than
-succeeding without doing anything; `unlink` still runs, so links made before
-can be removed. Detection is best effort, so `--platform` overrides it:
-
-```sh
-homeskillet setup . --platform darwin/amd64           # Intel steps on Apple silicon, under Rosetta
-homeskillet link . --home "$(mktemp -d)" --platform darwin   # check a macOS repository from Linux
-homeskillet setup . --platform darwin --dry-run       # list another OS's steps
-```
-
-Setup steps for another operating system can only be listed, never run, so
-`setup` with a foreign `--platform` requires `--dry-run`.
-
-A manifest that omits `files` keeps linking everything under `home/`, which
-lets a repository use the manifest only for setup steps. `"files": []` links
-nothing.
-
-### Setup Steps
-
-Setup steps are declared only in the manifest; homeskillet never infers a
-command. This manifest declares setup steps and, because it omits `files`,
-still links everything under `home/`:
-
-```json
-{
-  "setup": [
-    {
-      "name": "uv",
-      "run": ["sh", "setup/uv.sh"],
-      "platforms": ["linux"],
-      "creates": ".local/bin/uv"
-    },
-    {
-      "name": "ripgrep",
-      "run": ["brew", "install", "ripgrep"],
-      "platforms": ["darwin"],
-      "provides": "rg"
-    }
-  ]
-}
-```
-
-| Field | Meaning |
-|---|---|
-| `name` | Required. Lowercase letters, digits, `.`, `_`, or `-`; unique. |
-| `run` | Required. The command and its arguments, run directly, not through a shell. Use `["sh", "-c", "..."]` when a step needs pipes or other shell features. |
-| `platforms` | Optional. Replaces the manifest's default `platforms` for this step (see [Platforms](#platforms)). |
-| `creates` | Optional path relative to home. If it exists, the step is done and not offered. |
-| `provides` | Optional command name. If it is on `PATH`, in the home's `.local/bin`, or in one of Homebrew's standard `bin` directories (see below), the step is done and not offered. |
-
-Steps run in manifest order from the repository root, so repository scripts
-such as `setup/uv.sh` work. `HOME` and `HOMESKILLET_HOME` are set to
-the selected home, and `HOMESKILLET_REPO` to the repository. A step without
-`creates` or `provides` is offered on every run, so make it safe to repeat. A
-failing step stops setup; declined steps are skipped and the rest are still
-offered.
-
-Many installers, such as uv's and pipx's, put programs in `~/.local/bin`, which
-a fresh shell often does not have on `PATH` until the next login. So that a
-step can run a program an earlier step installed, such as a step that
-configures a tool the step before it installed, steps run with the selected
-home's `.local/bin`
-appended to `PATH`, and `provides` and bare command names are looked up the
-same way. It is appended, so it cannot shadow a system command such as `bash`
-or `curl`, and only when it passes the ownership rules, so a directory others
-can write never joins `PATH`. Relative `PATH` entries are never searched.
-
-`provides` also looks in Homebrew's `bin` directories, which shells add to
-`PATH` only after `brew shellenv`, so a program Homebrew just installed is not
-offered again. Steps do not get them on `PATH`, since Homebrew usually lets the
-`admin` group write them; call `brew` by its full path right after installing it.
+`homeskillet setup` runs each step only after you approve it.
+[docs/manifest.md](docs/manifest.md) describes every field, platforms, and how
+steps run, including running only the steps you name.
 
 ## Safety
 
-homeskillet never overwrites or deletes a file it did not create: `status`
-reports each entry as `missing`, `linked`, `conflict`, `no-source`, or
-`orphaned`, and a conflict makes `status` and `link` exit nonzero with nothing
-changed. Linked files such as `.bashrc` run as you, so it refuses a repository,
-source, or home directory that another user could change, following OpenSSH's
-rules for `~/.ssh`; refuses to run as root without `--allow-root`; and refuses
-system directories such as `/etc` and `/usr`. A setup step runs only after you
-review it exactly as it will run and answer `y` or `yes`, and only if no
-symlink in the repository leads outside it.
+homeskillet never overwrites or deletes a file it did not create: a conflict
+makes `status` and `link` exit nonzero with nothing changed. It refuses to run
+as root without `--allow-root`, and refuses system directories such as `/etc`
+and `/usr`. Linked files such as `.bashrc` and setup steps run as you, so:
+
+- **Nobody else can change what you link.** homeskillet refuses a repository,
+  source file, or symlink hop that another user could modify, following
+  OpenSSH's rules for `~/.ssh`. Only you, or root, can change what runs.
+- **You decide what to trust.** Linking or running setup from a repository
+  means running its code as you. Each setup step is shown exactly as it will
+  run and runs only if you answer `y` or `yes`. Review someone else's dotfiles
+  before linking them, and especially before `setup --yes`.
+
 [docs/safety.md](docs/safety.md) has every rule, including unlinking, orphaned
 links, and installing homeskillet itself.
 
@@ -281,6 +194,7 @@ home directory.
 
 ## Documentation
 
+- [The Manifest](docs/manifest.md): what `dotfiles.json` is for, platforms, and setup steps.
 - [Safety](docs/safety.md): every refusal, and the reasoning behind it.
 - [Installing and Updating](docs/install.md): versions, rollback, and build details.
 - [Architecture](docs/architecture.md): ownership, execution flow, and safety limits.

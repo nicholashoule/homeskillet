@@ -35,8 +35,11 @@ INTEGRATION_REPO ?= ../dotfiles-linux
 # VERSION only where no Git metadata exists, such as a container build that
 # excludes .git: `make install VERSION=v0.0.1`. In a checkout, tag instead: a
 # stamped build differs from the tagged one, and installed versions are never
-# rewritten. VERSION must be a semantic version with a leading v.
-VERSION ?=
+# rewritten. VERSION must be a semantic version with a leading v. Plain
+# assignments, not ?=: an environment variable named VERSION or PREFIX, as a
+# container image may set, must not stamp or relocate a build; only the
+# command line (make build VERSION=v0.0.1) overrides these.
+VERSION :=
 
 # Build time, which Go does not record, for `homeskillet version`. It is the
 # current time, or SOURCE_DATE_EPOCH for a reproducible build; BUILT= leaves
@@ -54,7 +57,7 @@ LDFLAGS = -s -w$(if $(BUILT), -X $(STAMP).built=$(BUILT))$(if $(VERSION), -X $(S
 # Installation prefix for `make install`; empty means ~/.local. The binary goes
 # to $(PREFIX)/share/homeskillet/versions/<version>/ and the command to
 # $(PREFIX)/bin/homeskillet.
-PREFIX ?=
+PREFIX :=
 
 .DEFAULT_GOAL := help
 
@@ -84,6 +87,11 @@ test: ## Run tests, with the race detector when cgo is available
 
 check: vet lint test ## Run vet, lint, and tests; required before handing off work
 
+# tools/githooks resolves the hooks directory through Git and never replaces a
+# hook it did not install. Run it again after changing tools/githooks/pre-commit.
+hooks: ## Install the pre-commit hook: check, repogov, and demojify on each commit
+	go run ./tools/githooks
+
 ##@ Build
 
 # CGO_ENABLED=0 makes the binary static, so it runs on any distribution or
@@ -111,4 +119,4 @@ integration: build ## Link the dotfiles-linux manifest into a temporary home (ne
 clean: ## Remove bin/
 	$(XPLAT) rmrf $(BIN)
 
-.PHONY: help fmt vet lint test check build install cross integration clean
+.PHONY: help fmt vet lint test check hooks build install cross integration clean

@@ -30,7 +30,7 @@ Re-scaffold missing files: `go run github.com/nicholashoule/repogov/cmd/repogov@
 Check for emoji: `go run github.com/nicholashoule/demojify-sanitize/cmd/demojify@v1.2.0 -root . -exts .go,.md,.yml,.yaml,.json`
 
 repogov and demojify are pinned to releases, not `@latest`; bump each here, in `AGENTS.md`,
-`docs/development.md`, and `.github/workflows/ci.yml` together.
+`docs/development.md`, `.github/workflows/ci.yml`, and `tools/githooks/pre-commit` together.
 
 ## File Naming Conventions
 

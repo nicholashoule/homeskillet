@@ -52,23 +52,50 @@ func Read(path string, limit int64) ([]byte, error) {
 // with TempPrefix, so callers can recognize leftovers from an interrupted
 // write.
 func Write(path string, mode os.FileMode, write func(io.Writer) error) error {
+	temporary, err := writeTemporary(path, mode, write)
+	if err != nil {
+		return err
+	}
+	if err := os.Rename(temporary, path); err != nil {
+		return errors.Join(err, os.Remove(temporary))
+	}
+	return SyncDir(filepath.Dir(path))
+}
+
+// Create writes path as Write does, but only if nothing is there: it fails
+// with an error matching fs.ErrExist rather than replace a file, directory, or
+// symlink, even one created after the caller last looked, such as by an
+// editor saving or another homeskillet. It publishes the finished file with a
+// hard link, which the kernel refuses when path exists, where a rename would
+// replace it, then removes the temporary name.
+func Create(path string, mode os.FileMode, write func(io.Writer) error) error {
+	temporary, err := writeTemporary(path, mode, write)
+	if err != nil {
+		return err
+	}
+	if err := errors.Join(os.Link(temporary, path), os.Remove(temporary)); err != nil {
+		return err
+	}
+	return SyncDir(filepath.Dir(path))
+}
+
+// writeTemporary writes what write produces, with mode, to a new temporary
+// file beside path, flushed to disk, and returns its name. Missing
+// directories are created private (0700), as everywhere in homeskillet.
+func writeTemporary(path string, mode os.FileMode, write func(io.Writer) error) (string, error) {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+		return "", err
 	}
 	temporary, err := os.CreateTemp(dir, TempPrefix+"*")
 	if err != nil {
-		return err
+		return "", err
 	}
 	err = write(temporary)
-	err = errors.Join(err, temporary.Chmod(mode), temporary.Sync(), temporary.Close())
-	if err == nil {
-		err = os.Rename(temporary.Name(), path)
+	if err := errors.Join(err, temporary.Chmod(mode), temporary.Sync(), temporary.Close()); err != nil {
+		return "", errors.Join(err, os.Remove(temporary.Name()))
 	}
-	if err != nil {
-		return errors.Join(err, os.Remove(temporary.Name()))
-	}
-	return SyncDir(dir)
+	return temporary.Name(), nil
 }
 
 // TempPrefix starts the name of every file Write has not finished.

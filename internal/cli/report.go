@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Output for status, link, and unlink: the view a person at a terminal reads,
+// with a header, entries grouped by what happens to them, and a closing line,
+// or else the tab-separated lines scripts parse.
+
 package cli
 
 import (
@@ -7,11 +11,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/link"
+	"github.com/nicholashoule/homeskillet/internal/setup"
 )
 
 // terminal reports whether w is a terminal, where a person reads the output
@@ -23,14 +29,25 @@ func terminal(w io.Writer) bool {
 		return false
 	}
 	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	// /dev/null is a character device too, but nobody reads it. Taken for a
+	// terminal, it would get the view, whose explained errors main does not
+	// print again, so homeskillet link >/dev/null would fail in silence.
+	null, err := os.Stat(os.DevNull)
+	return err != nil || !os.SameFile(info, null)
 }
 
 // view writes results for a person at a terminal: what is running and where,
 // entries grouped by what happens to them with problems first, and a closing
 // line saying what changed or what to do next. A nil *view means the
 // tab-separated lines instead.
-type view struct{}
+type view struct {
+	// shadows maps each target a shell would run instead of another command
+	// to that command (see shadowed).
+	shadows map[string]string
+}
 
 // newView returns a view for output, or nil when output is not a terminal.
 func newView(output io.Writer) *view {
@@ -46,6 +63,13 @@ func newView(output io.Writer) *view {
 // path with control or formatting characters is quoted, so it cannot rewrite
 // the terminal (see config.Printable).
 func (v *view) path(p string) string {
+	return displayPath(p)
+}
+
+// displayPath returns p for display, quoted if it holds control or formatting
+// characters, for output outside the view too: a PATH entry or a file name is
+// not homeskillet's to trust, wherever it is printed.
+func displayPath(p string) string {
 	if !config.Printable(p) {
 		return strconv.Quote(p)
 	}
@@ -58,7 +82,7 @@ func (v *view) path(p string) string {
 func (v *view) header(w io.Writer, command, repo string, remembered bool, home string, platform config.Platform, dryRun bool) error {
 	repository := v.path(repo)
 	if remembered {
-		repository += "  (linked here before; none was named)"
+		repository += "  (linked into this home before; none was named)"
 	}
 	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n  %-11s %s\n  %-11s %s\n",
 		command, "repository:", repository, "home:", v.path(home), "platform:", platform)
@@ -143,6 +167,10 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 		add("Absent sources: listed, but not in the repository", byState[link.NoSource], func(plan link.Plan) string {
 			return "expected at " + v.path(plan.Source)
 		})
+		shadowing := slices.DeleteFunc(slices.Clone(plans), func(plan link.Plan) bool { return v.shadows[plan.Target] == "" })
+		add("Shadowing commands: a shell runs these first; link them only from a repository you trust", shadowing, func(plan link.Plan) string {
+			return "instead of " + v.path(v.shadows[plan.Target])
+		})
 		removed := would("Removed: no longer in the repository", "Would remove: no longer in the repository")
 		if command == "status" {
 			removed = "Orphaned: no longer in the repository; link or unlink removes them"
@@ -168,6 +196,97 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 	}
 	_, err := fmt.Fprintln(w, summary(command, byState, applied, force))
 	return err
+}
+
+// steps writes a dry run's setup steps for a person: the done steps with what
+// makes each done, the pending ones with their commands, and a closing line.
+func (v *view) steps(w io.Writer, plans []setup.Plan, yes bool) error {
+	var groups []group
+	for _, state := range []setup.State{setup.Pending, setup.Done} {
+		var entries [][2]string
+		for i := range plans {
+			if plans[i].State == state {
+				entries = append(entries, [2]string{plans[i].Step.Name, setup.Detail(plans[i])})
+			}
+		}
+		if len(entries) == 0 {
+			continue
+		}
+		heading := fmt.Sprintf("Done (%d)", len(entries))
+		switch {
+		case state == setup.Pending && yes:
+			heading = fmt.Sprintf("Pending (%d): shown in full before each runs; --yes asks nothing", len(entries))
+		case state == setup.Pending:
+			heading = fmt.Sprintf("Pending (%d): shown in full and asked about before each runs", len(entries))
+		}
+		groups = append(groups, group{heading: heading, entries: entries})
+	}
+	for _, g := range groups {
+		if err := v.writeGroup(w, g); err != nil {
+			return err
+		}
+	}
+	pending := len(plans) - len(slices.DeleteFunc(slices.Clone(plans), func(p setup.Plan) bool { return p.State != setup.Done }))
+	var closing string
+	switch {
+	case len(plans) == 0:
+		closing = "No setup steps for this platform."
+	case pending == 0:
+		closing = "Nothing to do: " + files(len(plans), "step is", "steps are") + " done."
+	default:
+		closing = "Dry run: nothing changed; setup would offer " + files(pending, "step") + "."
+	}
+	_, err := fmt.Fprintln(w, closing)
+	return err
+}
+
+// doneSteps writes the Done group alone, before a run offers the pending
+// steps, and a closing line when nothing is pending.
+func (v *view) doneSteps(w io.Writer, plans []setup.Plan) error {
+	var entries [][2]string
+	for i := range plans {
+		if plans[i].State == setup.Done {
+			entries = append(entries, [2]string{plans[i].Step.Name, setup.Detail(plans[i])})
+		}
+	}
+	if len(entries) > 0 {
+		if err := v.writeGroup(w, group{heading: fmt.Sprintf("Done (%d)", len(entries)), entries: entries}); err != nil {
+			return err
+		}
+	}
+	switch {
+	case len(plans) == 0:
+		_, err := fmt.Fprintln(w, "No setup steps for this platform.")
+		return err
+	case len(entries) == len(plans):
+		_, err := fmt.Fprintln(w, "Nothing to do: "+files(len(plans), "step is", "steps are")+" done.")
+		return err
+	}
+	return nil
+}
+
+// stepReporter returns a setup.Options.Report for a person at a terminal: a
+// step that turned out done during the run, after an earlier step did its
+// work, is said so, and each step that ran or was skipped gets a line. Steps
+// done before the run were listed by doneSteps and are not repeated.
+func (v *view) stepReporter(w io.Writer, plans []setup.Plan) func(outcome string, plan setup.Plan) error {
+	listed := map[string]bool{}
+	for i := range plans {
+		if plans[i].State == setup.Done {
+			listed[plans[i].Step.Name] = true
+		}
+	}
+	return func(outcome string, plan setup.Plan) error {
+		var err error
+		switch {
+		case outcome == string(setup.Done) && listed[plan.Step.Name]:
+		case outcome == string(setup.Done):
+			_, err = fmt.Fprintf(w, "done     %s  (%s, by an earlier step)\n", plan.Step.Name, setup.Detail(plan))
+		default:
+			_, err = fmt.Fprintf(w, "%-8s %s\n", outcome, plan.Step.Name)
+		}
+		return err
+	}
 }
 
 // writeGroup writes a heading and its entries, aligning the notes.

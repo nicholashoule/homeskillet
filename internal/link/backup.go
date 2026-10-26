@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// link --force: moving conflicting files and symlinks, never directories, into
+// the data directory's backups/ before linking, never overwriting a backup,
+// and moving them back when linking fails.
+
 package link
 
 import (
@@ -64,6 +68,12 @@ func Backup(plans []Plan, home, data string, log io.Writer) (map[string]string, 
 		destination, err := freeName(filepath.Join(root, relative) + "." + stamp)
 		if err != nil {
 			return nil, nil, undo(err)
+		}
+		// Looked at again just before the move: a directory that took the
+		// target's place since CheckForce looked would otherwise be moved,
+		// which only the user can cause, but never silently.
+		if info, err := os.Lstat(plan.Target); err != nil || info.IsDir() {
+			return nil, nil, undo(fmt.Errorf("%s changed since it was checked; run the command again", plan.Target))
 		}
 		if err := os.Rename(plan.Target, destination); err != nil {
 			return nil, nil, undo(fmt.Errorf("moving %s into the backup (the data directory must be on the same file system): %w", plan.Target, err))
