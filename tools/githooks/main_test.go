@@ -50,6 +50,9 @@ func TestInstallKeepsOtherHooks(t *testing.T) {
 // without the executable bit, as a copy made by hand may be, is rewritten
 // with mode 0700: Git ignores a hook it cannot execute.
 func TestInstallRestoresMode(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows has no Unix permission bits")
+	}
 	hook := []byte("#!/bin/sh\n" + marker + "\n")
 	dir := t.TempDir()
 	path := filepath.Join(dir, "pre-commit")

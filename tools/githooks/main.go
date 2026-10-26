@@ -18,6 +18,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/safefile"
@@ -91,7 +92,8 @@ func install(hook []byte, dir string) (string, error) {
 	case errors.Is(err, fs.ErrNotExist) && info == nil:
 	case err != nil:
 		return "", err
-	case bytes.Equal(existing, hook) && info.Mode().Perm() == 0o700:
+	case bytes.Equal(existing, hook) && (info.Mode().Perm() == 0o700 || runtime.GOOS == "windows"):
+		// Windows has no Unix permission bits to restore.
 		return "unchanged", nil
 	case bytes.Equal(existing, hook):
 		// The same hook, but Git runs only an executable one, so a copy made
