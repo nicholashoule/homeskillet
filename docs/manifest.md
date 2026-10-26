@@ -171,8 +171,21 @@ Every step is listed. A step that is done says what shows it, so you can tell
 why it was not offered:
 
 ```text
-done	gitconfig
-  found: /home/user/.gitconfig
+Pending (1): shown in full and asked about before each runs
+  dotnet-sdk  bash setup/install-dotnet.sh
+
+Done (1)
+  gitconfig   /home/user/.gitconfig
+
+Dry run: nothing changed; setup would offer 1 step.
+```
+
+That is a dry run at a terminal. In a pipe or script each step is one
+tab-separated line, `state`, `name`, and the same detail. When a step is about
+to run, it is shown in full first, every command on its own line with the
+working directory, and nothing runs until you answer `y`:
+
+```text
 pending	dotnet-sdk
   run: bash setup/install-dotnet.sh
   in:  /home/user/dotfiles

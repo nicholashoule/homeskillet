@@ -166,7 +166,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		// Every step is accounted for, so one that is not offered still
 		// says why rather than vanishing from the output.
 		if plan.State == Done {
-			if err := Describe(opts.Output, *plan, opts.Repo); err != nil {
+			if err := List(opts.Output, *plan); err != nil {
 				return err
 			}
 			continue
@@ -180,7 +180,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 			return err
 		}
 		if state == Done {
-			if err := Describe(opts.Output, Plan{Step: plan.Step, State: Done, Found: found}, opts.Repo); err != nil {
+			if err := List(opts.Output, Plan{Step: plan.Step, State: Done, Found: found}); err != nil {
 				return err
 			}
 			continue
@@ -213,9 +213,9 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 	return nil
 }
 
-// Describe writes a step's state and exactly what it would run, or, for a
-// Done step, what shows it is done. Run uses it before each prompt and for
-// each step it does not offer, and dry runs use it to list every step.
+// Describe writes a step's state and exactly what it will run, every command
+// and the working directory, for the review before the prompt: what is shown
+// is what runs.
 func Describe(w io.Writer, plan Plan, dir string) error {
 	if w == nil {
 		return nil
@@ -223,16 +223,38 @@ func Describe(w io.Writer, plan Plan, dir string) error {
 	// Built whole, then written once, so the one write error is the only one.
 	var text strings.Builder
 	fmt.Fprintf(&text, "%s\t%s\n", plan.State, plan.Step.Name)
-	if plan.State == Done && plan.Found != "" {
-		fmt.Fprintf(&text, "  found: %s\n", printable(plan.Found))
-	} else {
-		for _, command := range plan.Step.Run {
-			fmt.Fprintf(&text, "  run: %s\n", Quote(command))
-		}
-		fmt.Fprintf(&text, "  in:  %s\n", printable(dir))
+	for _, command := range plan.Step.Run {
+		fmt.Fprintf(&text, "  run: %s\n", Quote(command))
 	}
+	fmt.Fprintf(&text, "  in:  %s\n", printable(dir))
 	_, err := io.WriteString(w, text.String())
 	return err
+}
+
+// List writes one tab-separated line for plan, the form scripts parse: the
+// state, the name, and what Detail says. Run uses it for steps it does not
+// offer, and dry runs for every step when output is not a terminal.
+func List(w io.Writer, plan Plan) error {
+	if w == nil {
+		return nil
+	}
+	_, err := fmt.Fprintf(w, "%s\t%s\t%s\n", plan.State, plan.Step.Name, Detail(plan))
+	return err
+}
+
+// Detail returns what to show beside a step in a listing: for a Done step the
+// file or program that makes it done, and for a Pending step its commands,
+// in shell quoting, separated by "; " when there are several. The prompt
+// before a step runs shows them one per line instead (see Describe).
+func Detail(plan Plan) string {
+	if plan.State == Done {
+		return printable(plan.Found)
+	}
+	commands := make([]string, len(plan.Step.Run))
+	for i, command := range plan.Step.Run {
+		commands[i] = Quote(command)
+	}
+	return strings.Join(commands, "; ")
 }
 
 // execute runs a step's commands in order, stopping at the first that fails,

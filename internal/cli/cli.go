@@ -185,7 +185,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 		}
 		return runSetup(ctx, steps, repo, home, inv.dryRun, setup.Options{
 			Repo: repo, Home: home, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
-		})
+		}, v)
 	}
 	data, err := dataDir(inv, home)
 	if err != nil {
@@ -711,20 +711,25 @@ func selectSteps(names []string, applicable, all []config.Step, repo string, pla
 	return slices.DeleteFunc(slices.Clone(applicable), func(step config.Step) bool { return !slices.Contains(names, step.Name) }), nil
 }
 
-func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRun bool, opts setup.Options) error {
+// runSetup lists the steps for a dry run, grouped for a person at a terminal
+// (v) or one line each for scripts, or runs them.
+func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRun bool, opts setup.Options, v *view) error {
 	plans, err := setup.Prepare(steps, repo, home)
 	if err != nil {
 		return err
 	}
-	if dryRun {
-		for i := range plans {
-			if err := setup.Describe(opts.Output, plans[i], repo); err != nil {
-				return err
-			}
-		}
-		return nil
+	if !dryRun {
+		return setup.Run(ctx, plans, opts)
 	}
-	return setup.Run(ctx, plans, opts)
+	if v != nil {
+		return v.steps(opts.Output, plans)
+	}
+	for i := range plans {
+		if err := setup.List(opts.Output, plans[i]); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // runSelf manages installed versions of homeskillet under the prefix,

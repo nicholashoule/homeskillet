@@ -22,6 +22,7 @@ import (
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/link"
+	"github.com/nicholashoule/homeskillet/internal/setup"
 )
 
 // repository creates a repository holding each source, with no manifest, and
@@ -1001,5 +1002,53 @@ func TestQuiet(t *testing.T) {
 	}
 	if _, err := parse([]string{"setup", repo, "--quiet"}, new(bytes.Buffer)); err == nil {
 		t.Fatal("setup accepted --quiet, which would hide steps before approval")
+	}
+}
+
+// TestSetupView checks the dry run's grouped listing for a terminal: done
+// steps with what makes them done, pending ones with their commands, aligned,
+// and a closing line that says what setup would do.
+func TestSetupView(t *testing.T) {
+	repo, home := repository(t)
+	manifest := config.Manifest{Setup: []config.Step{
+		{Name: "git", Run: config.Commands{{"true"}}, Creates: ".gitconfig"},
+		{Name: "tools", Run: config.Commands{{"brew", "install", "jq"}, {"brew", "install", "rg"}}},
+	}}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, config.FileName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	plans, err := setup.Prepare(manifest.Setup, repo, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	if err := (&view{}).steps(&output, plans); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{
+		"Pending (1)", "  tools  brew install jq; brew install rg\n",
+		"Done (1)", "  git  " + filepath.Join(home, ".gitconfig") + "\n",
+		"Dry run: nothing changed; setup would offer 1 step.",
+	} {
+		if !strings.Contains(output.String(), want) {
+			t.Errorf("setup view lacks %q:\n%s", want, output.String())
+		}
+	}
+	// Scripts get one line per step.
+	var lines bytes.Buffer
+	for i := range plans {
+		if err := setup.List(&lines, plans[i]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if lines.String() != "done\tgit\t"+filepath.Join(home, ".gitconfig")+"\npending\ttools\tbrew install jq; brew install rg\n" {
+		t.Errorf("script lines:\n%s", lines.String())
 	}
 }

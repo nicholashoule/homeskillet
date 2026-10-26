@@ -168,7 +168,7 @@ func TestRunYesSkipsPromptsAndDoneSteps(t *testing.T) {
 	// The done step is reported with what shows it is done, not offered.
 	if strings.Contains(output.String(), "Run this step?") || strings.Contains(output.String(), "pending\tdone") ||
 		strings.Contains(output.String(), "ran\tdone") ||
-		!strings.Contains(output.String(), "done\tdone\n  found: "+filepath.Join(home, "done")+"\n") {
+		!strings.Contains(output.String(), "done\tdone\t"+filepath.Join(home, "done")+"\n") {
 		t.Fatalf("prompted, offered, or left out a done step:\n%s", output.String())
 	}
 	if !exists(filepath.Join(home, "first")) || !exists(filepath.Join(home, "second")) {
