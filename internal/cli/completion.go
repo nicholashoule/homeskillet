@@ -35,7 +35,8 @@ const completeCommand = "__complete"
 var completionScripts = map[string]string{"bash": bashCompletion, "zsh": zshCompletion}
 
 // bashCompletion is the bash script. It avoids what bash 4 added, such as
-// mapfile and compopt, so it also works with bash 3.2, which macOS ships.
+// mapfile, so it also works with bash 3.2, which macOS ships; compopt, also
+// from bash 4, is used only where it exists (see the script).
 const bashCompletion = `# bash completion for homeskillet, written by: homeskillet completion bash
 # Copyright 2026 nicholashoule
 # SPDX-License-Identifier: Apache-2.0
@@ -44,7 +45,7 @@ const bashCompletion = `# bash completion for homeskillet, written by: homeskill
 # homeskillet works out the candidates itself, so they match the installed
 # version. It works with bash 3.2, which macOS ships, and later.
 _homeskillet() {
-    local cur word directive marked
+    local cur word directive
     local -a reply
     # Assigned, not just declared, so set -u counts it as set when empty.
     reply=()
@@ -66,28 +67,27 @@ _homeskillet() {
     fi
     case $directive in
         :dirs | :files)
-            # Names on disk get filename handling: quoting of spaces, and a
-            # slash after a directory. compopt turns it on for this one
-            # completion where bash has it (4.0 and later); bash 3.2, which
-            # macOS ships, gets the same by hand. It is never on for commands
-            # and step names, so a directory called setup cannot turn the
-            # setup command into the path setup/.
-            if ! compopt -o filenames 2>/dev/null; then
-                marked=yes
-            fi
+            # Names on disk get readline's filename handling: quoting of
+            # spaces, a slash after a directory with no space after it. With
+            # bash 4 and later, compopt turns it on for this completion only,
+            # so a directory called setup cannot turn the setup command into
+            # the path setup/. builtin keeps it from reaching PATH where it
+            # is not a builtin.
+            builtin compopt -o filenames 2>/dev/null
             while IFS= read -r word; do
-                if [[ -n ${marked-} ]]; then
-                    if [[ -d $word ]]; then
-                        word=$word/
-                    fi
-                    printf -v word '%q' "$word"
-                fi
                 COMPREPLY+=("$word")
             done < <(if [[ $directive == :dirs ]]; then compgen -d -- "$cur"; else compgen -f -- "$cur"; fi)
             ;;
     esac
 }
-complete -F _homeskillet homeskillet
+# bash 3.2 has no compopt, so there filename handling is on for every
+# completion, the only way readline offers it; a directory named like a
+# command then completes with a slash, which is the price of that bash.
+if type compopt >/dev/null 2>&1; then
+    complete -F _homeskillet homeskillet
+else
+    complete -o filenames -F _homeskillet homeskillet
+fi
 `
 
 // zshCompletion is the zsh script, usable with eval or saved on fpath.

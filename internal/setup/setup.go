@@ -140,9 +140,10 @@ type Options struct {
 	Output io.Writer // descriptions, prompts, results, and each step's stdout
 	Errors io.Writer // each step's stderr
 	// Report receives each step's outcome: Done for a step not offered
-	// because its work exists, "ran", or "skipped" for one declined. A nil
-	// Report writes one tab-separated line per outcome to Output, the form
-	// scripts parse; the CLI's terminal view supplies its own.
+	// because its work exists, Pending just before a step is shown and
+	// offered, "ran", or "skipped" for one declined. A nil Report writes one
+	// tab-separated line per outcome to Output, the form scripts parse; the
+	// CLI's terminal view supplies its own.
 	Report func(outcome string, plan Plan) error
 }
 
@@ -209,6 +210,9 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		if err := errors.Join(trust.CheckTree(opts.Repo), trust.CheckDirectory(opts.Home)); err != nil {
 			return fmt.Errorf("before setup step %s: %w", plan.Step.Name, err)
 		}
+		if err := opts.Report(string(Pending), *plan); err != nil {
+			return err
+		}
 		if err := Describe(opts.Output, *plan, opts.Repo); err != nil {
 			return err
 		}
@@ -234,16 +238,15 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 	return nil
 }
 
-// Describe writes a step's state and exactly what it will run, every command
-// and the working directory, for the review before the prompt: what is shown
-// is what runs.
+// Describe writes exactly what a step will run, every command and the working
+// directory, for the review before the prompt: what is shown is what runs.
+// Run reports the step's name first (see Options.Report).
 func Describe(w io.Writer, plan Plan, dir string) error {
 	if w == nil {
 		return nil
 	}
 	// Built whole, then written once, so the one write error is the only one.
 	var text strings.Builder
-	fmt.Fprintf(&text, "%-8s %s\n", plan.State, plan.Step.Name)
 	for _, command := range plan.Step.Run {
 		fmt.Fprintf(&text, "  run: %s\n", Quote(command))
 	}

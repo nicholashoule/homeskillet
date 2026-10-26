@@ -10,12 +10,15 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -648,10 +651,20 @@ func running(t *testing.T, pid int) bool {
 	if err := syscall.Kill(pid, 0); err != nil {
 		return false
 	}
+	// Linux has /proc; the state follows the command name in parentheses.
+	if stat, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/stat"); err == nil {
+		_, after, found := strings.Cut(string(stat), ") ")
+		return !found || !strings.HasPrefix(after, "Z")
+	} else if runtime.GOOS == "linux" {
+		return !errors.Is(err, fs.ErrNotExist)
+	}
 	out, err := exec.CommandContext(t.Context(), "ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output() //nolint:gosec // G204: ps with fixed options and a process ID this test started
-	if err != nil {
-		// ps exits nonzero when the process is gone.
-		return false
+	var exit *exec.ExitError
+	switch {
+	case errors.As(err, &exit):
+		return false // ps found no such process
+	case err != nil:
+		t.Fatalf("ps: %v", err) // not an answer about the process
 	}
 	return !strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
 }

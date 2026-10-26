@@ -1030,7 +1030,7 @@ func TestSetupView(t *testing.T) {
 		t.Fatal(err)
 	}
 	var output bytes.Buffer
-	if err := (&view{}).steps(&output, plans); err != nil {
+	if err := (&view{}).steps(&output, plans, false); err != nil {
 		t.Fatal(err)
 	}
 	for _, want := range []string{

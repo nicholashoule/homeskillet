@@ -200,7 +200,7 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 
 // steps writes a dry run's setup steps for a person: the done steps with what
 // makes each done, the pending ones with their commands, and a closing line.
-func (v *view) steps(w io.Writer, plans []setup.Plan) error {
+func (v *view) steps(w io.Writer, plans []setup.Plan, yes bool) error {
 	var groups []group
 	for _, state := range []setup.State{setup.Pending, setup.Done} {
 		var entries [][2]string
@@ -213,7 +213,10 @@ func (v *view) steps(w io.Writer, plans []setup.Plan) error {
 			continue
 		}
 		heading := fmt.Sprintf("Done (%d)", len(entries))
-		if state == setup.Pending {
+		switch {
+		case state == setup.Pending && yes:
+			heading = fmt.Sprintf("Pending (%d): shown in full before each runs; --yes asks nothing", len(entries))
+		case state == setup.Pending:
 			heading = fmt.Sprintf("Pending (%d): shown in full and asked about before each runs", len(entries))
 		}
 		groups = append(groups, group{heading: heading, entries: entries})

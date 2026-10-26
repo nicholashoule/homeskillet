@@ -730,7 +730,7 @@ func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRu
 		return setup.Run(ctx, plans, opts)
 	}
 	if v != nil {
-		return v.steps(opts.Output, plans)
+		return v.steps(opts.Output, plans, opts.Yes)
 	}
 	for i := range plans {
 		if err := setup.List(opts.Output, plans[i]); err != nil {

@@ -205,7 +205,7 @@ func TestBashCompletion(t *testing.T) {
 	// COMP_WORDS holds the words as bash splits them; the cursor is on the last.
 	const driver = `eval "$1"; shift
 complete -p homeskillet > /dev/null || exit 1
-case $(complete -p homeskillet) in *filenames*) echo 'filenames on for every candidate'; exit 1;; esac
+if type compopt >/dev/null 2>&1; then case $(complete -p homeskillet) in *filenames*) echo 'filenames on for every candidate'; exit 1;; esac; fi
 set -u
 COMP_WORDS=(homeskillet "$@"); COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
 _homeskillet
@@ -239,11 +239,6 @@ if ((${#COMPREPLY[@]})); then printf '%s\n' "${COMPREPLY[@]}"; fi`
 			cmd.Dir = cwd
 			output, err := cmd.CombinedOutput()
 			got := strings.Fields(string(output))
-			// bash 3.2 marks directories itself with a trailing slash; later
-			// versions leave that to readline.
-			for i, word := range got {
-				got[i] = strings.TrimSuffix(word, "/")
-			}
 			if err != nil || !slices.Equal(got, test.want) {
 				t.Errorf("%s %q: got %q, want %q (%v)", bash, test.words, got, test.want, err)
 			}

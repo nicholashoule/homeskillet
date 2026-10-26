@@ -180,13 +180,14 @@ Done (1)
 Dry run: nothing changed; setup would offer 1 step.
 ```
 
-That is a dry run at a terminal. In a pipe or script each step is one
-tab-separated line, `state`, `name`, and the same detail. When a step is about
-to run, it is shown in full first, every command on its own line with the
-working directory, and nothing runs until you answer `y`:
+That is a dry run at a terminal. In a pipe or script, each step's state is one
+tab-separated line: `done`, `pending`, `ran`, or `skipped`, the name, and for
+a done step the same detail. When a step is about to run, it is shown in full
+first, every command on its own line with the working directory, and nothing
+runs until you answer `y`:
 
 ```text
-pending	dotnet-sdk
+pending  dotnet-sdk
   run: bash setup/install-dotnet.sh
   in:  /home/user/dotfiles
 Run this step? [y/N]
