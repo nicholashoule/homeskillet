@@ -48,7 +48,7 @@ not on your PATH, which on macOS it usually is not. `make install PREFIX=<dir>`
 installs under another prefix.
 
 Without Go, download a release for your OS and architecture from the Releases
-page or ghcr.io, make it executable, and run its `self install`
+page, make it executable, and run its `self install`
 ([docs/install.md](docs/install.md#downloading-a-release)).
 
 For tab completion in bash or zsh, see

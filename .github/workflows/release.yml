@@ -1,8 +1,6 @@
 # Release: when a version tag is pushed, build the release binaries with make
-# cross and publish them, plain binaries rather than container images, in two
-# places: a GitHub Release with a SHA256SUMS file, and ghcr.io, which the
-# repository's Packages page lists, with one artifact per OS and architecture.
-# See Releases in docs/development.md.
+# cross and publish them as a GitHub Release, with a SHA256SUMS file to check
+# them against. See Releases in docs/development.md.
 name: Release
 
 on:
@@ -19,7 +17,6 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write # create the Release
-      packages: write # push to ghcr.io
     env:
       TAG: ${{ github.ref_name }}
 
@@ -74,43 +71,7 @@ jobs:
               }'
           done
 
-      # go install checks oras against the Go checksum database, as go run
-      # does for repogov and demojify. Dependabot cannot update it; bump it
-      # by hand, here and in docs/development.md.
-      - name: Install oras
-        run: |
-          GOBIN="$RUNNER_TEMP/bin" go install oras.land/oras/cmd/oras@v1.3.6
-          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
-
-      # Each OS and architecture gets an artifact holding its binary as
-      # homeskillet, tagged like v1.2.3-linux-arm64, and the version's own tag
-      # names an index of them all, so oras pull --platform fetches only the
-      # binary one machine needs. The source annotation links the package to
-      # this repository.
-      - name: Publish to ghcr.io
-        env:
-          GITHUB_TOKEN: ${{ github.token }}
-        run: |
-          oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
-          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
-          source="org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
-          tags=()
-          for binary in bin/homeskillet-*-*; do
-            platform=${binary#bin/homeskillet-}
-            dir="$RUNNER_TEMP/oci/$platform"
-            mkdir -p "$dir"
-            cp "$binary" "$dir/homeskillet"
-            (cd "$dir" && oras push "$repository:$TAG-$platform" \
-              --artifact-type application/vnd.homeskillet.binary \
-              --artifact-platform "${platform/-//}" \
-              --annotation "$source" \
-              homeskillet:application/octet-stream)
-            tags+=("$TAG-$platform")
-          done
-          oras manifest index create "$repository:$TAG" "${tags[@]}" --annotation "$source"
-
-      # Last, so a Release appears only once ghcr.io has the same binaries. A
-      # tag with a pre-release part, such as v1.2.3-rc.1, makes a pre-release.
+      # A tag with a pre-release part, such as v1.2.3-rc.1, makes a pre-release.
       # A rerun after a failed upload adds the files to the Release it finds.
       - name: Create the Release
         env:

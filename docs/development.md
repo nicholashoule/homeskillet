@@ -130,7 +130,7 @@ git push origin v0.0.1   # publishes it (below)
 ```
 
 Pushing a tag runs [.github/workflows/release.yml](../.github/workflows/release.yml),
-which publishes plain binaries, never container images:
+which publishes the binaries as a GitHub Release, where people look for them:
 
 - It refuses a tag whose commit is not on `main`.
 - It builds with `make cross`, setting `SOURCE_DATE_EPOCH` to the commit's
@@ -139,14 +139,9 @@ which publishes plain binaries, never container images:
 - It checks, with `go version -m`, that every binary reports the tag from a
   clean tree. Go ignores a tag that is not valid for the module path: a `v2`
   or later tag needs the path to end in `/v2` first.
-- It pushes each binary to ghcr.io as an artifact tagged `<tag>-<os>-<arch>`,
-  and an index of them under the tag, for `oras pull --platform`. oras is
-  pinned like repogov; bump it by hand.
-- Last, it creates the GitHub Release with the binaries and `SHA256SUMS`, as a
-  pre-release when the tag has a pre-release part, such as `v0.2.0-rc.1`.
-
-Running the workflow again replaces the ghcr.io tags but cannot replace a
-Release, so delete a partial Release before rerunning a failed one.
+- It creates the GitHub Release with the binaries and `SHA256SUMS`, as a
+  pre-release when the tag has a pre-release part, such as `v0.2.0-rc.1`. Run
+  again, as after a failed upload, it adds the files to the Release it finds.
 [docs/install.md](install.md#downloading-a-release) shows how to download.
 
 Until the repository has a commit, builds report `(devel)`, which `self install`

@@ -7,28 +7,15 @@ install.
 ## Downloading a Release
 
 Each version tag publishes the static binaries `make cross` builds, for Linux
-and macOS, in two places. Both hold plain binaries, not container images. In
-the commands below, `OWNER` is the GitHub account that hosts homeskillet. On the
-repository's Releases page, each is `homeskillet-<os>-<arch>`, with a
-`SHA256SUMS` file to check it against:
+and macOS, on the repository's Releases page: one `homeskillet-<os>-<arch>` per
+platform, with a `SHA256SUMS` file to check them against. In the commands
+below, `OWNER` is the GitHub account that hosts homeskillet.
 
 ```sh
 gh release download v0.1.1 --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
 chmod +x homeskillet-linux-amd64
 ./homeskillet-linux-amd64 self install
-```
-
-On ghcr.io, which the repository's Packages page lists,
-`oras pull --platform` fetches only the binary for one OS and architecture, as
-`homeskillet`, and checks it against its digest. `v0.1.1-linux-arm64` and the
-like name each platform's artifact directly. While the package is private, run
-`oras login ghcr.io` first with a token that can read packages.
-
-```sh
-oras pull --platform linux/arm64 ghcr.io/OWNER/homeskillet:v0.1.1
-chmod +x homeskillet
-./homeskillet self install
 ```
 
 `self install` installs the downloaded binary as `make install` installs a
