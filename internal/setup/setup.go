@@ -139,6 +139,24 @@ type Options struct {
 	Input  io.Reader // answers to prompts, then each step's stdin, unless Yes
 	Output io.Writer // descriptions, prompts, results, and each step's stdout
 	Errors io.Writer // each step's stderr
+	// Report receives each step's outcome: Done for a step not offered
+	// because its work exists, "ran", or "skipped" for one declined. A nil
+	// Report writes one tab-separated line per outcome to Output, the form
+	// scripts parse; the CLI's terminal view supplies its own.
+	Report func(outcome string, plan Plan) error
+}
+
+// report writes outcome for plan the way scripts parse it, one tab-separated
+// line: the outcome, the step's name, and for a Done step what makes it done.
+func report(w io.Writer, outcome string, plan Plan) error {
+	if w == nil {
+		return nil
+	}
+	if outcome == string(Done) {
+		return List(w, plan)
+	}
+	_, err := fmt.Fprintf(w, "%s\t%s\n", outcome, plan.Step.Name)
+	return err
 }
 
 // Run offers each pending step in order and runs the approved ones. A
@@ -161,12 +179,15 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 	if opts.Errors == nil {
 		opts.Errors = io.Discard
 	}
+	if opts.Report == nil {
+		opts.Report = func(outcome string, plan Plan) error { return report(opts.Output, outcome, plan) }
+	}
 	for i := range plans {
 		plan := &plans[i]
 		// Every step is accounted for, so one that is not offered still
 		// says why rather than vanishing from the output.
 		if plan.State == Done {
-			if err := List(opts.Output, *plan); err != nil {
+			if err := opts.Report(string(Done), *plan); err != nil {
 				return err
 			}
 			continue
@@ -180,7 +201,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 			return err
 		}
 		if state == Done {
-			if err := List(opts.Output, Plan{Step: plan.Step, State: Done, Found: found}); err != nil {
+			if err := opts.Report(string(Done), Plan{Step: plan.Step, State: Done, Found: found}); err != nil {
 				return err
 			}
 			continue
@@ -197,7 +218,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 				return err
 			}
 			if !approved {
-				if _, err := fmt.Fprintf(opts.Output, "skipped\t%s\n", plan.Step.Name); err != nil {
+				if err := opts.Report("skipped", *plan); err != nil {
 					return err
 				}
 				continue
@@ -206,7 +227,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		if err := execute(ctx, plan.Step, opts); err != nil {
 			return fmt.Errorf("setup step %s: %w", plan.Step.Name, err)
 		}
-		if _, err := fmt.Fprintf(opts.Output, "ran\t%s\n", plan.Step.Name); err != nil {
+		if err := opts.Report("ran", *plan); err != nil {
 			return err
 		}
 	}
@@ -222,7 +243,7 @@ func Describe(w io.Writer, plan Plan, dir string) error {
 	}
 	// Built whole, then written once, so the one write error is the only one.
 	var text strings.Builder
-	fmt.Fprintf(&text, "%s\t%s\n", plan.State, plan.Step.Name)
+	fmt.Fprintf(&text, "%-8s %s\n", plan.State, plan.Step.Name)
 	for _, command := range plan.Step.Run {
 		fmt.Fprintf(&text, "  run: %s\n", Quote(command))
 	}

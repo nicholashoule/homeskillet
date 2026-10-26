@@ -12,6 +12,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -1040,6 +1041,24 @@ func TestSetupView(t *testing.T) {
 		if !strings.Contains(output.String(), want) {
 			t.Errorf("setup view lacks %q:\n%s", want, output.String())
 		}
+	}
+	// A real run at a terminal lists the done steps first, then reports each
+	// pending one as it is approved or declined, without tab-separated lines.
+	var run bytes.Buffer
+	manifest.Setup[1].Run = config.Commands{{"true"}}
+	err = runSetup(context.Background(), manifest.Setup, repo, home, false, setup.Options{
+		Repo: repo, Home: home, Input: strings.NewReader("y\n"), Output: &run, Errors: io.Discard,
+	}, &view{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"Done (1)\n  git  " + filepath.Join(home, ".gitconfig"), "Run this step? [y/N] ", "ran      tools\n"} {
+		if !strings.Contains(run.String(), want) {
+			t.Errorf("terminal run lacks %q:\n%s", want, run.String())
+		}
+	}
+	if strings.Contains(run.String(), "done\t") || strings.Contains(run.String(), "ran\t") {
+		t.Errorf("terminal run has tab-separated lines:\n%s", run.String())
 	}
 	// Scripts get one line per step.
 	var lines bytes.Buffer

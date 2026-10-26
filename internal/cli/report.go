@@ -237,6 +237,55 @@ func (v *view) steps(w io.Writer, plans []setup.Plan) error {
 	return err
 }
 
+// doneSteps writes the Done group alone, before a run offers the pending
+// steps, and a closing line when nothing is pending.
+func (v *view) doneSteps(w io.Writer, plans []setup.Plan) error {
+	var entries [][2]string
+	for i := range plans {
+		if plans[i].State == setup.Done {
+			entries = append(entries, [2]string{plans[i].Step.Name, setup.Detail(plans[i])})
+		}
+	}
+	if len(entries) > 0 {
+		if err := v.writeGroup(w, group{heading: fmt.Sprintf("Done (%d)", len(entries)), entries: entries}); err != nil {
+			return err
+		}
+	}
+	switch {
+	case len(plans) == 0:
+		_, err := fmt.Fprintln(w, "No setup steps for this platform.")
+		return err
+	case len(entries) == len(plans):
+		_, err := fmt.Fprintln(w, "Nothing to do: "+files(len(plans), "step is", "steps are")+" done.")
+		return err
+	}
+	return nil
+}
+
+// stepReporter returns a setup.Options.Report for a person at a terminal: a
+// step that turned out done during the run, after an earlier step did its
+// work, is said so, and each step that ran or was skipped gets a line. Steps
+// done before the run were listed by doneSteps and are not repeated.
+func (v *view) stepReporter(w io.Writer, plans []setup.Plan) func(outcome string, plan setup.Plan) error {
+	listed := map[string]bool{}
+	for i := range plans {
+		if plans[i].State == setup.Done {
+			listed[plans[i].Step.Name] = true
+		}
+	}
+	return func(outcome string, plan setup.Plan) error {
+		var err error
+		switch {
+		case outcome == string(setup.Done) && listed[plan.Step.Name]:
+		case outcome == string(setup.Done):
+			_, err = fmt.Fprintf(w, "done     %s  (%s, by an earlier step)\n", plan.Step.Name, setup.Detail(plan))
+		default:
+			_, err = fmt.Fprintf(w, "%-8s %s\n", outcome, plan.Step.Name)
+		}
+		return err
+	}
+}
+
 // writeGroup writes a heading and its entries, aligning the notes.
 func (v *view) writeGroup(w io.Writer, g group) error {
 	width := 0

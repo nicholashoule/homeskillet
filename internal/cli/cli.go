@@ -719,6 +719,14 @@ func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRu
 		return err
 	}
 	if !dryRun {
+		if v != nil {
+			// The steps already done are shown as a group first; the
+			// reporter then covers what happens to the pending ones.
+			if err := v.doneSteps(opts.Output, plans); err != nil {
+				return err
+			}
+			opts.Report = v.stepReporter(opts.Output, plans)
+		}
 		return setup.Run(ctx, plans, opts)
 	}
 	if v != nil {
