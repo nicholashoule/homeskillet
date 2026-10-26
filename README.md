@@ -51,12 +51,12 @@ Without Go, download a release for your OS and architecture from the Releases
 page or ghcr.io, make it executable, and run its `self install`
 ([docs/install.md](docs/install.md#downloading-a-release)).
 
-For tab completion in bash or zsh, add
-`eval "$(homeskillet completion bash)"` (or `zsh`) to your shell's startup
-file ([docs/install.md](docs/install.md#shell-completion)).
+For tab completion in bash or zsh, see
+[docs/install.md](docs/install.md#shell-completion).
 
 `make build` alone leaves the binary in `bin/` without installing it. Both
-produce a static, stripped binary of about 2.5 MiB that runs on any Linux
+produce a static, stripped binary
+([docs/development.md](docs/development.md#binary-size)) that runs on any Linux
 distribution or macOS release for its architecture. Run `make` to list every
 target; the Makefile works with macOS's GNU Make 3.81 and on any Linux, WSL,
 or container ([docs/development.md](docs/development.md)).
@@ -91,7 +91,7 @@ target (`.bashrc`), a source (`home/.bashrc`), or a directory of either
 (`.bashrc.d`). The repository defaults to the current directory or, when that
 is not one, to the one repository already linked into the home, so after the
 first link, `homeskillet link` alone works anywhere. Options go anywhere after
-the command. Without a command, `status` runs. There, and after `setup`, where
+the command, and `homeskillet help` (or `-h`) lists every command and option. Without a command, `status` runs. There, and after `setup`, where
 other words name steps, the repository must plainly be a path (`.`, `..`, or
 containing `/`), so a mistyped command is never read as a directory. `--home` selects another home, `--dry-run` changes nothing,
 `--quiet` prints nothing but errors (not for `setup`, whose steps must be
@@ -160,13 +160,9 @@ an existing manifest:
 }
 ```
 
-`homeskillet setup` shows each pending step exactly as it will run, and runs
-it only when you answer `y`. A step whose `creates` path exists, or whose
-`provides` command is installed, is listed as done, with what was found. `run`
-holds one command or a list of commands approved together, and
-`homeskillet setup ~/dotfiles brew-tools` runs only the steps named.
+`homeskillet setup` runs each step only after you approve it.
 [docs/manifest.md](docs/manifest.md) describes every field, platforms, and how
-steps run.
+steps run, including running only the steps you name.
 
 ## Safety
 

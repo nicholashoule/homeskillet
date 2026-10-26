@@ -31,7 +31,7 @@ describe the project, so keep them current instead.
 |---|---|
 | `main.go` | Entry point only: calls `cli.Run` and exits on error |
 | `main_unsupported.go` | Entry point on unsupported systems such as Windows: says so and exits |
-| `internal/cli` | Flags, root refusal, path canonicalization, output, and `init`'s starter manifest |
+| `internal/cli` | Flags, root refusal, path canonicalization, output, help, shell completion, and `init`'s starter manifest |
 | `internal/config` | Reading a repository: `dotfiles.json` decoding, `home/` discovery, lexical validation |
 | `internal/trust` | Ownership and permission rules (audit these in one place) |
 | `internal/link` | Link planning, conflict detection, filesystem changes, and the record of links |
@@ -107,7 +107,7 @@ Environments table.
 
 - Use the standard library only. Ask before adding a module dependency; prefer
   shelling out to a system tool (for example `git`) over importing a library.
-- Keep the binary small; `make build` strips it to about 2.5 MiB. Before
+- Keep the binary small ([docs/development.md](docs/development.md#binary-size)). Before
   importing a package that pulls in much code, such as `regexp`, `crypto/*`,
   `debug/*`, or `net/*`, check that a few lines of plain Go cannot do the job,
   and check `go list -deps .` afterward.
@@ -177,7 +177,8 @@ Environments table.
 - Do not commit, push, or open pull requests unless asked. Preserve
   concurrent user edits.
 - Keep README.md, docs/, and this file in step with behavior changes, in the
-  same change.
+  same change. Keep each fact in one document and link to it from the others;
+  README.md summarizes and links to docs/ rather than repeating it.
 
 ## Nested Instructions
 

@@ -148,6 +148,18 @@ A setup step is code from the repository, which may be someone else's, so
 Review a step before approving it. homeskillet cannot tell what an installer
 will do once it runs.
 
+## Starter Manifests and Completion
+
+- `init` writes `dotfiles.json` only where none exists, not even as a symlink,
+  and refuses a repository directory another user could write to, since the
+  manifest decides what runs. It creates a missing `home/` private, and removes
+  it again if writing the manifest fails.
+- Shell completion only reads, as `status` and `self list` do: it never runs a
+  setup step or writes a file. Running as root, it reads nothing without
+  `--allow-root`, and it never offers a candidate with control or formatting
+  characters, which could rewrite the terminal
+  ([install.md](install.md#shell-completion)).
+
 ## Installing homeskillet
 
 The installed `homeskillet` command runs as you too, so `self install` applies

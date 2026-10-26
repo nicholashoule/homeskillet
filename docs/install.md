@@ -55,11 +55,8 @@ For zsh, the script may instead be saved as `_homeskillet` in a directory on
 `fpath`. The bash script works with bash 3.2, which macOS ships, and later.
 
 The scripts are fixed text and ask homeskillet for each completion through a
-hidden `homeskillet __complete` command. Working out candidates only reads,
-as `status` and `self list` do: it never runs a setup step or changes a file,
-and running as root it reads nothing without `--allow-root`. Candidates with
-control characters are never offered, so a file name cannot rewrite the
-terminal.
+hidden `homeskillet __complete` command, which only reads
+([safety.md](safety.md#starter-manifests-and-completion)).
 
 ## Version Information
 

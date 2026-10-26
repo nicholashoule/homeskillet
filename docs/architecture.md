@@ -27,7 +27,7 @@ dependencies on the sibling checkout.
 
 | Package | Owns |
 |---|---|
-| `internal/cli` | Arguments, root refusal, path canonicalization, printed output |
+| `internal/cli` | Arguments, root refusal, path canonicalization, printed output, help, shell completion, and `init` |
 | `internal/config` | Reading a repository: manifest decoding, `home/` discovery, lexical validation |
 | `internal/trust` | Ownership and permission rules for the repository |
 | `internal/link` | Link planning and changes: states, conflicts, containment, the record of links and orphans |
@@ -41,10 +41,15 @@ A command runs in this order:
 
 1. `cli.Run` parses the command and flags. The default is `status`. A flag
    that does not apply to the command is an error rather than silently
-   ignored. `version` prints `version.Current` and stops. Every other command
-   refuses to run as root without `--allow-root`, and refuses a home directory
-   that fails `trust.CheckLocation`; `self` then continues as described under
-   [Installing homeskillet](#installing-homeskillet).
+   ignored, and so is an empty option value or argument
+   ([safety.md](safety.md#links-and-conflicts)). `help` and `--help` print
+   the help text to standard output, `version` prints `version.Current`,
+   `completion` prints a shell script, and the hidden `__complete` command
+   those scripts call works out candidates (see completion.go); each then
+   stops. Every other command refuses to run as root without `--allow-root`.
+   `init` then writes its starter manifest (see init.go). The rest refuse a
+   home directory that fails `trust.CheckLocation`; `self` then continues as
+   described under [Installing homeskillet](#installing-homeskillet).
 2. `canonicalDirectory` resolves the repository and existing home directory.
    Packages link and trust compare path strings, which is only sound for
    canonical paths. The resolved repository must pass `trust.CheckLocation`.
@@ -162,6 +167,10 @@ and dry runs stop after the checks.
   written. The CLI, `link.Prepare`, `setup.Prepare` and `setup.Run`, and every
   `install.Layout` method apply it, and it also rejects relative and unclean
   paths, so an empty path never means the current directory.
+- `init` checks the repository with `trust.CheckRepository` before writing,
+  and shell completion reaches files only through `openRepository` and
+  `selfLayout`, as `status` and `self list` do; [safety.md](safety.md#starter-manifests-and-completion)
+  has the rules both follow.
 - Sources are regular files inside the selected configuration repository.
 - Targets are relative to the selected home and may neither lie inside nor
   contain the repository or the data directory.

@@ -37,9 +37,9 @@ homeskillet init ~/dotfiles --platform darwin     # a starter for a macOS reposi
 }
 ```
 
-`init` never replaces an existing `dotfiles.json`, and refuses a directory that
-another user could write to, as the manifest decides what runs. Remove
-`platforms` to apply everywhere.
+`init` never replaces an existing `dotfiles.json`
+([safety.md](safety.md#starter-manifests-and-completion)). Remove `platforms`
+to apply everywhere.
 
 ## Files
 

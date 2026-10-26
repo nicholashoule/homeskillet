@@ -7,7 +7,7 @@ Run from the homeskillet repository root. `make` alone lists every target.
 ```sh
 make fmt              # golangci-lint fmt ./...
 make check            # go vet ./..., golangci-lint run ./..., go test -race ./...
-make build            # static, stripped bin/homeskillet (about 2.5 MiB)
+make build            # static, stripped bin/homeskillet (see Binary Size)
 bin/homeskillet --help
 make install          # build, then bin/homeskillet self install
 make hooks            # run check, repogov, and demojify before each commit
@@ -69,6 +69,10 @@ and demojify, the checks CI runs, and stops when any fails:
   with its GNU Make 3.81.
 - On Windows, `go vet` and `go test` for the packages that build there, and a
   check that the program only says Windows isn't supported.
+- The shell completion tests load the bash script into every bash they find,
+  under `set -u`, including macOS's `/bin/bash`, which is bash 3.2, and load
+  the zsh script where zsh is installed. Locally, a machine without zsh skips
+  the zsh test, so the macOS runners are where it runs.
 - `make cross`, once, on Linux with the latest Go.
 - golangci-lint, which also checks formatting; repogov, which checks the
   Markdown line limits in [.github/repogov-config.json](../.github/repogov-config.json);
@@ -92,7 +96,7 @@ later releases, which leaves the comment behind.
 
 ## Binary Size
 
-Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table
+A build is about 2.8 MiB. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table
 and DWARF data (about a third of the binary) while keeping function names and
 lines in panics, and set `CGO_ENABLED=0` for a static binary. Code avoids
 packages that cost more than they do here: `regexp` (about 260 KiB) gave way
