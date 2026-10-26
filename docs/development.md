@@ -116,47 +116,9 @@ startup, and trigger antivirus heuristics.
 
 ## Versions and Releases
 
-Go 1.24 and newer stamp each build from a Git checkout with the version
-(the tag, or a pseudo-version after it), the commit, and whether the tree was
-modified, which adds `+dirty`; the Makefile adds the build time (`BUILT`, from
-`tools/buildtime`, which honors `SOURCE_DATE_EPOCH`). `homeskillet version` prints them, and
-`self list` reads them from each installed binary. A release is therefore just
-a tag, made on `main` after merging:
-
-```sh
-git tag v0.0.1
-make install          # installs v0.0.1 and makes it latest; the old latest becomes previous
-git push origin v0.0.1   # publishes it (below)
-```
-
-Pushing a tag runs [.github/workflows/release.yml](../.github/workflows/release.yml),
-which publishes the binaries as a GitHub Release, where people look for them:
-
-- It refuses a tag whose commit is not on `main`.
-- It builds with `make cross`, setting `SOURCE_DATE_EPOCH` to the commit's
-  time, so building the tag again with the same Go release gives the same
-  files, and writes `SHA256SUMS`.
-- It checks, with `go version -m`, that every binary reports the tag from a
-  clean tree. Go ignores a tag that is not valid for the module path: a `v2`
-  or later tag needs the path to end in `/v2` first.
-- It creates the GitHub Release with the binaries and `SHA256SUMS`, as a
-  pre-release when the tag has a pre-release part, such as `v0.2.0-rc.1`. Run
-  again, as after a failed upload, it adds the files to the Release it finds.
-[docs/install.md](install.md#downloading-a-release) shows how to download.
-
-Until the repository has a commit, builds report `(devel)`, which `self install`
-refuses. `make install VERSION=v0.0.1` (or `make build VERSION=v0.0.1`) stamps a
-version with `-ldflags -X` for builds without Git metadata, such as containers
-that exclude `.git`; it overrides the version only, not the commit details. In
-a checkout, tag instead: a stamped build differs from the tagged one, and
-installed versions are never rewritten.
-
-To try installs without touching your own `~/.local`, point them elsewhere:
-
-```sh
-bin/homeskillet self install --prefix "$(mktemp -d)" --dry-run
-bin/homeskillet self install --home /path/to/scratch/home
-```
+A release is a tag on `main` with a section in [CHANGELOG.md](../CHANGELOG.md);
+[release.md](release.md) covers how builds are versioned, what goes in the
+changelog, and what pushing the tag publishes.
 
 ## Configuration Integration
 

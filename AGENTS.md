@@ -45,6 +45,7 @@ describe the project, so keep them current instead.
 | `tools/buildtime` | Prints the build time the Makefile stamps into binaries |
 | `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
 | `.github/` | CI and release workflows, Dependabot, repogov line limits, and Copilot instructions |
+| `CHANGELOG.md`, `SECURITY.md` | What changed for users, by release (the release notes come from it); how to report a vulnerability |
 
 `tools/xplat` is a byte-identical copy of
 `github.com/nicholashoule/go-webapp/tools/xplat`. Do not edit it here: change it
@@ -179,6 +180,9 @@ Environments table.
 - Keep README.md, docs/, and this file in step with behavior changes, in the
   same change. Keep each fact in one document and link to it from the others;
   README.md summarizes and links to docs/ rather than repeating it.
+- A change a user would notice gets a line under `Unreleased` in
+  `CHANGELOG.md`, written as what they can now do; refactors, test fixes, and
+  CI work stay out ([docs/release.md](docs/release.md#the-changelog)).
 
 ## Nested Instructions
 
