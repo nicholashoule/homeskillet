@@ -7,6 +7,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -45,6 +46,28 @@ func TestInstallKeepsOtherHooks(t *testing.T) {
 	}
 }
 
+// TestInstallRestoresMode checks that a hook with the right contents but
+// without the executable bit, as a copy made by hand may be, is rewritten
+// with mode 0700: Git ignores a hook it cannot execute.
+func TestInstallRestoresMode(t *testing.T) {
+	hook := []byte("#!/bin/sh\n" + marker + "\n")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "pre-commit")
+	if err := os.WriteFile(path, hook, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	status, err := install(hook, dir)
+	if err != nil || status != "updated" {
+		t.Fatalf("status %q, %v", status, err)
+	}
+	if info, err := os.Stat(path); err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("mode not restored: %v, %v", info, err)
+	}
+	if status, err := install(hook, dir); err != nil || status != "unchanged" {
+		t.Fatalf("second install: %q, %v", status, err)
+	}
+}
+
 // TestInstallRefusesSymlinks checks that a pre-commit symlink, dangling or
 // not, is never replaced: the installer writes only regular files, so a
 // symlink is someone else's.
@@ -58,6 +81,11 @@ func TestInstallRefusesSymlinks(t *testing.T) {
 			}
 			path := filepath.Join(dir, "pre-commit")
 			if err := os.Symlink(target, path); err != nil {
+				// Windows lets only privileged accounts or Developer Mode
+				// create symlinks.
+				if runtime.GOOS == "windows" {
+					t.Skipf("cannot create symlinks here: %v", err)
+				}
 				t.Fatal(err)
 			}
 			if _, err := install(hook, dir); err == nil {

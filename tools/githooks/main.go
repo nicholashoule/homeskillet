@@ -91,8 +91,12 @@ func install(hook []byte, dir string) (string, error) {
 	case errors.Is(err, fs.ErrNotExist) && info == nil:
 	case err != nil:
 		return "", err
-	case bytes.Equal(existing, hook):
+	case bytes.Equal(existing, hook) && info.Mode().Perm() == 0o700:
 		return "unchanged", nil
+	case bytes.Equal(existing, hook):
+		// The same hook, but Git runs only an executable one, so a copy made
+		// by hand with the wrong mode is rewritten to restore it.
+		status = "updated"
 	case !bytes.Contains(existing, []byte(marker)):
 		return "", fmt.Errorf("%s exists and was not installed by make hooks; move it aside, then run make hooks again", path)
 	default:

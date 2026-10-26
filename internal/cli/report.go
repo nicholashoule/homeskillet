@@ -62,6 +62,13 @@ func newView(output io.Writer) *view {
 // path with control or formatting characters is quoted, so it cannot rewrite
 // the terminal (see config.Printable).
 func (v *view) path(p string) string {
+	return displayPath(p)
+}
+
+// displayPath returns p for display, quoted if it holds control or formatting
+// characters, for output outside the view too: a PATH entry or a file name is
+// not homeskillet's to trust, wherever it is printed.
+func displayPath(p string) string {
 	if !config.Printable(p) {
 		return strconv.Quote(p)
 	}

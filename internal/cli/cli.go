@@ -500,7 +500,10 @@ func runLinks(inv invocation, files []config.Entry, repo, home, data string, out
 		case !inv.quiet:
 			for _, plan := range plans {
 				if other := shadows[plan.Target]; other != "" {
-					if _, err := fmt.Fprintf(diagnostics, "homeskillet: %s runs instead of %s on PATH; link it only from a repository you trust\n", plan.Target, other); err != nil {
+					// Both paths come from the user's PATH and repository, not
+					// from homeskillet, so they are quoted if they could
+					// rewrite the terminal.
+					if _, err := fmt.Fprintf(diagnostics, "homeskillet: %s runs instead of %s on PATH; link it only from a repository you trust\n", displayPath(plan.Target), displayPath(other)); err != nil {
 						return err
 					}
 				}

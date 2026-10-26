@@ -81,6 +81,29 @@ func TestShadowed(t *testing.T) {
 	}
 }
 
+// TestShadowNoteQuotesPaths checks that the note written for scripts quotes a
+// PATH directory holding an escape sequence, so a PATH entry cannot rewrite
+// the terminal that standard error is still attached to.
+func TestShadowNoteQuotesPaths(t *testing.T) {
+	repo, home := repository(t, "home/.local/bin/tool")
+	if err := os.Chmod(filepath.Join(repo, "home", ".local", "bin", "tool"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Built without filepath.Join, which the linter reads as a path with a
+	// separator; the directory's name holds an escape sequence on purpose.
+	system := filepath.Dir(home) + string(filepath.Separator) + "sys\x1b[2K"
+	installed(t, system, "tool")
+	t.Setenv("PATH", system)
+	var output, diagnostics bytes.Buffer
+	if err := Run(context.Background(), []string{"status", repo, "--home", home}, nil, &output, &diagnostics); err != nil {
+		t.Fatal(err)
+	}
+	note := diagnostics.String()
+	if strings.Contains(note, "\x1b") || !strings.Contains(note, `\x1b[2K`) {
+		t.Fatalf("escape sequence not quoted in the note: %q", note)
+	}
+}
+
 // TestShadowNotes checks that status and link point out a command that runs
 // instead of another, on the view or else on diagnostics, leaving the lines
 // scripts parse alone, and that quiet and unlink say nothing.

@@ -13,9 +13,11 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"syscall"
 	"testing"
@@ -629,11 +631,27 @@ func TestRunYesInterruptKillsOrphans(t *testing.T) {
 	// Right after Run returns, the child must be gone, not merely doomed by
 	// a grace period that was canceled.
 	deadline = time.Now().Add(time.Second)
-	for syscall.Kill(child, 0) == nil {
+	for running(t, child) {
 		if time.Now().After(deadline) {
 			_ = syscall.Kill(child, syscall.SIGKILL)
 			t.Fatal("a background child outlived the interrupted step")
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
+}
+
+// running reports whether process pid is alive. A killed child that nobody
+// has reaped yet, as in a container whose init does not reap orphans, still
+// answers kill(pid, 0) but is a zombie, which ps shows as state Z.
+func running(t *testing.T, pid int) bool {
+	t.Helper()
+	if err := syscall.Kill(pid, 0); err != nil {
+		return false
+	}
+	out, err := exec.CommandContext(t.Context(), "ps", "-o", "state=", "-p", strconv.Itoa(pid)).Output() //nolint:gosec // G204: ps with fixed options and a process ID this test started
+	if err != nil {
+		// ps exits nonzero when the process is gone.
+		return false
+	}
+	return !strings.HasPrefix(strings.TrimSpace(string(out)), "Z")
 }

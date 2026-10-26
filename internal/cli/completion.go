@@ -44,7 +44,7 @@ const bashCompletion = `# bash completion for homeskillet, written by: homeskill
 # homeskillet works out the candidates itself, so they match the installed
 # version. It works with bash 3.2, which macOS ships, and later.
 _homeskillet() {
-    local cur word directive
+    local cur word directive marked
     local -a reply
     # Assigned, not just declared, so set -u counts it as set when empty.
     reply=()
@@ -65,20 +65,29 @@ _homeskillet() {
         done
     fi
     case $directive in
-        :dirs)
+        :dirs | :files)
+            # Names on disk get filename handling: quoting of spaces, and a
+            # slash after a directory. compopt turns it on for this one
+            # completion where bash has it (4.0 and later); bash 3.2, which
+            # macOS ships, gets the same by hand. It is never on for commands
+            # and step names, so a directory called setup cannot turn the
+            # setup command into the path setup/.
+            if ! compopt -o filenames 2>/dev/null; then
+                marked=yes
+            fi
             while IFS= read -r word; do
+                if [[ -n ${marked-} ]]; then
+                    if [[ -d $word ]]; then
+                        word=$word/
+                    fi
+                    printf -v word '%q' "$word"
+                fi
                 COMPREPLY+=("$word")
-            done < <(compgen -d -- "$cur")
-            ;;
-        :files)
-            while IFS= read -r word; do
-                COMPREPLY+=("$word")
-            done < <(compgen -f -- "$cur")
+            done < <(if [[ $directive == :dirs ]]; then compgen -d -- "$cur"; else compgen -f -- "$cur"; fi)
             ;;
     esac
 }
-# -o filenames quotes names with spaces and marks directories with a slash.
-complete -o filenames -F _homeskillet homeskillet
+complete -F _homeskillet homeskillet
 `
 
 // zshCompletion is the zsh script, usable with eval or saved on fpath.

@@ -195,10 +195,17 @@ func TestBashCompletion(t *testing.T) {
 	if err := os.Mkdir(filepath.Join(dirs, "alpha"), 0o700); err != nil {
 		t.Fatal(err)
 	}
+	// A directory named like a command, as a repository's setup/ is: its
+	// name must complete as the command, with no slash added.
+	cwd := t.TempDir()
+	if err := os.Mkdir(filepath.Join(cwd, "setup"), 0o700); err != nil {
+		t.Fatal(err)
+	}
 	path := homeskillet(t) + string(filepath.ListSeparator) + os.Getenv("PATH")
 	// COMP_WORDS holds the words as bash splits them; the cursor is on the last.
 	const driver = `eval "$1"; shift
 complete -p homeskillet > /dev/null || exit 1
+case $(complete -p homeskillet) in *filenames*) echo 'filenames on for every candidate'; exit 1;; esac
 set -u
 COMP_WORDS=(homeskillet "$@"); COMP_CWORD=$((${#COMP_WORDS[@]} - 1))
 _homeskillet
@@ -208,6 +215,8 @@ if ((${#COMPREPLY[@]})); then printf '%s\n' "${COMPREPLY[@]}"; fi`
 		want  []string
 	}{
 		{[]string{"li"}, []string{"link"}},
+		// The setup command, though the current directory has a setup/.
+		{[]string{"set"}, []string{"setup"}},
 		// Nothing but commands, though the directory bash runs in has files.
 		{[]string{""}, commands},
 		{[]string{"setup", "--repo", repo, "--home", home, "f"}, []string{"fonts", "fzf"}},
@@ -227,8 +236,14 @@ if ((${#COMPREPLY[@]})); then printf '%s\n' "${COMPREPLY[@]}"; fi`
 				search = "/nonexistent"
 			}
 			cmd.Env = append(os.Environ(), "PATH="+search, "HOME="+home)
+			cmd.Dir = cwd
 			output, err := cmd.CombinedOutput()
 			got := strings.Fields(string(output))
+			// bash 3.2 marks directories itself with a trailing slash; later
+			// versions leave that to readline.
+			for i, word := range got {
+				got[i] = strings.TrimSuffix(word, "/")
+			}
 			if err != nil || !slices.Equal(got, test.want) {
 				t.Errorf("%s %q: got %q, want %q (%v)", bash, test.words, got, test.want, err)
 			}
