@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Tests of planning and making links: conflicts, absent sources, overlapping
+// targets, symlink escapes, ownership and permission refusals, and selected
+// entries.
+
 package link
 
 import (
@@ -261,7 +265,15 @@ func TestRepositoryMustBePrivate(t *testing.T) {
 			if _, err := Prepare(entries, repo, home, dataDir(home), false); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
 				t.Fatalf("accepted shared %s: %v", name, err)
 			}
-			if _, err := Prepare(entries, repo, home, dataDir(home), true); err != nil {
+			// Unlinking skips the repository's checks but not the data
+			// directory's. The fixture's ancestor also holds home and the data
+			// directory in it, so a data directory elsewhere keeps that case
+			// about the repository alone.
+			data, err := filepath.EvalSymlinks(t.TempDir())
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err := Prepare(entries, repo, home, data, true); err != nil {
 				t.Fatalf("unlinking blocked by shared %s: %v", name, err)
 			}
 		})

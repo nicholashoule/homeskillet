@@ -1,5 +1,8 @@
 //go:build linux || darwin
 
+// Tests of the ownership and permission rules for repositories, trees, and
+// symlinks, and of the errors they print.
+
 package trust
 
 import (

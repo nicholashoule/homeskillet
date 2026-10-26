@@ -29,18 +29,21 @@ import (
 )
 
 var (
-	commands     = []string{"status", "link", "unlink", "setup", "self", "version"}
+	commands     = []string{"status", "link", "unlink", "setup", "init", "self", "version", "completion", "help"}
 	selfCommands = []string{"install", "use", "list", "remove"}
 	// scoped lists the commands that accept each flag that only some
 	// commands use. Accepting such a flag silently elsewhere would suggest
 	// it changes something there, and --yes in particular approves running
 	// code.
 	scoped = map[string][]string{
-		"repo": {"status", "link", "unlink", "setup"},
+		"repo": {"status", "link", "unlink", "setup", "init"},
+		// init writes only into the repository.
+		"home": {"status", "link", "unlink", "setup", "self"},
 		"yes":  {"setup"},
 		// self installs the running build and version prints its own
-		// details, so neither acts for another platform.
-		"platform": {"status", "link", "unlink", "setup"},
+		// details, so neither acts for another platform. init writes it
+		// into the starter manifest.
+		"platform": {"status", "link", "unlink", "setup", "init"},
 		"prefix":   {"self"},
 		// setup and version keep nothing in the data directory.
 		"data-dir": {"status", "link", "unlink", "self"},
@@ -48,7 +51,7 @@ var (
 		"force": {"link"},
 		// setup must show every step exactly before it is approved, so it
 		// cannot be quiet.
-		"quiet": {"status", "link", "unlink", "self"},
+		"quiet": {"status", "link", "unlink", "self", "init"},
 	}
 	// selecting lists the commands that take files after the repository,
 	// acting on those alone.
@@ -67,7 +70,12 @@ type invocation struct {
 	// files selects entries for status, link, and unlink: targets in home,
 	// sources in the repository, or directories holding either. Empty
 	// means every entry.
-	files  []string
+	files []string
+	// steps selects setup steps by name. Empty means every step.
+	steps []string
+	// words is the command line a completion script asks about (see
+	// complete).
+	words  []string
 	force  bool // --force: move conflicts aside, then link
 	quiet  bool // --quiet: print nothing but errors
 	home   string
@@ -82,8 +90,8 @@ type invocation struct {
 }
 
 // Run executes one homeskillet command. args excludes the program name. input
-// answers setup prompts and is passed to setup steps. Results go to output;
-// usage text, flag errors, and setup steps' stderr go to diagnostics. A nil
+// answers setup prompts and is passed to setup steps. Results and the help
+// text go to output, and setup steps' stderr to diagnostics. A nil
 // ctx means context.Background, a nil input answers no to every prompt, and
 // nil output or diagnostics discard what would be written there.
 func Run(ctx context.Context, args []string, input io.Reader, output, diagnostics io.Writer) error {
@@ -96,7 +104,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if diagnostics == nil {
 		diagnostics = io.Discard
 	}
-	inv, err := parse(args, diagnostics)
+	inv, err := parse(args, output)
 	if err != nil || inv.command == "" {
 		return err
 	}
@@ -104,22 +112,13 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if inv.quiet {
 		output = io.Discard
 	}
-	if inv.command == "version" {
-		info := version.Current()
-		detected, translated := host.Detect()
-		platform := fmt.Sprintf("  %-10s %s\n", "platform:", info.Platform)
-		// The build's platform and the host's differ only when the binary
-		// runs translated, as an amd64 build does under Rosetta 2 on Apple
-		// silicon; then both are shown, with the build to install instead.
-		if detected.String() != info.Platform {
-			hostLine := detected.String()
-			if translated {
-				hostLine += " (translated by Rosetta; install a " + detected.String() + " build)"
-			}
-			platform = fmt.Sprintf("  %-10s %s\n  %-10s %s\n", "built for:", info.Platform, "host:", hostLine)
-		}
-		_, err := fmt.Fprintf(output, "homeskillet %s\n%s%s", info.Version, info.Details(), platform)
-		return err
+	switch inv.command {
+	case completeCommand:
+		return complete(inv.words, output)
+	case "completion":
+		return writeCompletion(inv.operand, output)
+	case "version":
+		return writeVersion(output)
 	}
 	// Most sudo configurations reset HOME to /root, so "sudo homeskillet link"
 	// would point root's shell startup files at files the invoking user owns,
@@ -129,6 +128,9 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	// managing root's own dotfiles, as in a container, a deliberate choice.
 	if os.Geteuid() == 0 && !inv.root {
 		return errors.New("refusing to run as root; pass --allow-root to manage root's own dotfiles")
+	}
+	if inv.command == "init" {
+		return runInit(inv, output)
 	}
 	homePath := inv.home
 	if homePath == "" {
@@ -161,7 +163,10 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	// A repository whose platforms leave out this one would otherwise do
 	// nothing and report success, as if everything were linked. unlink
 	// still runs, so links made before the platforms changed can be removed.
-	if len(files) == 0 && len(steps) == 0 && len(manifest.Platforms) > 0 && inv.command != "unlink" {
+	// A repository with nothing in it yet, as init leaves one, has nothing
+	// for its platforms to leave out.
+	filtered := len(manifest.Files)+len(manifest.Setup) > 0
+	if len(files) == 0 && len(steps) == 0 && len(manifest.Platforms) > 0 && filtered && inv.command != "unlink" {
 		return fmt.Errorf("nothing in %s applies to %s: its platforms are %s; pass --platform to act for another platform",
 			repo, platform, strings.Join(manifest.Platforms, ", "))
 	}
@@ -174,6 +179,9 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 		}
 	}
 	if inv.command == "setup" {
+		if steps, err = selectSteps(inv.steps, steps, manifest.Setup, repo, platform); err != nil {
+			return err
+		}
 		return runSetup(ctx, steps, repo, home, inv.dryRun, setup.Options{
 			Repo: repo, Home: home, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
 		})
@@ -182,7 +190,26 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if err != nil {
 		return err
 	}
-	return runLinks(inv, files, repo, home, data, output, v)
+	return runLinks(inv, files, repo, home, data, output, diagnostics, v)
+}
+
+// writeVersion writes the version and build details, for version.
+func writeVersion(output io.Writer) error {
+	info := version.Current()
+	detected, translated := host.Detect()
+	platform := fmt.Sprintf("  %-10s %s\n", "platform:", info.Platform)
+	// The build's platform and the host's differ only when the binary runs
+	// translated, as an amd64 build does under Rosetta 2 on Apple silicon;
+	// then both are shown, with the build to install instead.
+	if detected.String() != info.Platform {
+		hostLine := detected.String()
+		if translated {
+			hostLine += " (translated by Rosetta; install a " + detected.String() + " build)"
+		}
+		platform = fmt.Sprintf("  %-10s %s\n  %-10s %s\n", "built for:", info.Platform, "host:", hostLine)
+	}
+	_, err := fmt.Fprintf(output, "homeskillet %s\n%s%s", info.Version, info.Details(), platform)
+	return err
 }
 
 // choosePlatform returns the platform to act for: --platform if given,
@@ -210,8 +237,13 @@ func choosePlatform(inv invocation) (config.Platform, error) {
 }
 
 // parse reads a command line. It returns an invocation with no command when
-// help was requested, after printing usage to diagnostics.
-func parse(args []string, diagnostics io.Writer) (invocation, error) {
+// help was requested, after writing the help text to output.
+func parse(args []string, output io.Writer) (invocation, error) {
+	// Completion scripts pass the line being completed as it stands, options
+	// and all, so it is never parsed as a command line here.
+	if len(args) > 0 && args[0] == completeCommand {
+		return invocation{command: completeCommand, words: args[1:]}, nil
+	}
 	// --version is the conventional spelling of the version command.
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-version") {
 		args = []string{"version"}
@@ -230,38 +262,29 @@ func parse(args []string, diagnostics io.Writer) (invocation, error) {
 		args = append([]string{inv.command}, args...)
 		inv.command = "status"
 	}
+	// The help text covers every command, so a command named after help gets
+	// the same text.
+	if inv.command == "help" {
+		if len(args) > 1 || len(args) == 1 && !slices.Contains(commands, args[0]) {
+			return invocation{}, fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+		}
+		return invocation{}, help(output, newFlags(&inv))
+	}
 	if inv.command == "self" {
 		inv.sub, args = word(args, "")
 		if inv.sub != "" && !slices.Contains(selfCommands, inv.sub) {
 			return invocation{}, fmt.Errorf("unknown command self %s; use self %s", inv.sub, strings.Join(selfCommands, ", self "))
 		}
 	}
-	flags := flag.NewFlagSet("homeskillet", flag.ContinueOnError)
-	flags.SetOutput(diagnostics)
-	flags.StringVar(&inv.repo, "repo", ".", "configuration repository, holding "+config.FileName+", a "+config.HomeDir+" directory, or both; also given as the argument after the command")
-	flags.StringVar(&inv.home, "home", "", "target home directory (default: current user's home)")
-	flags.StringVar(&inv.prefix, "prefix", "", "self only: installation prefix (default: .local in the home directory)")
-	flags.StringVar(&inv.data, "data-dir", "", "homeskillet's data directory; ~/ or a relative path means in the home directory (default: $"+dataDirVariable+", else ~/.local/share/homeskillet)")
-	flags.BoolVar(&inv.dryRun, "dry-run", false, "preview without changing files or running setup steps")
-	flags.BoolVar(&inv.root, "allow-root", false, "allow running as root; root must own everything homeskillet reads")
-	flags.BoolVar(&inv.yes, "yes", false, "setup only: run every pending step without asking")
-	flags.BoolVar(&inv.force, "force", false, "link only: move conflicting files into a backup in the data directory, then link")
-	flags.BoolVar(&inv.quiet, "quiet", false, "status, link, unlink, and self only: print nothing but errors; the exit status reports the result")
-	flags.StringVar(&inv.platform, "platform", "", "act for this platform, os or os/arch such as darwin/arm64 (default: detected)")
-	flags.Usage = func() {
-		// Usage has no way to return an error, and flag.PrintDefaults
-		// discards its own write errors the same way.
-		_, _ = fmt.Fprint(diagnostics, usage)
-		flags.PrintDefaults()
-	}
+	flags := newFlags(&inv)
 	operands, err := parseFlags(flags, args)
 	if err != nil {
 		if errors.Is(err, flag.ErrHelp) {
-			return invocation{}, nil
+			return invocation{}, help(output, flags)
 		}
-		return invocation{}, err
+		return invocation{}, fmt.Errorf("%w\n  run homeskillet --help to see the commands and options", err)
 	}
-	var misplaced error
+	var misplaced, empty error
 	repoFlag := false
 	flags.Visit(func(f *flag.Flag) {
 		repoFlag = repoFlag || f.Name == "repo"
@@ -269,26 +292,48 @@ func parse(args []string, diagnostics io.Writer) (invocation, error) {
 		if allowed, ok := scoped[f.Name]; ok && !slices.Contains(allowed, inv.command) && misplaced == nil {
 			misplaced = fmt.Errorf("--%s applies only to %s", f.Name, strings.Join(allowed, ", "))
 		}
+		// An empty value, as from an unset variable in --home "$DIR", would
+		// otherwise mean the default: the real home instead of a scratch one.
+		boolean, ok := f.Value.(interface{ IsBoolFlag() bool })
+		if (!ok || !boolean.IsBoolFlag()) && f.Value.String() == "" && empty == nil {
+			empty = fmt.Errorf("--%s is empty, as from an unset variable; give a value, or leave the option out", f.Name)
+		}
 	})
+	// The same goes for arguments: an empty repository would mean the
+	// current directory, and an empty file name every file, so
+	// homeskillet unlink repo "$FILE" would unlink everything.
+	if slices.Contains(operands, "") && empty == nil {
+		empty = errors.New("an argument is empty, as from an unset variable; name a path, or leave it out")
+	}
 	// The first operand is the repository unless --repo named it; any after
-	// it select files, for the commands that act on files.
-	if slices.Contains(scoped["repo"], inv.command) && !repoFlag && len(operands) > 0 {
+	// it select files, for the commands that act on files, or steps, for
+	// setup. After setup the repository must be plainly a path, which a
+	// step name never is (see isPath), so setup dotnet runs that step of the
+	// default repository.
+	if slices.Contains(scoped["repo"], inv.command) && !repoFlag && len(operands) > 0 &&
+		(inv.command != "setup" || isPath(operands[0])) {
 		inv.repo, operands = operands[0], operands[1:]
 		inv.repoGiven = true
 	}
 	switch {
 	case misplaced != nil:
 		return invocation{}, misplaced
-	case (inv.sub == "use" || inv.sub == "remove") && len(operands) == 1:
+	case empty != nil:
+		return invocation{}, empty
+	case (inv.sub == "use" || inv.sub == "remove" || inv.command == "completion") && len(operands) == 1:
 		inv.operand = operands[0]
 	case slices.Contains(selecting, inv.command):
 		inv.files = operands
+	case inv.command == "setup":
+		inv.steps = operands
 	case len(operands) != 0:
 		return invocation{}, fmt.Errorf("unexpected arguments: %s", strings.Join(operands, " "))
 	}
 	switch {
-	case inv.command == "version" && flags.NFlag() != 0:
-		return invocation{}, errors.New("version takes no options")
+	case (inv.command == "version" || inv.command == "completion") && flags.NFlag() != 0:
+		return invocation{}, fmt.Errorf("%s takes no options", inv.command)
+	case inv.command == "completion" && inv.operand == "":
+		return invocation{}, errors.New("completion needs a shell: bash or zsh")
 	case inv.command == "self" && inv.sub == "":
 		return invocation{}, fmt.Errorf("self needs a command: %s", strings.Join(selfCommands, ", "))
 	case (inv.sub == "use" || inv.sub == "remove") && inv.operand == "":
@@ -297,18 +342,26 @@ func parse(args []string, diagnostics io.Writer) (invocation, error) {
 	return inv, nil
 }
 
-const usage = `Usage: homeskillet [status|link|unlink] [<repository> [<file>...]] [options]
-       homeskillet setup [<repository>] [options]
-       homeskillet self install|list [options]
-       homeskillet self use latest|previous|<version> [options]
-       homeskillet self remove <version> [options]
-       homeskillet version
-The repository defaults to the current directory or, when that is not one,
-to the one repository already linked into the home. Without a command, give it
-as a path such as . or ./dotfiles; status is the default command. Files after
-the repository limit the command to those files, or to the files in those
-directories, named by target (.bashrc) or source (home/.bashrc).
-`
+// newFlags returns the options, set to write into inv. Their usage strings
+// are the descriptions help shows, where a word in backquotes names the value.
+func newFlags(inv *invocation) *flag.FlagSet {
+	flags := flag.NewFlagSet("homeskillet", flag.ContinueOnError)
+	// help prints the help text, and an error reaches main, which prints it,
+	// so the flag package writes nothing itself.
+	flags.SetOutput(io.Discard)
+	flags.BoolVar(&inv.dryRun, "dry-run", false, "Preview: change no files and run no setup steps")
+	flags.StringVar(&inv.home, "home", "", "Use `DIR` as the home directory (default: yours)")
+	flags.StringVar(&inv.repo, "repo", ".", "Use `DIR` as the repository, as if named after the command")
+	flags.StringVar(&inv.platform, "platform", "", "Act for `OS[/ARCH]`, such as darwin or linux/arm64 (default: this machine)")
+	flags.BoolVar(&inv.quiet, "quiet", false, "Print only errors; the exit status reports the result (not for setup)")
+	flags.StringVar(&inv.data, "data-dir", "", "Keep the link record, backups, and installed versions in `DIR`, relative to the home unless absolute "+
+		"(default: $"+dataDirVariable+", else .local/share/homeskillet)")
+	flags.BoolVar(&inv.root, "allow-root", false, "Allow running as root, for root's own dotfiles; root must own everything homeskillet reads")
+	flags.BoolVar(&inv.force, "force", false, "Move conflicting files into a backup, then link")
+	flags.BoolVar(&inv.yes, "yes", false, "Run every pending step without asking")
+	flags.StringVar(&inv.prefix, "prefix", "", "Install into `DIR`/bin (default: .local in the home directory)")
+	return flags
+}
 
 // word returns the first argument and the rest when the first is not an
 // option, and fallback with all arguments otherwise.
@@ -354,14 +407,29 @@ func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 // the record says is linked into home (see link.Repositories), so that
 // homeskillet link works from any directory after the first link; remembered
 // reports that. With several recorded, it lists them rather than choose.
+//
+// A named directory is never replaced by a recorded one. But naming the home
+// itself is an easy slip, as if the argument chose where to link, so that
+// error also names the repositories linked into it.
 func openRepository(inv invocation, home string) (repo string, manifest config.Manifest, remembered bool, err error) {
 	repo, manifest, err = loadRepository(inv.repo)
-	if err == nil || inv.repoGiven || !errors.Is(err, config.ErrNothingToManage) {
+	if err == nil || !errors.Is(err, config.ErrNothingToManage) || inv.repoGiven && repo != home {
 		return repo, manifest, false, err
 	}
 	var recorded []string
 	if data, dataErr := dataDir(inv, home); dataErr == nil {
 		recorded, _ = link.Repositories(data, home)
+	}
+	if inv.repoGiven {
+		if len(recorded) == 0 {
+			return "", config.Manifest{}, false, fmt.Errorf("%w\n  that is the home directory; name a repository instead: homeskillet %s /path/to/dotfiles", err, inv.command)
+		}
+		var choices strings.Builder
+		choices.WriteString("\n  that is the home directory; name the repository linked into it instead:")
+		for _, recordedRepo := range recorded {
+			fmt.Fprintf(&choices, "\n    homeskillet %s %s", inv.command, recordedRepo)
+		}
+		return "", config.Manifest{}, false, fmt.Errorf("%w%s", err, choices.String())
 	}
 	switch len(recorded) {
 	case 0:
@@ -398,8 +466,9 @@ func loadRepository(path string) (string, config.Manifest, error) {
 // runLinks reports or carries out status, link, or unlink for the files
 // inv.files names, or for every entry when it names none (see matcher). v
 // writes for a person at a terminal; when it is nil, output gets one
-// tab-separated line per entry or change, for scripts.
-func runLinks(inv invocation, files []config.Entry, repo, home, data string, output io.Writer, v *view) error {
+// tab-separated line per entry or change, for scripts, and notes that would
+// break that format go to diagnostics.
+func runLinks(inv invocation, files []config.Entry, repo, home, data string, output, diagnostics io.Writer, v *view) error {
 	unlinking := inv.command == "unlink"
 	names := newMatcher(inv.files, repo, home)
 	var selected func(target, source string) bool
@@ -412,6 +481,23 @@ func runLinks(inv invocation, files []config.Entry, repo, home, data string, out
 	}
 	if err := names.check(plans); err != nil {
 		return err
+	}
+	// A link a shell would run in place of another command is allowed, but
+	// pointed out before anything changes (see shadowed).
+	if !unlinking {
+		shadows := shadowed(plans, home, inv.force)
+		switch {
+		case v != nil:
+			v.shadows = shadows
+		case !inv.quiet:
+			for _, plan := range plans {
+				if other := shadows[plan.Target]; other != "" {
+					if _, err := fmt.Fprintf(diagnostics, "homeskillet: %s runs instead of %s on PATH; link it only from a repository you trust\n", plan.Target, other); err != nil {
+						return err
+					}
+				}
+			}
+		}
 	}
 	// Conflicts and absent sources fail status as well as link, so status
 	// doubles as a check that link would succeed. They never block unlink (see
@@ -587,14 +673,41 @@ func (m *matcher) check(plans []link.Plan) error {
 	return nil
 }
 
+// selectSteps returns the steps among applicable, the ones for this platform,
+// that names names, in the manifest's order, since a later step may rely on
+// an earlier one; or every applicable step when names is empty. A name that
+// matches no step, or only a step for other platforms, fails before anything
+// runs, so a typo cannot quietly run nothing.
+func selectSteps(names []string, applicable, all []config.Step, repo string, platform config.Platform) ([]config.Step, error) {
+	if len(names) == 0 {
+		return applicable, nil
+	}
+	for _, name := range names {
+		named := func(step config.Step) bool { return step.Name == name }
+		switch {
+		case slices.ContainsFunc(applicable, named):
+		case slices.ContainsFunc(all, named):
+			return nil, fmt.Errorf("setup step %s is not for %s", name, platform)
+		default:
+			var known []string
+			for _, step := range applicable {
+				known = append(known, step.Name)
+			}
+			return nil, fmt.Errorf("%s has no setup step %s; its steps for %s are %s\n  to name a repository, write it as a path, such as ./%s",
+				repo, name, platform, cmp.Or(strings.Join(known, ", "), "none"), name)
+		}
+	}
+	return slices.DeleteFunc(slices.Clone(applicable), func(step config.Step) bool { return !slices.Contains(names, step.Name) }), nil
+}
+
 func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRun bool, opts setup.Options) error {
 	plans, err := setup.Prepare(steps, repo, home)
 	if err != nil {
 		return err
 	}
 	if dryRun {
-		for _, plan := range plans {
-			if err := setup.Describe(opts.Output, plan, repo); err != nil {
+		for i := range plans {
+			if err := setup.Describe(opts.Output, plans[i], repo); err != nil {
 				return err
 			}
 		}
@@ -606,19 +719,7 @@ func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRu
 // runSelf manages installed versions of homeskillet under the prefix,
 // .local in the home directory unless --prefix says otherwise.
 func runSelf(inv invocation, home string, output io.Writer) error {
-	prefix := inv.prefix
-	if prefix == "" {
-		prefix = filepath.Join(home, ".local")
-	}
-	prefix, err := filepath.Abs(prefix)
-	if err != nil {
-		return err
-	}
-	data, err := dataDir(inv, home)
-	if err != nil {
-		return err
-	}
-	layout, err := install.New(filepath.Join(prefix, "bin"), data)
+	layout, err := selfLayout(inv, home)
 	if err != nil {
 		return err
 	}
@@ -652,6 +753,26 @@ func runSelf(inv invocation, home string, output io.Writer) error {
 		_, err = fmt.Fprintln(output, "dry run: nothing changed")
 	}
 	return err
+}
+
+// selfLayout returns where the self commands keep installed versions: under
+// the prefix, .local in the home directory unless --prefix says otherwise,
+// and the data directory (see dataDir).
+func selfLayout(inv invocation, home string) (install.Layout, error) {
+	prefix := inv.prefix
+	if prefix == "" {
+		prefix = filepath.Join(home, ".local")
+	}
+	prefix, err := filepath.Abs(prefix)
+	if err != nil {
+		return install.Layout{}, err
+	}
+	inv.command = "self"
+	data, err := dataDir(inv, home)
+	if err != nil {
+		return install.Layout{}, err
+	}
+	return install.New(filepath.Join(prefix, "bin"), data)
 }
 
 // listVersions prints one line per installed version: the version, its role
@@ -768,6 +889,7 @@ func canonicalDirectory(path string) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	//nolint:gosec // G703: resolving the path the user named is the purpose; every caller checks the result with trust.CheckLocation before acting on it
 	info, err := os.Stat(resolved)
 	if err != nil {
 		return "", err

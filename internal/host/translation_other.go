@@ -1,5 +1,8 @@
 //go:build !darwin && !windows
 
+// Detecting translation everywhere but macOS and Windows: it is not detected,
+// so the build's own architecture is reported (see Detect).
+
 package host
 
 // onArm64 reports false: homeskillet detects translation only on macOS and

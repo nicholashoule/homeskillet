@@ -1,11 +1,15 @@
 //go:build linux || darwin
 
+// Tests of how setup steps find programs: the appended .local/bin, lookups
+// that skip relative PATH entries, and provides with Homebrew's directories.
+
 package setup
 
 import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -19,13 +23,28 @@ func installer() []config.Step {
 	return []config.Step{
 		{
 			Name: "tool",
-			Run: []string{"sh", "-c", `mkdir -p "$HOME/.local/bin" && chmod 700 "$HOME/.local" "$HOME/.local/bin" &&
-printf '#!/bin/sh\n: > "$HOME/used"\n' > "$HOME/.local/bin/fake-tool" && chmod 700 "$HOME/.local/bin/fake-tool"`},
+			Run: config.Commands{{"sh", "-c", `mkdir -p "$HOME/.local/bin" && chmod 700 "$HOME/.local" "$HOME/.local/bin" &&
+printf '#!/bin/sh\n: > "$HOME/used"\n' > "$HOME/.local/bin/fake-tool" && chmod 700 "$HOME/.local/bin/fake-tool"`}},
 			Provides: "fake-tool",
 		},
-		{Name: "use-tool", Run: []string{"fake-tool"}, Creates: "used"},
+		{Name: "use-tool", Run: config.Commands{{"fake-tool"}}, Creates: "used"},
 		// A step's own shell finds the program too, through the exported PATH.
-		{Name: "shell-tool", Run: []string{"sh", "-c", `command -v fake-tool > "$HOME/found"`}, Creates: "found"},
+		{Name: "shell-tool", Run: config.Commands{{"sh", "-c", `command -v fake-tool > "$HOME/found"`}}, Creates: "found"},
+	}
+}
+
+// TestCommandsFindProgramsEarlierCommandsInstalled checks that PATH is
+// computed again for each command of a step, as for each step.
+func TestCommandsFindProgramsEarlierCommandsInstalled(t *testing.T) {
+	t.Setenv("PATH", "/usr/bin:/bin")
+	steps := installer()
+	grouped := []config.Step{{Name: "grouped", Run: append(slices.Clone(steps[0].Run), steps[1].Run...)}}
+	repo, home := fixture(t, grouped...)
+	if err := Run(context.Background(), prepare(t, grouped, repo, home), Options{Repo: repo, Home: home, Yes: true}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(home, "used")) {
+		t.Fatal("the second command did not run the program the first installed")
 	}
 }
 
@@ -131,7 +150,7 @@ func TestStepSeesReviewedName(t *testing.T) {
 		t.Skip("no /proc to read argv from")
 	}
 	// argv[0] is what the user reviewed ("sh"), not the resolved path.
-	steps := []config.Step{{Name: "argv", Run: []string{"sh", "-c", `tr '\0' '\n' < /proc/$$/cmdline | head -n 1 > "$HOME/argv0"`}}}
+	steps := []config.Step{{Name: "argv", Run: config.Commands{{"sh", "-c", `tr '\0' '\n' < /proc/$$/cmdline | head -n 1 > "$HOME/argv0"`}}}}
 	repo, home := fixture(t, steps...)
 	if err := Run(context.Background(), prepare(t, steps, repo, home), Options{Repo: repo, Home: home, Yes: true}); err != nil {
 		t.Fatal(err)
@@ -147,7 +166,7 @@ func TestProvidesFindsHomebrewPrograms(t *testing.T) {
 	brewBin := t.TempDir()
 	defer func(previous []string) { homebrewBins = previous }(homebrewBins)
 	homebrewBins = []string{filepath.Join(brewBin, "missing"), brewBin}
-	steps := []config.Step{{Name: "homebrew", Run: []string{"false"}, Provides: "brew"}}
+	steps := []config.Step{{Name: "homebrew", Run: config.Commands{{"false"}}, Provides: "brew"}}
 	repo, home := fixture(t, steps...)
 	if plans := prepare(t, steps, repo, home); plans[0].State != Pending {
 		t.Fatal("done before Homebrew is installed")

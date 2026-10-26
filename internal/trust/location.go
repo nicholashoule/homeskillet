@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// The system-directory refusals: places homeskillet never acts on, such as
+// /etc, /usr, or a directory holding other users' homes, checked before a
+// home, repository, prefix, or data directory is read or written.
+
 package trust
 
 import (

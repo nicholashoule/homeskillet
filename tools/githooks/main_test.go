@@ -1,3 +1,6 @@
+// Tests of the pre-commit hook installer: installing and updating its own
+// hook, and never replacing one it did not install.
+
 package main
 
 import (

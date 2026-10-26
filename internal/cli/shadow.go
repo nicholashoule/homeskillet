@@ -1,0 +1,78 @@
+//go:build linux || darwin
+
+// Finding linked commands that a shell would run instead of another of the
+// same name on PATH, such as a ~/.local/bin/sudo, which status and link point
+// out.
+
+package cli
+
+import (
+	"os"
+	"path/filepath"
+	"slices"
+
+	"github.com/nicholashoule/homeskillet/internal/link"
+)
+
+// userBins are the directories in home that login scripts on common systems,
+// such as Fedora's .bashrc and Ubuntu's .profile, put at the front of PATH
+// once they exist, which linking into them may be what makes them do.
+var userBins = []string{filepath.Join(".local", "bin"), "bin"}
+
+// shadowed returns, for each plan that is or will be linked where a shell
+// finds it before a command of the same name elsewhere on PATH, that other
+// command: a linked ~/.local/bin/sudo, say, runs instead of /usr/bin/sudo.
+// Linking one is allowed, as a newer tool or a wrapper in ~/.local/bin is
+// common, but it is pointed out, because a repository from someone else could
+// use one to capture what is typed into it, a sudo password included. With
+// force, conflicts count too, since they are about to be linked.
+//
+// home's userBins count as first on PATH even when they are not there yet.
+// Relative PATH entries are never searched, as for setup steps. Aliases and
+// functions in a linked startup file can stand in for commands too, which no
+// check of file names can see; that is why only a trusted repository should
+// be linked at all.
+func shadowed(plans []link.Plan, home string, force bool) map[string]string {
+	var dirs []string
+	for _, dir := range userBins {
+		dirs = append(dirs, filepath.Join(home, dir))
+	}
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if !filepath.IsAbs(dir) {
+			continue
+		}
+		// Targets are canonical, so PATH entries must be too to match them.
+		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
+			dir = resolved
+		}
+		if !slices.Contains(dirs, dir) {
+			dirs = append(dirs, dir)
+		}
+	}
+	found := map[string]string{}
+	for _, plan := range plans {
+		if plan.State != link.Linked && plan.State != link.Missing && (!force || plan.State != link.Conflict) {
+			continue
+		}
+		at := slices.Index(dirs, filepath.Dir(plan.Target))
+		source, err := os.Stat(plan.Source)
+		if at < 0 || err != nil || !executable(source) {
+			continue
+		}
+		for _, dir := range dirs[at+1:] {
+			other := filepath.Join(dir, filepath.Base(plan.Target))
+			//nolint:gosec // G703: only stats a command name in a PATH directory, as a shell's search does, and opens nothing
+			if info, err := os.Stat(other); err == nil && executable(info) && !os.SameFile(info, source) {
+				found[plan.Target] = other
+				break
+			}
+		}
+	}
+	return found
+}
+
+// executable reports whether info describes a regular file that someone may
+// execute, as a shell's command search requires.
+func executable(info os.FileInfo) bool {
+	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
+}

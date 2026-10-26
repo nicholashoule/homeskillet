@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Tests of the command line as a whole, through Run: parsing, linking and
+// unlinking end to end, setup, the default repository, the data directory,
+// empty values, and the view, each in temporary repositories and homes.
+
 package cli
 
 import (
@@ -7,6 +11,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -207,7 +212,7 @@ func TestRepositoryArgument(t *testing.T) {
 		{[]string{"link", "r"}, "link", "r", nil, "", false},
 		{[]string{"link", "r", "--dry-run"}, "link", "r", nil, "", true},
 		{[]string{"unlink", "--dry-run", "r"}, "unlink", "r", nil, "", true},
-		{[]string{"setup", "--", "-r"}, "setup", "-r", nil, "", false},
+		{[]string{"setup", "--", "./-r"}, "setup", "./-r", nil, "", false},
 		{[]string{"link", "--repo", "r"}, "link", "r", nil, "", false},
 		{[]string{"link"}, "link", ".", nil, "", false},
 		{[]string{"self", "use", "--dry-run", "latest"}, "self", ".", nil, "latest", true},
@@ -236,7 +241,6 @@ func TestRepositoryArgument(t *testing.T) {
 		// A bare word is a command, never a directory that happens to
 		// exist, so a typo cannot select a repository.
 		{[]string{"dotfiles"}, "./dotfiles"},
-		{[]string{"setup", "r", ".bashrc"}, "unexpected"},
 		{[]string{"version", "/r"}, "unexpected"},
 		{[]string{"self", "list", "/r"}, "unexpected"},
 		{[]string{"self", "use", "v0.0.1", "v0.0.2"}, "unexpected"},
@@ -279,7 +283,7 @@ func TestSetup(t *testing.T) {
 	repo, home := fixture(t, "config")
 	manifest := config.Manifest{
 		Files: []config.Entry{{Source: "config", Target: "config"}},
-		Setup: []config.Step{{Name: "marker", Run: []string{"sh", "-c", `: > "$HOME/marker"`}, Creates: "marker"}},
+		Setup: []config.Step{{Name: "marker", Run: config.Commands{{"sh", "-c", `: > "$HOME/marker"`}}, Creates: "marker"}},
 	}
 	data, err := json.Marshal(manifest)
 	if err != nil {
@@ -308,6 +312,57 @@ func TestSetup(t *testing.T) {
 	}
 	if output, err := invoke("setup", repo, home, "--dry-run"); err != nil || !strings.Contains(output, "done\tmarker") {
 		t.Fatalf("completed step not recognized: %s, %v", output, err)
+	}
+}
+
+// TestSetupSteps checks that names after setup select steps, in the
+// manifest's order, with the repository before them written as a path, and
+// that a name matching no step for this platform fails before anything runs.
+func TestSetupSteps(t *testing.T) {
+	for _, test := range []struct {
+		args  []string
+		repo  string
+		steps []string
+	}{
+		{[]string{"setup", "dotnet"}, ".", []string{"dotnet"}},
+		{[]string{"setup", "./r", "dotnet", "fonts"}, "./r", []string{"dotnet", "fonts"}},
+		{[]string{"setup", "/r"}, "/r", nil},
+		{[]string{"setup", "dotnet", "--repo", "r"}, "r", []string{"dotnet"}},
+	} {
+		inv, err := parse(test.args, new(bytes.Buffer))
+		if err != nil || inv.repo != test.repo || !slices.Equal(inv.steps, test.steps) {
+			t.Fatalf("%v: got repo %q, steps %q, %v", test.args, inv.repo, inv.steps, err)
+		}
+	}
+
+	repo, home := repository(t)
+	touch := func(name string, platforms ...string) config.Step {
+		return config.Step{Name: name, Run: config.Commands{{"sh", "-c", `: > "$HOME/$1"`, "sh", name}}, Platforms: platforms}
+	}
+	other := "darwin"
+	if runtime.GOOS == "darwin" {
+		other = "linux"
+	}
+	data, err := json.Marshal(config.Manifest{Setup: []config.Step{touch("first"), touch("second"), touch("third"), touch("elsewhere", other)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, config.FileName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Named out of order, the steps still run in the manifest's order.
+	output, err := invoke("setup", repo, home, "third", "first", "--yes")
+	if err != nil || strings.Index(output, "ran\tfirst") > strings.Index(output, "ran\tthird") ||
+		!exists(filepath.Join(home, "first")) || !exists(filepath.Join(home, "third")) || exists(filepath.Join(home, "second")) {
+		t.Fatalf("named steps: %q, %v", output, err)
+	}
+	for name, want := range map[string]string{"typo": "has no setup step typo", "elsewhere": "is not for"} {
+		if _, err := invoke("setup", repo, home, "second", name, "--yes"); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%s: %v", name, err)
+		}
+	}
+	if exists(filepath.Join(home, "second")) {
+		t.Fatal("a step ran although another name was wrong")
 	}
 }
 
@@ -411,6 +466,21 @@ func TestRefusesSystemLocations(t *testing.T) {
 	}
 }
 
+// TestEmptyValues checks that an empty option value or argument, as from an
+// unset shell variable, is refused rather than read as the default: the real
+// home for --home "$SCRATCH", every file for unlink repo "$FILE".
+func TestEmptyValues(t *testing.T) {
+	for _, args := range [][]string{
+		{"link", "--home", ""}, {"link", "--home="}, {"status", "--repo", ""}, {"status", "--data-dir", ""},
+		{"status", "--platform", ""}, {"self", "install", "--prefix", ""},
+		{"link", ""}, {"unlink", ".", ""}, {"unlink", "--repo", ".", ""}, {"self", "use", ""},
+	} {
+		if _, err := parse(args, new(bytes.Buffer)); err == nil || !strings.Contains(err.Error(), "empty") {
+			t.Errorf("%q: %v", args, err)
+		}
+	}
+}
+
 func TestNilStreams(t *testing.T) {
 	repo, home := fixture(t, "config")
 	//nolint:staticcheck // SA1012: a nil context is what this test checks
@@ -430,6 +500,15 @@ func TestNilStreams(t *testing.T) {
 func TestMain(m *testing.M) {
 	if err := os.Unsetenv(dataDirVariable); err != nil {
 		panic(err)
+	}
+	// The test binary stands in for homeskillet when a test runs a shell
+	// script that calls it (see TestBashCompletion).
+	if os.Getenv(asHomeskillet) == "1" {
+		if err := Run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
+			fmt.Fprintln(os.Stderr, "homeskillet:", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
 	}
 	os.Exit(m.Run())
 }
@@ -682,6 +761,19 @@ func TestView(t *testing.T) {
 	if newView(new(bytes.Buffer)) != nil {
 		t.Fatal("a buffer is not a terminal")
 	}
+	// Nor is /dev/null, though it is a character device: output sent there
+	// must keep its errors on standard error.
+	null, err := os.OpenFile(os.DevNull, os.O_WRONLY, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	nullView := newView(null)
+	if err := null.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if nullView != nil {
+		t.Fatal("/dev/null is not a terminal")
+	}
 	repo, home := repository(t, "home/.bashrc", "home/.vimrc")
 	if err := os.WriteFile(filepath.Join(home, ".bashrc"), nil, 0o600); err != nil {
 		t.Fatal(err)
@@ -697,7 +789,7 @@ func TestView(t *testing.T) {
 			t.Fatal(err)
 		}
 		var output bytes.Buffer
-		err = runLinks(inv, manifest.Files, repo, home, filepath.Join(home, ".local", "share", "homeskillet"), &output, v)
+		err = runLinks(inv, manifest.Files, repo, home, filepath.Join(home, ".local", "share", "homeskillet"), &output, new(bytes.Buffer), v)
 		return output.String(), err
 	}
 	output, err := render("link", repo)
@@ -818,6 +910,10 @@ func TestDefaultRepository(t *testing.T) {
 	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "name one: homeskillet link") {
 		t.Fatalf("nothing recorded: %v", err)
 	}
+	err = Run(context.Background(), []string{"link", home, "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
+	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "that is the home directory; name a repository instead") {
+		t.Fatalf("home named as the repository, nothing recorded: %v", err)
+	}
 	// Once linked, the one repository linked into home is used.
 	if _, err := invoke("link", repo, home); err != nil {
 		t.Fatal(err)
@@ -830,8 +926,15 @@ func TestDefaultRepository(t *testing.T) {
 	// Named, the current directory is used even when it is not a
 	// repository, and the error has no hint.
 	err = Run(context.Background(), []string{"link", ".", "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
-	if !errors.Is(err, config.ErrNothingToManage) || strings.Contains(err.Error(), "name one") {
+	if !errors.Is(err, config.ErrNothingToManage) || strings.Contains(err.Error(), "name") {
 		t.Fatalf("named repository: %v", err)
+	}
+	// Naming the home itself is still refused, but the error names the
+	// repository linked into it.
+	err = Run(context.Background(), []string{"unlink", home, "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
+	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "that is the home directory") ||
+		!strings.Contains(err.Error(), "homeskillet unlink "+repo) {
+		t.Fatalf("home named as the repository: %v", err)
 	}
 	// With two repositories linked into home, neither is chosen.
 	other := filepath.Join(filepath.Dir(repo), "other")
@@ -847,6 +950,25 @@ func TestDefaultRepository(t *testing.T) {
 	err = Run(context.Background(), []string{"link", "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
 	if err == nil || !strings.Contains(err.Error(), "homeskillet link "+repo) || !strings.Contains(err.Error(), "homeskillet link "+other) {
 		t.Fatalf("several recorded: %v", err)
+	}
+}
+
+// TestUnlinkChecksDataDirectoryFirst checks that unlink refuses a data
+// directory it could not save the record to before removing any link, so the
+// failure leaves every link in place.
+func TestUnlinkChecksDataDirectoryFirst(t *testing.T) {
+	repo, home := repository(t, "home/.bashrc")
+	if _, err := invoke("link", repo, home); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(filepath.Join(home, ".local", "share", "homeskillet"), 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := invoke("unlink", repo, home); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+		t.Fatalf("unlink with a shared data directory: %v", err)
+	}
+	if _, err := os.Readlink(filepath.Join(home, ".bashrc")); err != nil {
+		t.Fatalf("unlink removed a link before failing: %v", err)
 	}
 }
 

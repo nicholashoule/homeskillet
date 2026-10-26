@@ -1,5 +1,8 @@
 //go:build darwin
 
+// Detecting translation on macOS: whether an amd64 build runs under Rosetta 2
+// on Apple silicon (see Detect).
+
 package host
 
 import "syscall"

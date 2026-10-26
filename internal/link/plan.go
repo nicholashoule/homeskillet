@@ -86,15 +86,15 @@ func Blocked(plans []Plan) bool {
 // After the plans for entries come Orphaned plans for links the repository
 // made earlier but no longer declares (see Save and record.go).
 //
-// All three directories must pass trust.CheckLocation. When unlinking is false,
-// Prepare requires the repository, home and every existing directory a link
-// goes into, and the data directory to be private (see trust.CheckRepository,
-// trust.CheckDirectory, trust.CheckExisting, and trust.CheckCreatable) and
-// reports absent sources as NoSource. When unlinking is true it skips the
-// privacy checks and ignores absent sources. Removing links that point into the repository cannot
-// run anyone's code, and unlinking is how the user recovers from a deleted
-// source or a repository whose permissions went wrong, so it must not be
-// blocked by either.
+// All three directories must pass trust.CheckLocation, and the data directory
+// must be private (see trust.CheckCreatable). When unlinking is false, Prepare
+// also requires the repository, home, and every existing directory a link goes
+// into to be private (see trust.CheckRepository, trust.CheckDirectory, and
+// trust.CheckExisting) and reports absent sources as NoSource. When unlinking
+// is true it skips those checks and ignores absent sources. Removing links
+// that point into the repository cannot run anyone's code, and unlinking is
+// how the user recovers from a deleted source or a repository whose
+// permissions went wrong, so it must not be blocked by either.
 func Prepare(entries []config.Entry, repo, home, data string, unlinking bool) ([]Plan, error) {
 	return PrepareSelected(entries, repo, home, data, unlinking, nil)
 }
@@ -130,10 +130,14 @@ func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking 
 	if trust.Within(repo, data) {
 		return nil, fmt.Errorf("data directory %s is inside the repository", data)
 	}
-	if !unlinking {
-		if err := trust.CheckCreatable(data); err != nil {
-			return nil, err
-		}
+	// Checked even to unlink. The record decides which links count as
+	// homeskillet's, and unlink removes the orphaned ones it lists, so one
+	// another user could have planted must not be read. Unlink must also be
+	// able to save the record afterward; checking only then would remove the
+	// links first and fail after, as when root unlinks in another user's
+	// home, whose data directory root does not own.
+	if err := trust.CheckCreatable(data); err != nil {
+		return nil, err
 	}
 	var plans []Plan
 	declared := make([]string, 0, len(entries))

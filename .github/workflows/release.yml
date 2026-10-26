@@ -1,0 +1,124 @@
+# Release: when a version tag is pushed, build the release binaries with make
+# cross and publish them, plain binaries rather than container images, in two
+# places: a GitHub Release with a SHA256SUMS file, and ghcr.io, which the
+# repository's Packages page lists, with one artifact per OS and architecture.
+# See Releases in docs/development.md.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    name: Release ${{ github.ref_name }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: write # create the Release
+      packages: write # push to ghcr.io
+    env:
+      TAG: ${{ github.ref_name }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The whole history, so the next step can find the tag on main.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          # A release builds from nothing a cache from another run could have
+          # planted.
+          cache: false
+
+      # Versions are tagged on main after merging, so a tag anywhere else would
+      # publish code that never passed CI on main.
+      - name: Check the tag is on main
+        run: |
+          if ! git merge-base --is-ancestor HEAD origin/main; then
+            echo "::error::$TAG is not on main; tag a commit on main after merging"
+            exit 1
+          fi
+
+      # SOURCE_DATE_EPOCH stamps the commit's time as the build time, so
+      # building the tag again with the same Go release gives identical files.
+      - name: Build
+        run: |
+          SOURCE_DATE_EPOCH=$(git log -1 --format=%ct) make cross
+          cd bin
+          sha256sum homeskillet-*-* > SHA256SUMS
+          cat SHA256SUMS
+
+      # Go stamps the version from the tag, but only from a clean tree and a
+      # tag valid for the module path, so check that every binary reports the
+      # tag exactly (docs/development.md, Versions and Releases).
+      - name: Check versions
+        run: |
+          module=$(go list -m)
+          for binary in bin/homeskillet-*-*; do
+            go version -m "$binary" | awk -v tag="$TAG" -v module="$module" -v binary="$binary" '
+              $1 == "mod" && $2 == module { version = $3 }
+              $1 == "build" && $2 == "vcs.modified=false" { clean = 1 }
+              END {
+                if (version != tag || !clean) {
+                  printf "::error::%s reports version %s from a %s tree, not %s from a clean one\n", binary, version, clean ? "clean" : "modified", tag
+                  exit 1
+                }
+              }'
+          done
+
+      # go install checks oras against the Go checksum database, as go run
+      # does for repogov and demojify. Dependabot cannot update it; bump it
+      # by hand, here and in docs/development.md.
+      - name: Install oras
+        run: |
+          GOBIN="$RUNNER_TEMP/bin" go install oras.land/oras/cmd/oras@v1.3.6
+          echo "$RUNNER_TEMP/bin" >> "$GITHUB_PATH"
+
+      # Each OS and architecture gets an artifact holding its binary as
+      # homeskillet, tagged like v1.2.3-linux-arm64, and the version's own tag
+      # names an index of them all, so oras pull --platform fetches only the
+      # binary one machine needs. The source annotation links the package to
+      # this repository.
+      - name: Publish to ghcr.io
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          oras login ghcr.io --username "$GITHUB_ACTOR" --password-stdin <<<"$GITHUB_TOKEN"
+          repository="ghcr.io/${GITHUB_REPOSITORY,,}"
+          source="org.opencontainers.image.source=$GITHUB_SERVER_URL/$GITHUB_REPOSITORY"
+          tags=()
+          for binary in bin/homeskillet-*-*; do
+            platform=${binary#bin/homeskillet-}
+            dir="$RUNNER_TEMP/oci/$platform"
+            mkdir -p "$dir"
+            cp "$binary" "$dir/homeskillet"
+            (cd "$dir" && oras push "$repository:$TAG-$platform" \
+              --artifact-type application/vnd.homeskillet.binary \
+              --artifact-platform "${platform/-//}" \
+              --annotation "$source" \
+              homeskillet:application/octet-stream)
+            tags+=("$TAG-$platform")
+          done
+          oras manifest index create "$repository:$TAG" "${tags[@]}" --annotation "$source"
+
+      # Last, so a Release appears only once ghcr.io has the same binaries. A
+      # tag with a pre-release part, such as v1.2.3-rc.1, makes a pre-release.
+      - name: Create the Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          prerelease=()
+          if [[ $TAG == *-* ]]; then
+            prerelease=(--prerelease)
+          fi
+          gh release create "$TAG" bin/homeskillet-*-* bin/SHA256SUMS \
+            --verify-tag --title "homeskillet $TAG" --generate-notes "${prerelease[@]}"

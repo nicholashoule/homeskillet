@@ -1,5 +1,7 @@
 //go:build linux || darwin
 
+// Tests of the system-directory refusals.
+
 package trust
 
 import (

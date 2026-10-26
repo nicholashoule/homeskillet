@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Carrying out plans that Prepare has checked: making the missing symlinks for
+// link, and removing for unlink only the symlinks that point where homeskillet
+// pointed them.
+
 package link
 
 import (

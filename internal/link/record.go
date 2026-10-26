@@ -1,5 +1,10 @@
 //go:build linux || darwin
 
+// The record of links, links.json in the data directory: the links each
+// repository made in each home. It lets a later run find links whose files
+// have left the repository, and the repository linked into a home. It decides
+// what may be removed, so every read validates it.
+
 package link
 
 import (

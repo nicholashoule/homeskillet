@@ -13,7 +13,26 @@ their contents match a source. Conflicts and sources absent from the
 repository make `status` and `link` exit nonzero, and `link` then changes
 nothing. Escaping paths, overlapping targets, source symlinks resolving outside
 the repository, symlinked target parents, and paths or file names containing
-control or formatting characters are rejected.
+control or formatting characters are rejected. Any other name, such as
+`rm -rf` or `$(touch x)`, is only a name: homeskillet makes links with system
+calls and never hands a name to a shell. Put `--` before a file name that
+starts with `-`, as in `homeskillet unlink ~/dotfiles -- -rf`.
+
+An empty option value or argument, as from an unset variable in
+`--home "$SCRATCH"` or `unlink ~/dotfiles "$FILE"`, is refused. Read as the
+default, it would mean your real home, or every file.
+
+A linked executable that a shell finds before a command of the same name
+elsewhere on `PATH`, such as `~/.local/bin/sudo` ahead of `/usr/bin/sudo`, is
+linked, but `status` and `link` list it under "Shadowing commands" (scripts
+get a line on standard error). `~/.local/bin` and `~/bin` count as first on
+`PATH` even before your shell adds them, as many systems' startup files do. A
+repository from someone else could use such a link to capture what you type,
+a `sudo` password included. Aliases and functions in a linked startup file can
+do the same unseen, and no check of file contents could find them reliably:
+`eval $'\x73\x75\x64\x6f'` runs `sudo` without the word appearing. Ownership
+rules keep anyone else from changing what you link, but what you link runs as
+you, so link only a repository you have reviewed.
 
 `link --force` is the one way past a conflict, and you must ask for it. It
 moves each conflicting file or symlink into `backups/` in the data directory,
@@ -69,8 +88,12 @@ left unchanged.
 `unlink` removes only listed symlinks pointing to the selected configuration
 repository, including dangling links. Anything else at a listed target is
 reported as `skipped` and left alone, and the other entries are still unlinked.
-`unlink` skips the ownership checks, so it can always clean up. It does not
-remove sources or parent directories, or restore backups. Unlink before moving
+`unlink` skips the ownership checks of the repository and home, so it can
+clean up after a deleted source or a repository whose permissions went wrong.
+It still requires a private data directory, checked before anything changes:
+the record there decides which links are homeskillet's, and `unlink` must save
+it afterward. `unlink` does not remove sources or parent directories, or
+restore backups. Unlink before moving
 or deleting a configuration clone.
 
 Removing or renaming a file under `home/`, or a manifest entry, needs no
@@ -97,16 +120,27 @@ A setup step is code from the repository, which may be someone else's, so
   needed, so a step that loosens the repository stops the steps after it, and
   one whose work an earlier step did is skipped.
 - Each pending step is shown exactly as it will run, with its arguments quoted
-  and its working directory, before you are asked. Only `y` or `yes` runs it.
-  Anything else, including closed or redirected input, declines.
+  and its working directory, before you are asked; a step with several
+  commands shows them all and is approved once. Only `y` or `yes` runs it.
+  Anything else, including closed or redirected input, declines. A step that
+  is done is listed with the file that shows it, never silently skipped.
 - Commands run without a shell unless the step names one, so you see any
   pipeline or substitution in the review.
 - Setup names and arguments cannot contain control or formatting characters,
   which could hide part of a command from the review.
 - `HOME` is set to the selected home, so `--home` pointed at a scratch
   directory keeps installers that honor `HOME` out of your real one.
-- Under `--yes`, steps get no input, so an unattended run never hangs on a
-  step that prompts.
+- Under `--yes`, each step is shown but not asked about, and runs with no
+  input and no terminal, in a session of its own. An unattended run never
+  hangs on a step that prompts, even one that reads the terminal directly as
+  `sudo` does, and `sudo` in a step cannot use a password you typed in the
+  last few minutes, which it remembers per terminal. The kernel enforces this
+  however a step reaches `sudo`: through `sh -c`, a script, or `eval` of hex
+  or base64 text, which would defeat any check of the command's words. It
+  cannot stop `sudo` set up to need no password (`NOPASSWD`) or to share one
+  cached password across terminals (`timestamp_type=global`). Ctrl-C still
+  stops the step and everything it started. Steps you approve one at a time
+  keep the terminal.
 - A Homebrew directory counts for `provides` only when you or root own it, so
   another account, such as a user named `linuxbrew`, cannot make a step look
   done.

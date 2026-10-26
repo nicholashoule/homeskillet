@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Tests of setup steps: their states, review and approval, --yes with its
+// detached session, grouped commands, cancellation and interrupts, and the
+// repository checks before each step.
+
 package setup
 
 import (
@@ -12,7 +16,9 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"syscall"
 	"testing"
+	"time"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 )
@@ -52,7 +58,7 @@ func prepare(t *testing.T, steps []config.Step, repo, home string) []Plan {
 
 // touch returns a step that creates $HOME/name, so tests can see whether it ran.
 func touch(name string) config.Step {
-	return config.Step{Name: name, Run: []string{"sh", "-c", `: > "$HOME/$1"`, "sh", name}}
+	return config.Step{Name: name, Run: config.Commands{{"sh", "-c", `: > "$HOME/$1"`, "sh", name}}}
 }
 
 func exists(path string) bool {
@@ -67,10 +73,10 @@ func TestPrepareStates(t *testing.T) {
 	}
 	t.Setenv("PATH", tools)
 	steps := []config.Step{
-		{Name: "created", Run: []string{"true"}, Creates: ".local/bin/tool"},
-		{Name: "provided", Run: []string{"true"}, Provides: "fake-tool"},
-		{Name: "missing", Run: []string{"true"}, Creates: ".local/bin/absent", Provides: "absent-tool"},
-		{Name: "unchecked", Run: []string{"true"}},
+		{Name: "created", Run: config.Commands{{"true"}}, Creates: ".local/bin/tool"},
+		{Name: "provided", Run: config.Commands{{"true"}}, Provides: "fake-tool"},
+		{Name: "missing", Run: config.Commands{{"true"}}, Creates: ".local/bin/absent", Provides: "absent-tool"},
+		{Name: "unchecked", Run: config.Commands{{"true"}}},
 	}
 	repo, home := fixture(t, steps...)
 	if err := os.MkdirAll(filepath.Join(home, ".local", "bin"), 0o700); err != nil {
@@ -89,7 +95,7 @@ func TestPrepareStates(t *testing.T) {
 }
 
 func TestPrepareRejectsSharedRepositoryFiles(t *testing.T) {
-	steps := []config.Step{{Name: "script", Run: []string{"sh", "setup/run.sh"}}}
+	steps := []config.Step{{Name: "script", Run: config.Commands{{"sh", "setup/run.sh"}}}}
 	repo, home := fixture(t, steps...)
 	script := filepath.Join(repo, "setup", "run.sh")
 	if err := os.Mkdir(filepath.Dir(script), 0o755); err != nil {
@@ -151,8 +157,11 @@ func TestRunYesSkipsPromptsAndDoneSteps(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(output.String(), "Run this step?") || strings.Contains(output.String(), "\tdone") {
-		t.Fatalf("prompted or offered a done step:\n%s", output.String())
+	// The done step is reported with what shows it is done, not offered.
+	if strings.Contains(output.String(), "Run this step?") || strings.Contains(output.String(), "pending\tdone") ||
+		strings.Contains(output.String(), "ran\tdone") ||
+		!strings.Contains(output.String(), "done\tdone\n  found: "+filepath.Join(home, "done")+"\n") {
+		t.Fatalf("prompted, offered, or left out a done step:\n%s", output.String())
 	}
 	if !exists(filepath.Join(home, "first")) || !exists(filepath.Join(home, "second")) {
 		t.Fatal("approved steps did not run")
@@ -160,8 +169,8 @@ func TestRunYesSkipsPromptsAndDoneSteps(t *testing.T) {
 }
 
 func TestRunEnvironment(t *testing.T) {
-	steps := []config.Step{{Name: "env", Run: []string{"sh", "-c",
-		`printf '%s\n' "$(pwd -P)" "$HOME" "$HOMESKILLET_HOME" "$HOMESKILLET_REPO" > "$HOME/env"`}}}
+	steps := []config.Step{{Name: "env", Run: config.Commands{{"sh", "-c",
+		`printf '%s\n' "$(pwd -P)" "$HOME" "$HOMESKILLET_HOME" "$HOMESKILLET_REPO" > "$HOME/env"`}}}}
 	repo, home := fixture(t, steps...)
 	err := Run(context.Background(), prepare(t, steps, repo, home), Options{
 		Repo: repo, Home: home, Yes: true, Output: io.Discard, Errors: io.Discard,
@@ -179,7 +188,7 @@ func TestRunEnvironment(t *testing.T) {
 }
 
 func TestPrepareRejectsSymlinksLeavingRepository(t *testing.T) {
-	steps := []config.Step{{Name: "script", Run: []string{"sh", "setup/run.sh"}}}
+	steps := []config.Step{{Name: "script", Run: config.Commands{{"sh", "setup/run.sh"}}}}
 	repo, home := fixture(t, steps...)
 	// The script the step runs is a symlink into a directory anyone can
 	// write, so the code that runs is not the code the repository vouches for.
@@ -217,7 +226,7 @@ func TestPrepareRejectsSymlinksLeavingRepository(t *testing.T) {
 }
 
 func TestRunRepositoryScript(t *testing.T) {
-	steps := []config.Step{{Name: "script", Run: []string{"./setup/hello.sh"}}}
+	steps := []config.Step{{Name: "script", Run: config.Commands{{"./setup/hello.sh"}}}}
 	repo, home := fixture(t, steps...)
 	script := filepath.Join(repo, "setup", "hello.sh")
 	if err := os.Mkdir(filepath.Dir(script), 0o755); err != nil {
@@ -235,7 +244,7 @@ func TestRunRepositoryScript(t *testing.T) {
 }
 
 func TestRunStopsAtFailure(t *testing.T) {
-	steps := []config.Step{{Name: "fail", Run: []string{"sh", "-c", "exit 3"}}, touch("after")}
+	steps := []config.Step{{Name: "fail", Run: config.Commands{{"sh", "-c", "exit 3"}}}, touch("after")}
 	repo, home := fixture(t, steps...)
 	err := Run(context.Background(), prepare(t, steps, repo, home), Options{
 		Repo: repo, Home: home, Yes: true, Output: io.Discard, Errors: io.Discard,
@@ -249,7 +258,7 @@ func TestRunStopsAtFailure(t *testing.T) {
 }
 
 func TestRunHonorsCancellation(t *testing.T) {
-	steps := []config.Step{{Name: "slow", Run: []string{"sleep", "30"}}}
+	steps := []config.Step{{Name: "slow", Run: config.Commands{{"sleep", "30"}}}}
 	repo, home := fixture(t, steps...)
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
@@ -335,7 +344,7 @@ func TestRunChecksEachStepAgain(t *testing.T) {
 		t.Fatalf("second step ran after the first did its work: %v\n%s", err, output.String())
 	}
 	// A step that loosens the repository stops the steps after it.
-	loosen := config.Step{Name: "loosen", Run: []string{"sh", "-c", `chmod 666 "$HOMESKILLET_REPO/dotfiles.json"`}}
+	loosen := config.Step{Name: "loosen", Run: config.Commands{{"sh", "-c", `chmod 666 "$HOMESKILLET_REPO/dotfiles.json"`}}}
 	steps = []config.Step{loosen, touch("after")}
 	repo, home = fixture(t, steps...)
 	err = Run(context.Background(), prepare(t, steps, repo, home), Options{Repo: repo, Home: home, Yes: true, Output: io.Discard})
@@ -345,7 +354,7 @@ func TestRunChecksEachStepAgain(t *testing.T) {
 }
 
 func TestRunYesGivesStepsNoInput(t *testing.T) {
-	steps := []config.Step{{Name: "reads", Run: []string{"sh", "-c", `read -r line; printf '%s' "$line" > "$HOME/read"`}}}
+	steps := []config.Step{{Name: "reads", Run: config.Commands{{"sh", "-c", `read -r line; printf '%s' "$line" > "$HOME/read"`}}}}
 	repo, home := fixture(t, steps...)
 	err := Run(context.Background(), prepare(t, steps, repo, home), Options{
 		Repo: repo, Home: home, Yes: true, Input: strings.NewReader("secret\n"), Output: io.Discard, Errors: io.Discard,
@@ -367,5 +376,118 @@ func TestConfirmBoundsTheAnswer(t *testing.T) {
 	}
 	if approved, err := confirm(strings.NewReader("  yes  \n"), io.Discard); err != nil || !approved {
 		t.Fatalf("yes declined: %v", err)
+	}
+}
+
+// TestRunGroupedCommands checks that a step's commands are shown together,
+// approved once, and run in order, stopping at the first that fails.
+func TestRunGroupedCommands(t *testing.T) {
+	record := func(word string) []string {
+		return []string{"sh", "-c", `printf '%s\n' "$1" >> "$HOME/order"`, "sh", word}
+	}
+	grouped := config.Step{Name: "grouped", Run: config.Commands{record("first"), record("second")}}
+	broken := config.Step{Name: "broken", Run: config.Commands{record("third"), {"false"}, record("never")}}
+	repo, home := fixture(t, grouped, broken)
+	// Each step gets its own run: a step's stdin is the rest of Input, so a
+	// step run earlier would read the answer meant for the next prompt.
+	run := func(step config.Step) (string, error) {
+		var output bytes.Buffer
+		err := Run(context.Background(), prepare(t, []config.Step{step}, repo, home), Options{
+			Repo: repo, Home: home, Input: strings.NewReader("y\n"), Output: &output, Errors: io.Discard,
+		})
+		return output.String(), err
+	}
+	output, err := run(grouped)
+	if err != nil || strings.Count(output, "Run this step?") != 1 ||
+		!strings.Contains(output, "  run: "+Quote(record("first"))+"\n  run: "+Quote(record("second"))+"\n  in:") {
+		t.Fatalf("grouped commands not shown together and approved once: %v\n%s", err, output)
+	}
+	if _, err := run(broken); err == nil || !strings.Contains(err.Error(), "command 2 of 3, false") {
+		t.Fatalf("a failing command did not stop its step: %v", err)
+	}
+	if data, err := os.ReadFile(filepath.Join(home, "order")); err != nil || string(data) != "first\nsecond\nthird\n" {
+		t.Fatalf("commands ran as %q, %v", data, err)
+	}
+}
+
+// detached returns a step that creates $HOME/name-leader when it leads its
+// own process group, as a step in a session of its own does, and
+// $HOME/name-tty when it can open the controlling terminal.
+func detached(name string) config.Step {
+	return config.Step{Name: name, Run: config.Commands{{"sh", "-c", `
+		[ "$(ps -o pgid= -p $$ | tr -d ' ')" = "$$" ] && : > "$HOME/$1-leader"
+		(: < /dev/tty) 2> /dev/null && : > "$HOME/$1-tty"
+		:`, "sh", name}}}
+}
+
+// TestRunYesDetachesSteps checks that a step approved by --yes runs in a
+// session of its own, without the terminal, so sudo in it can neither prompt
+// nor use a password cached for the terminal, while a step approved on its
+// own keeps the terminal and the caller's process group.
+func TestRunYesDetachesSteps(t *testing.T) {
+	steps := []config.Step{detached("unattended")}
+	repo, home := fixture(t, steps...)
+	if err := Run(context.Background(), prepare(t, steps, repo, home), Options{
+		Repo: repo, Home: home, Yes: true, Output: io.Discard, Errors: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !exists(filepath.Join(home, "unattended-leader")) || exists(filepath.Join(home, "unattended-tty")) {
+		t.Fatal("an unattended step shares the caller's session or terminal")
+	}
+	steps = []config.Step{detached("approved")}
+	if err := Run(context.Background(), prepare(t, steps, repo, home), Options{
+		Repo: repo, Home: home, Input: strings.NewReader("y\n"), Output: io.Discard, Errors: io.Discard,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if exists(filepath.Join(home, "approved-leader")) {
+		t.Fatal("a step approved on its own left the caller's process group")
+	}
+}
+
+// TestRunYesPassesInterrupts checks that Ctrl-C, which the terminal sends
+// only to homeskillet's process group, still stops a step run under --yes.
+func TestRunYesPassesInterrupts(t *testing.T) {
+	steps := []config.Step{{Name: "slow", Run: config.Commands{{"sh", "-c", `: > "$HOME/started"; sleep 30`}}}}
+	repo, home := fixture(t, steps...)
+	plans := prepare(t, steps, repo, home)
+	result := make(chan error, 1)
+	go func() {
+		result <- Run(context.Background(), plans, Options{Repo: repo, Home: home, Yes: true, Output: io.Discard, Errors: io.Discard})
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for !exists(filepath.Join(home, "started")) {
+		if time.Now().After(deadline) {
+			t.Fatal("the step did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGINT); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err == nil {
+			t.Fatal("the interrupted step succeeded")
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the interrupt did not reach the step")
+	}
+}
+
+// TestRunYesCancellationStopsChildren checks that canceling stops everything
+// a step run under --yes started, not only the step, which would otherwise
+// leave a background child running and holding its output open.
+func TestRunYesCancellationStopsChildren(t *testing.T) {
+	steps := []config.Step{{Name: "slow", Run: config.Commands{{"sh", "-c", "sleep 30 & wait"}}}}
+	repo, home := fixture(t, steps...)
+	plans := prepare(t, steps, repo, home)
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	start := time.Now()
+	err := Run(ctx, plans, Options{Repo: repo, Home: home, Yes: true, Output: io.Discard, Errors: io.Discard})
+	if err == nil || time.Since(start) > 10*time.Second {
+		t.Fatalf("canceled step: %v after %v", err, time.Since(start))
 	}
 }

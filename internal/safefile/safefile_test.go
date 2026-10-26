@@ -1,3 +1,5 @@
+// Tests of bounded reads and atomic writes.
+
 package safefile
 
 import (

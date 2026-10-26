@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Finding programs for setup steps: the PATH they run with, the inherited one
+// with the home's .local/bin appended, command lookup on it, and the provides
+// check, which also looks in Homebrew's directories.
+
 package setup
 
 import (
@@ -57,27 +61,28 @@ func searchPath(home string) string {
 // that needs brew right after installing it calls it by its full path.
 var homebrewBins = []string{"/opt/homebrew/bin", "/usr/local/bin", "/home/linuxbrew/.linuxbrew/bin"}
 
-// provided reports whether the program a step's Provides names is installed:
-// on the step's search path (see searchPath) or in Homebrew's bin
-// directories. Nothing is run; this only looks for an executable file.
+// provided returns where the program a step's Provides names is installed,
+// or "" if it is not: on the step's search path (see searchPath) or in
+// Homebrew's bin directories. Nothing is run; this only looks for an
+// executable file.
 //
 // A Homebrew directory and the program found there count only when owned by
 // the current user or root (see trust.CheckOwner). /home/linuxbrew is an
 // ordinary home directory, so on a shared machine a user named linuxbrew could
 // otherwise plant programs there that make other users' steps look done.
-func provided(name, home string) bool {
-	if _, err := lookPath(name, searchPath(home)); err == nil {
-		return true
+func provided(name, home string) string {
+	if program, err := lookPath(name, searchPath(home)); err == nil {
+		return program
 	}
 	for _, dir := range homebrewBins {
 		if trust.CheckOwner(dir) != nil {
 			continue
 		}
 		if program, err := lookPath(name, dir); err == nil && trust.CheckOwner(program) == nil {
-			return true
+			return program
 		}
 	}
-	return false
+	return ""
 }
 
 // lookPath finds the program a step names, as exec.LookPath does but

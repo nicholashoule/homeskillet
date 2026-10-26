@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// link --force: moving conflicting files and symlinks, never directories, into
+// the data directory's backups/ before linking, never overwriting a backup,
+// and moving them back when linking fails.
+
 package link
 
 import (

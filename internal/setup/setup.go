@@ -19,6 +19,8 @@
 //     scratch home does not install into the real one through tools that
 //     honor HOME. That home's .local/bin is appended to PATH, so one step can
 //     use a program an earlier step installed there (see searchPath).
+//   - Steps approved together with --yes cannot reach the terminal, so sudo
+//     in one cannot use a password cached there (see runDetached).
 package setup
 
 import (
@@ -29,8 +31,10 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/trust"
@@ -51,6 +55,10 @@ const (
 type Plan struct {
 	Step  config.Step
 	State State
+	// Found is, for a Done step, the file that makes it done: its Creates
+	// path, or the program its Provides names. Output shows it, so a step
+	// that is not offered still says why.
+	Found string
 }
 
 // Prepare checks that the repository is private and reports each step's
@@ -78,29 +86,34 @@ func Prepare(steps []config.Step, repo, home string) ([]Plan, error) {
 	}
 	plans := make([]Plan, 0, len(steps))
 	for _, step := range steps {
-		state, err := stepState(step, home)
+		state, found, err := stepState(step, home)
 		if err != nil {
 			return nil, err
 		}
-		plans = append(plans, Plan{Step: step, State: state})
+		plans = append(plans, Plan{Step: step, State: state, Found: found})
 	}
 	return plans, nil
 }
 
-func stepState(step config.Step, home string) (State, error) {
+// stepState reports whether step is done, and if so the file that shows it
+// (see Plan.Found).
+func stepState(step config.Step, home string) (State, string, error) {
 	if step.Creates != "" {
-		_, err := os.Lstat(filepath.Join(home, step.Creates))
+		path := filepath.Join(home, step.Creates)
+		_, err := os.Lstat(path)
 		if err == nil {
-			return Done, nil
+			return Done, path, nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			return "", err
+			return "", "", err
 		}
 	}
-	if step.Provides != "" && provided(step.Provides, home) {
-		return Done, nil
+	if step.Provides != "" {
+		if program := provided(step.Provides, home); program != "" {
+			return Done, program, nil
+		}
 	}
-	return Pending, nil
+	return Pending, "", nil
 }
 
 // Options configures Run. Repo and Home must be set, as Prepare received
@@ -111,7 +124,8 @@ type Options struct {
 	Home string // HOME for every step
 	// Yes approves every pending step without asking. It is for unattended
 	// bootstrap, such as a Dockerfile, where whoever wrote the build already
-	// chose the repository and its revision.
+	// chose the repository and its revision. Steps then get no input and no
+	// terminal (see runDetached).
 	Yes    bool
 	Input  io.Reader // answers to prompts, then each step's stdin, unless Yes
 	Output io.Writer // descriptions, prompts, results, and each step's stdout
@@ -138,20 +152,26 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 	if opts.Errors == nil {
 		opts.Errors = io.Discard
 	}
-	for _, plan := range plans {
-		if plan.State != Pending {
+	for i := range plans {
+		plan := &plans[i]
+		// Every step is accounted for, so one that is not offered still
+		// says why rather than vanishing from the output.
+		if plan.State == Done {
+			if err := Describe(opts.Output, *plan, opts.Repo); err != nil {
+				return err
+			}
 			continue
 		}
 		// An earlier step may have done this one's work, as an installer
 		// that also brings the program a later step provides, or changed
 		// the repository, whose rules every step relies on. Both are checked
 		// again before each step rather than once for the whole run.
-		state, err := stepState(plan.Step, opts.Home)
+		state, found, err := stepState(plan.Step, opts.Home)
 		if err != nil {
 			return err
 		}
 		if state == Done {
-			if _, err := fmt.Fprintf(opts.Output, "done\t%s\n", plan.Step.Name); err != nil {
+			if err := Describe(opts.Output, Plan{Step: plan.Step, State: Done, Found: found}, opts.Repo); err != nil {
 				return err
 			}
 			continue
@@ -159,7 +179,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		if err := trust.CheckTree(opts.Repo); err != nil {
 			return fmt.Errorf("before setup step %s: %w", plan.Step.Name, err)
 		}
-		if err := Describe(opts.Output, plan, opts.Repo); err != nil {
+		if err := Describe(opts.Output, *plan, opts.Repo); err != nil {
 			return err
 		}
 		if !opts.Yes {
@@ -184,28 +204,56 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 	return nil
 }
 
-// Describe writes a step's state and exactly what it would run. Run uses it
-// before each prompt, and dry runs use it to list every step.
+// Describe writes a step's state and exactly what it would run, or, for a
+// Done step, what shows it is done. Run uses it before each prompt and for
+// each step it does not offer, and dry runs use it to list every step.
 func Describe(w io.Writer, plan Plan, dir string) error {
 	if w == nil {
 		return nil
 	}
-	_, err := fmt.Fprintf(w, "%s\t%s\n  run: %s\n  in:  %s\n", plan.State, plan.Step.Name, Quote(plan.Step.Run), dir)
+	// Built whole, then written once, so the one write error is the only one.
+	var text strings.Builder
+	fmt.Fprintf(&text, "%s\t%s\n", plan.State, plan.Step.Name)
+	if plan.State == Done && plan.Found != "" {
+		fmt.Fprintf(&text, "  found: %s\n", plan.Found)
+	} else {
+		for _, command := range plan.Step.Run {
+			fmt.Fprintf(&text, "  run: %s\n", Quote(command))
+		}
+		fmt.Fprintf(&text, "  in:  %s\n", dir)
+	}
+	_, err := io.WriteString(w, text.String())
 	return err
 }
 
+// execute runs a step's commands in order, stopping at the first that fails,
+// since a later one may rely on it.
 func execute(ctx context.Context, step config.Step, opts Options) error {
+	for i, command := range step.Run {
+		if err := executeCommand(ctx, command, opts); err != nil {
+			if len(step.Run) > 1 {
+				return fmt.Errorf("command %d of %d, %s: %w", i+1, len(step.Run), Quote(command), err)
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func executeCommand(ctx context.Context, command []string, opts Options) error {
 	// A relative command path such as ./setup/fonts.sh resolves against Dir,
 	// so repository scripts work without a shell. A bare name is searched on
-	// the same PATH the step receives (see searchPath and lookPath).
+	// the same PATH the step receives (see searchPath and lookPath),
+	// computed again for each command, so one can use what the one before it
+	// installed into .local/bin.
 	path := searchPath(opts.Home)
-	program, err := lookPath(step.Run[0], path)
+	program, err := lookPath(command[0], path)
 	if err != nil {
 		return err
 	}
-	cmd := exec.CommandContext(ctx, program, step.Run[1:]...) //nolint:gosec // G204: running the step the user just reviewed and approved is the purpose
+	cmd := exec.CommandContext(ctx, program, command[1:]...) //nolint:gosec // G204: running the step the user just reviewed and approved is the purpose
 	// argv[0] stays the name the user reviewed, not the resolved path.
-	cmd.Args[0] = step.Run[0]
+	cmd.Args[0] = command[0]
 	cmd.Dir = opts.Repo
 	// Later entries win, so these replace any inherited values.
 	cmd.Env = append(os.Environ(),
@@ -219,8 +267,58 @@ func execute(ctx context.Context, step config.Step, opts Options) error {
 	// input (a nil Stdin is /dev/null) rather than waiting forever.
 	if opts.Yes {
 		cmd.Stdin = nil
+		return runDetached(cmd)
 	}
 	return cmd.Run()
+}
+
+// runDetached runs cmd, a step approved by --yes, in a session of its own,
+// which has no controlling terminal, so the step cannot open /dev/tty either.
+// sudo, doas, and su read passwords from there, and by default remember one
+// per terminal for a few minutes, so in such a step they can neither prompt,
+// which would hang an unattended run, nor run as root on a password the user
+// typed for something else. The kernel enforces this however the step
+// reaches them: through sh -c, a script, or eval of hex or base64 text, all
+// of which defeat any check of the command's words. Steps approved one at a
+// time keep the terminal, as the user has just reviewed each one.
+//
+// It does not stop sudo configured to need no password (NOPASSWD) or to
+// share one cached password across terminals (timestamp_type=global), which
+// the system's administrator chose, nor a graphical password prompt, which
+// the user sees.
+//
+// The terminal sends Ctrl-C to its foreground process group, which the step
+// has left, so interrupts reaching homeskillet while the step runs are passed
+// on to the step's process group. The step leads that group, as Setsid makes
+// it, so a negative process ID reaches everything it started; cancellation
+// stops the whole group the same way.
+func runDetached(cmd *exec.Cmd) error {
+	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
+	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	signals := make(chan os.Signal, 1)
+	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(signals)
+	if err := cmd.Start(); err != nil {
+		return err
+	}
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case received := <-signals:
+				if number, ok := received.(syscall.Signal); ok {
+					// The step may already have exited, leaving nothing to
+					// signal.
+					_ = syscall.Kill(-cmd.Process.Pid, number)
+				}
+			case <-done:
+				return
+			}
+		}
+	}()
+	err := cmd.Wait()
+	close(done)
+	return err
 }
 
 // confirm asks whether to run the step just described. Only "y" or "yes"

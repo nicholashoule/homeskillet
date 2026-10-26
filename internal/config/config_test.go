@@ -1,7 +1,12 @@
+// Tests of reading a repository: manifest decoding and validation, home/
+// discovery, platforms, setup steps and their run forms, and names Windows
+// cannot create.
+
 package config
 
 import (
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -134,19 +139,47 @@ func TestSetupFor(t *testing.T) {
 	}
 }
 
+// TestRunForms checks that "run" holds one command or a list of them, and
+// that one command is written back in the plain form.
+func TestRunForms(t *testing.T) {
+	manifest, err := Load(write(t, `{"setup": [
+		{"name": "one", "run": ["brew", "install", "jq"]},
+		{"name": "several", "run": [["brew", "update"], ["brew", "install", "jq"]]}
+	]}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := manifest.Setup[0].Run; !slices.EqualFunc(got, Commands{{"brew", "install", "jq"}}, slices.Equal) {
+		t.Errorf("one command: %q", got)
+	}
+	if got := manifest.Setup[1].Run; !slices.EqualFunc(got, Commands{{"brew", "update"}, {"brew", "install", "jq"}}, slices.Equal) {
+		t.Errorf("several commands: %q", got)
+	}
+	for run, want := range map[string]Commands{
+		`["true"]`:             {{"true"}},
+		`[["true"],["false"]]`: {{"true"}, {"false"}},
+	} {
+		if data, err := json.Marshal(want); err != nil || string(data) != run {
+			t.Errorf("%q marshals as %s, %v", want, data, err)
+		}
+	}
+}
+
 func TestLoadRejectsUnsafeSetup(t *testing.T) {
 	bidi := string(rune(0x202e))
 	cases := map[string]Step{
-		"no name":         {Run: []string{"true"}},
-		"bad name":        {Name: "Oh My Posh", Run: []string{"true"}},
+		"no name":         {Run: Commands{{"true"}}},
+		"bad name":        {Name: "Oh My Posh", Run: Commands{{"true"}}},
 		"no command":      {Name: "x"},
-		"empty command":   {Name: "x", Run: []string{""}},
-		"escape in run":   {Name: "x", Run: []string{"echo", "safe\x1b[1A\x1b[2Kevil"}},
-		"bidi in run":     {Name: "x", Run: []string{"echo", "a" + bidi + "b"}},
-		"creates escape":  {Name: "x", Run: []string{"true"}, Creates: "../outside"},
-		"creates root":    {Name: "x", Run: []string{"true"}, Creates: "."},
-		"provides a path": {Name: "x", Run: []string{"true"}, Provides: "/usr/bin/tool"},
-		"bad platform":    {Name: "x", Run: []string{"true"}, Platforms: []string{"macos"}},
+		"empty command":   {Name: "x", Run: Commands{{""}}},
+		"empty in a list": {Name: "x", Run: Commands{{"true"}, {}}},
+		"escape in list":  {Name: "x", Run: Commands{{"true"}, {"echo", "safe\x1b[2Kevil"}}},
+		"escape in run":   {Name: "x", Run: Commands{{"echo", "safe\x1b[1A\x1b[2Kevil"}}},
+		"bidi in run":     {Name: "x", Run: Commands{{"echo", "a" + bidi + "b"}}},
+		"creates escape":  {Name: "x", Run: Commands{{"true"}}, Creates: "../outside"},
+		"creates root":    {Name: "x", Run: Commands{{"true"}}, Creates: "."},
+		"provides a path": {Name: "x", Run: Commands{{"true"}}, Provides: "/usr/bin/tool"},
+		"bad platform":    {Name: "x", Run: Commands{{"true"}}, Platforms: []string{"macos"}},
 	}
 	for name, step := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -162,6 +195,9 @@ func TestLoadRejectsUnsafeSetup(t *testing.T) {
 	for name, data := range map[string]string{
 		"duplicate name": `{"setup": [{"name": "a", "run": ["true"]}, {"name": "a", "run": ["true"]}]}`,
 		"unknown field":  `{"setup": [{"name": "a", "run": ["true"], "shell": true}]}`,
+		"run a string":   `{"setup": [{"name": "a", "run": "true"}]}`,
+		"run mixed":      `{"setup": [{"name": "a", "run": [["true"], "false"]]}]}`,
+		"run nested":     `{"setup": [{"name": "a", "run": [[["true"]]]}]}`,
 	} {
 		if _, err := Load(write(t, data)); err == nil {
 			t.Errorf("%s accepted", name)
@@ -268,6 +304,25 @@ func TestLoadRejectsUnusableRepositories(t *testing.T) {
 	}
 }
 
+// TestNothingToManageSaysWhy checks that the error for a directory with
+// nothing to manage says what is missing, so a wrong directory reads
+// differently from a manifest that lists nothing.
+func TestNothingToManageSaysWhy(t *testing.T) {
+	for _, test := range []struct {
+		repo func(t *testing.T) string
+		want string
+	}{
+		{func(t *testing.T) string { return t.TempDir() }, "it has no dotfiles.json and no home/ directory"},
+		{func(t *testing.T) string { return write(t, `{}`) }, "it has no home/ directory, and its dotfiles.json lists no setup steps"},
+		{func(t *testing.T) string { return write(t, `{"files": []}`) }, "its dotfiles.json lists no files or setup steps"},
+	} {
+		_, err := Load(test.repo(t))
+		if !errors.Is(err, ErrNothingToManage) || !strings.HasSuffix(err.Error(), "is not a configuration repository: "+test.want) {
+			t.Errorf("got %v, want it to end %q", err, test.want)
+		}
+	}
+}
+
 func TestLoadStaysInsideRepository(t *testing.T) {
 	outside := t.TempDir()
 	touch(t, outside, FileName, "home/.bashrc")
@@ -362,7 +417,8 @@ func TestDefaultPlatforms(t *testing.T) {
 		],
 		"setup": [
 			{"name": "default", "run": ["true"]},
-			{"name": "linux", "run": ["true"], "platforms": ["linux"]}
+			{"name": "linux", "run": ["true"], "platforms": ["linux"]},
+			{"name": "everywhere", "run": ["true"], "platforms": ["linux", "darwin"]}
 		]
 	}`)
 	manifest, err := Load(repo)
@@ -370,8 +426,8 @@ func TestDefaultPlatforms(t *testing.T) {
 		t.Fatal(err)
 	}
 	for goos, want := range map[string][2][]string{
-		"darwin": {{"default", "everywhere"}, {"default"}},
-		"linux":  {{"linux", "everywhere"}, {"linux"}},
+		"darwin": {{"default", "everywhere"}, {"default", "everywhere"}},
+		"linux":  {{"linux", "everywhere"}, {"linux", "everywhere"}},
 	} {
 		var files, steps []string
 		for _, entry := range manifest.FilesFor(on(goos)) {

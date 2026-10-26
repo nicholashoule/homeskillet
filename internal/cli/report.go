@@ -1,5 +1,9 @@
 //go:build linux || darwin
 
+// Output for status, link, and unlink: the view a person at a terminal reads,
+// with a header, entries grouped by what happens to them, and a closing line,
+// or else the tab-separated lines scripts parse.
+
 package cli
 
 import (
@@ -7,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -23,14 +28,25 @@ func terminal(w io.Writer) bool {
 		return false
 	}
 	info, err := file.Stat()
-	return err == nil && info.Mode()&os.ModeCharDevice != 0
+	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
+		return false
+	}
+	// /dev/null is a character device too, but nobody reads it. Taken for a
+	// terminal, it would get the view, whose explained errors main does not
+	// print again, so homeskillet link >/dev/null would fail in silence.
+	null, err := os.Stat(os.DevNull)
+	return err != nil || !os.SameFile(info, null)
 }
 
 // view writes results for a person at a terminal: what is running and where,
 // entries grouped by what happens to them with problems first, and a closing
 // line saying what changed or what to do next. A nil *view means the
 // tab-separated lines instead.
-type view struct{}
+type view struct {
+	// shadows maps each target a shell would run instead of another command
+	// to that command (see shadowed).
+	shadows map[string]string
+}
 
 // newView returns a view for output, or nil when output is not a terminal.
 func newView(output io.Writer) *view {
@@ -58,7 +74,7 @@ func (v *view) path(p string) string {
 func (v *view) header(w io.Writer, command, repo string, remembered bool, home string, platform config.Platform, dryRun bool) error {
 	repository := v.path(repo)
 	if remembered {
-		repository += "  (linked here before; none was named)"
+		repository += "  (linked into this home before; none was named)"
 	}
 	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n  %-11s %s\n  %-11s %s\n",
 		command, "repository:", repository, "home:", v.path(home), "platform:", platform)
@@ -142,6 +158,10 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 		add(conflicts, byState[link.Conflict], describe)
 		add("Absent sources: listed, but not in the repository", byState[link.NoSource], func(plan link.Plan) string {
 			return "expected at " + v.path(plan.Source)
+		})
+		shadowing := slices.DeleteFunc(slices.Clone(plans), func(plan link.Plan) bool { return v.shadows[plan.Target] == "" })
+		add("Shadowing commands: a shell runs these first; link them only from a repository you trust", shadowing, func(plan link.Plan) string {
+			return "instead of " + v.path(v.shadows[plan.Target])
 		})
 		removed := would("Removed: no longer in the repository", "Would remove: no longer in the repository")
 		if command == "status" {

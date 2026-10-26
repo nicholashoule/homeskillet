@@ -1,3 +1,5 @@
+// Tests of platform detection.
+
 package host
 
 import (

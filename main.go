@@ -18,8 +18,9 @@ import (
 func main() {
 	// Ctrl-C reaches homeskillet and any running setup step together, as the
 	// terminal signals the whole foreground process group, so no signal
-	// handling is needed here; the context lets callers such as tests impose
-	// their own cancellation.
+	// handling is needed here. Steps run under --yes have a session of their
+	// own, and package setup passes signals on to them. The context lets
+	// callers such as tests impose their own cancellation.
 	if err := cli.Run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		if !cli.Reported(err) {
 			fmt.Fprintln(os.Stderr, "homeskillet:", err)

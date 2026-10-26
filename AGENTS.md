@@ -31,7 +31,7 @@ describe the project, so keep them current instead.
 |---|---|
 | `main.go` | Entry point only: calls `cli.Run` and exits on error |
 | `main_unsupported.go` | Entry point on unsupported systems such as Windows: says so and exits |
-| `internal/cli` | Flags, root refusal, path canonicalization, output |
+| `internal/cli` | Flags, root refusal, path canonicalization, output, and `init`'s starter manifest |
 | `internal/config` | Reading a repository: `dotfiles.json` decoding, `home/` discovery, lexical validation |
 | `internal/trust` | Ownership and permission rules (audit these in one place) |
 | `internal/link` | Link planning, conflict detection, filesystem changes, and the record of links |
@@ -44,7 +44,7 @@ describe the project, so keep them current instead.
 | `tools/xplat` | Cross-platform shim for Makefile recipes, vendored from `go-webapp` |
 | `tools/buildtime` | Prints the build time the Makefile stamps into binaries |
 | `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
-| `.github/` | CI workflow, Dependabot, repogov line limits, and Copilot instructions |
+| `.github/` | CI and release workflows, Dependabot, repogov line limits, and Copilot instructions |
 
 `tools/xplat` is a byte-identical copy of
 `github.com/nicholashoule/go-webapp/tools/xplat`. Do not edit it here: change it
@@ -124,7 +124,8 @@ Environments table.
   fixtures under `t.TempDir()`, and never touch the real home directory.
 - Write godoc for exported identifiers. For non-obvious checks, comment the
   reasoning, meaning the attack or data loss the check prevents, not what the
-  code does.
+  code does. Start every `.go` file, tests included, with a comment saying what
+  it holds; the package comment does this for the file that carries it.
 - A `//nolint` directive must name the linter and give a reason. Fix findings
   rather than excluding them where possible.
 

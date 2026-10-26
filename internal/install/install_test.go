@@ -1,5 +1,8 @@
 //go:build linux || darwin
 
+// Tests of installing homeskillet's own versions: immutable installs, the
+// latest, previous, and current links, ownership checks, and dry runs.
+
 package install
 
 import (
