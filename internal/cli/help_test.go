@@ -22,7 +22,7 @@ import (
 // longest name.
 func TestHelp(t *testing.T) {
 	for _, args := range [][]string{
-		{"--help"}, {"-h"}, {"link", "--help"}, {"self", "use", "latest", "-h"}, {"help"}, {"help", "link"},
+		{"--help"}, {"-h"}, {"link", "--help"}, {"self", "use", "latest", "-h"}, {"help"}, {"help", "link"}, {"help", "--help"},
 	} {
 		var output, diagnostics bytes.Buffer
 		if err := Run(context.Background(), args, nil, &output, &diagnostics); err != nil {

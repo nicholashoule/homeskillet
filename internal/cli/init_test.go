@@ -25,6 +25,11 @@ func emptyRepository(t *testing.T) string {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Not left to the umask: the ownership rules need the ancestors of a
+	// repository not writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	repo := filepath.Join(root, "dotfiles")
 	if err := os.Mkdir(repo, 0o755); err != nil {
 		t.Fatal(err)
@@ -73,6 +78,9 @@ func TestInit(t *testing.T) {
 		if test.want == detected.OS {
 			home, err := filepath.EvalSymlinks(t.TempDir())
 			if err != nil {
+				t.Fatal(err)
+			}
+			if err := os.Chmod(home, 0o755); err != nil {
 				t.Fatal(err)
 			}
 			if output, err := statusOf(repo, home); err != nil {

@@ -206,21 +206,17 @@ func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking 
 // inside repo (see trust.Resolve). It reports whether the source is absent
 // instead of failing, so callers can report that per entry.
 func checkSource(repo, source string, unlinking bool) (missing bool, err error) {
-	var resolved string
+	// Unlinking removes symlinks in home and runs nothing, so what the
+	// source is now, a directory, a symlink leading anywhere, or gone, is
+	// beside the point; a source replaced in the repository must not stop
+	// its link from being removed (see Prepare).
 	if unlinking {
-		// Unlinking only needs to know the link is homeskillet's, not that
-		// the repository is still safe (see Prepare).
-		resolved, err = filepath.EvalSymlinks(source)
-		if err == nil && !trust.Within(repo, resolved) {
-			return false, fmt.Errorf("source %s resolves outside the repository", source)
-		}
-	} else {
-		// A source that leads outside the repository at any hop, for
-		// example through a symlink in /tmp that another user controls,
-		// would make the link's content depend on files the repository
-		// checks never examine.
-		resolved, err = trust.Resolve(repo, source)
+		return false, nil
 	}
+	// A source that leads outside the repository at any hop, for example
+	// through a symlink in /tmp that another user controls, would make the
+	// link's content depend on files the repository checks never examine.
+	resolved, err := trust.Resolve(repo, source)
 	if errors.Is(err, os.ErrNotExist) {
 		return true, nil
 	}

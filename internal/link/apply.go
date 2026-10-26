@@ -11,6 +11,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"syscall"
 )
 
 // Create removes every Orphaned link and links every Missing target to its
@@ -66,7 +67,7 @@ func Remove(plans []Plan, log io.Writer) error {
 		var line string
 		switch plan.State {
 		case Linked, Orphaned:
-			if err := os.Remove(plan.Target); err != nil {
+			if err := unlink(plan.Target); err != nil {
 				return err
 			}
 			line = "unlinked\t" + plan.Target
@@ -83,19 +84,29 @@ func Remove(plans []Plan, log io.Writer) error {
 }
 
 // removeOrphans deletes every Orphaned link. Prepare found each to be a
-// symlink naming its recorded source; os.Remove deletes the link itself,
+// symlink naming its recorded source, and unlink deletes the link itself,
 // never what it points to.
 func removeOrphans(plans []Plan, log io.Writer) error {
 	for _, plan := range plans {
 		if plan.State != Orphaned {
 			continue
 		}
-		if err := os.Remove(plan.Target); err != nil {
+		if err := unlink(plan.Target); err != nil {
 			return err
 		}
 		if _, err := fmt.Fprintf(log, "unlinked\t%s\n", plan.Target); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// unlink removes the symlink at path. Unlike os.Remove, it never removes a
+// directory, so a directory that replaced the link after Prepare looked is
+// left alone, with an error, instead of deleted.
+func unlink(path string) error {
+	if err := syscall.Unlink(path); err != nil {
+		return &os.PathError{Op: "unlink", Path: path, Err: err}
 	}
 	return nil
 }

@@ -353,7 +353,13 @@ func CheckTree(root string) error {
 // path strings only, so both must be clean and absolute, with symlinks already
 // resolved wherever the answer guards a filesystem change.
 func Within(root, path string) bool {
-	relative, err := filepath.Rel(root, path)
+	// Compared without regard to case, as CheckLocation does: macOS file
+	// systems are usually case-insensitive, so a repository opened as
+	// ~/dotfiles is the same directory as ~/Dotfiles there, and a target
+	// spelled the other way must still count as inside it. On Linux this
+	// refuses only paths that differ from the repository or data directory
+	// by case alone.
+	relative, err := filepath.Rel(strings.ToLower(root), strings.ToLower(path))
 	return err == nil && filepath.IsLocal(relative)
 }
 

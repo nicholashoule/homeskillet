@@ -19,6 +19,11 @@ func TestCheckTree(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Not left to the umask: the rules under test need the ancestors not
+	// writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	nested, file := filepath.Join(root, "a", "b"), filepath.Join(root, "a", "b", "file")
 	if err := os.MkdirAll(nested, 0o755); err != nil {
 		t.Fatal(err)
@@ -78,6 +83,11 @@ func TestCheckTreeSymlinks(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
+			// Not left to the umask: the rules under test need the ancestors not
+			// writable by others.
+			if err := os.Chmod(root, 0o755); err != nil {
+				t.Fatal(err)
+			}
 			tree, outside := filepath.Join(root, "tree"), filepath.Join(root, "outside")
 			for _, dir := range []string{tree, filepath.Join(tree, "dir"), outside} {
 				if err := os.Mkdir(dir, 0o755); err != nil {
@@ -124,6 +134,11 @@ func TestStickyExcusesOnlyDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Not left to the umask: the rules under test need the ancestors not
+	// writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	program := filepath.Join(root, "program")
 	if err := os.WriteFile(program, nil, 0o700); err != nil {
 		t.Fatal(err)
@@ -152,6 +167,11 @@ func TestStickyExcusesOnlyDirectories(t *testing.T) {
 func TestCheckRepositoryManifest(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	// Not left to the umask: the rules under test need the ancestors not
+	// writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	repo, outside := filepath.Join(root, "repo"), filepath.Join(root, "outside")
@@ -218,6 +238,24 @@ func TestWritableErrorWSLHint(t *testing.T) {
 	} {
 		if got := strings.Contains(writableError(path).Error(), hint); got != want {
 			t.Errorf("%s: hint %v, want %v", path, got, want)
+		}
+	}
+}
+
+// TestWithinIgnoresCase checks that containment, like CheckLocation, does not
+// depend on case, since macOS file systems usually do not.
+func TestWithinIgnoresCase(t *testing.T) {
+	for _, test := range []struct {
+		root, path string
+		want       bool
+	}{
+		{"/home/u/dotfiles", "/home/u/Dotfiles/.git/hooks", true},
+		{"/home/u/dotfiles", "/home/u/dotfiles", true},
+		{"/home/u/dotfiles", "/home/u/dotfiles-other", false},
+		{"/home/u/Dotfiles", "/home/u", false},
+	} {
+		if got := Within(test.root, test.path); got != test.want {
+			t.Errorf("Within(%q, %q) = %v, want %v", test.root, test.path, got, test.want)
 		}
 	}
 }

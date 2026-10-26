@@ -33,6 +33,11 @@ func repository(t *testing.T, sources ...string) (repo, home string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// t.TempDir leaves the mode to the umask; the ownership rules need the
+	// ancestors of a repository or home not writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	repo, home = filepath.Join(root, "repo"), filepath.Join(root, "home")
 	for _, directory := range []string{repo, home} {
 		if err := os.Mkdir(directory, 0o755); err != nil {
@@ -216,6 +221,7 @@ func TestRepositoryArgument(t *testing.T) {
 		{[]string{"link", "--repo", "r"}, "link", "r", nil, "", false},
 		{[]string{"link"}, "link", ".", nil, "", false},
 		{[]string{"self", "use", "--dry-run", "latest"}, "self", ".", nil, "latest", true},
+		{[]string{"self", "--dry-run", "list"}, "self", ".", nil, "", true},
 		// Names after the repository select files; with --repo, every
 		// operand is a file.
 		{[]string{"link", "r", ".bashrc", "--dry-run", ".vimrc"}, "link", "r", []string{".bashrc", ".vimrc"}, "", true},
@@ -244,6 +250,7 @@ func TestRepositoryArgument(t *testing.T) {
 		{[]string{"version", "/r"}, "unexpected"},
 		{[]string{"self", "list", "/r"}, "unexpected"},
 		{[]string{"self", "use", "v0.0.1", "v0.0.2"}, "unexpected"},
+		{[]string{"self", "--dry-run", "upgrade"}, "unknown command self upgrade"},
 		{[]string{"status", "r", "--force"}, "applies only to link"},
 	} {
 		if _, err := parse(test.args, new(bytes.Buffer)); err == nil || !strings.Contains(err.Error(), test.want) {

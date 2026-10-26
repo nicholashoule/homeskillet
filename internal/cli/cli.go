@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
@@ -265,7 +266,7 @@ func parse(args []string, output io.Writer) (invocation, error) {
 	// The help text covers every command, so a command named after help gets
 	// the same text.
 	if inv.command == "help" {
-		if len(args) > 1 || len(args) == 1 && !slices.Contains(commands, args[0]) {
+		if len(args) > 1 || len(args) == 1 && !slices.Contains(commands, args[0]) && args[0] != "--help" && args[0] != "-h" {
 			return invocation{}, fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 		}
 		return invocation{}, help(output, newFlags(&inv))
@@ -314,6 +315,13 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		(inv.command != "setup" || isPath(operands[0])) {
 		inv.repo, operands = operands[0], operands[1:]
 		inv.repoGiven = true
+	}
+	// self --dry-run list: the subcommand may follow options.
+	if inv.command == "self" && inv.sub == "" && len(operands) > 0 {
+		inv.sub, operands = operands[0], operands[1:]
+		if !slices.Contains(selfCommands, inv.sub) {
+			return invocation{}, fmt.Errorf("unknown command self %s; use self %s", inv.sub, strings.Join(selfCommands, ", self "))
+		}
 	}
 	switch {
 	case misplaced != nil:
@@ -785,6 +793,19 @@ func listVersions(layout install.Layout, output io.Writer) error {
 	if len(state.Versions) == 0 {
 		_, err := fmt.Fprintf(output, "no versions installed in %s\n", layout.Data)
 		return err
+	}
+	// A pin to a version that is gone, as after rm -rf on its directory,
+	// leaves the command dangling; self use repairs it. The link's target is
+	// a file name like any other, so it is quoted if it could rewrite the
+	// terminal.
+	if state.Broken != "" {
+		target := state.Broken
+		if !config.Printable(target) {
+			target = strconv.Quote(target)
+		}
+		if _, err := fmt.Fprintf(output, "current\tbroken: points to %s, which is not installed; run homeskillet self use latest\n", target); err != nil {
+			return err
+		}
 	}
 	for _, v := range state.Versions {
 		var roles []string

@@ -589,3 +589,17 @@ func TestWindowsNames(t *testing.T) {
 		t.Error("reserved creates accepted")
 	}
 }
+
+// TestPrintableRejectsInvalidUTF8 checks that raw bytes that are not UTF-8,
+// which an 8-bit terminal reads as control characters and encoding/json would
+// replace, count as unprintable, as line and paragraph separators do.
+func TestPrintableRejectsInvalidUTF8(t *testing.T) {
+	for s, want := range map[string]bool{
+		"plain": true, "caf\u00e9": true, "\x9b": false, "\xff": false, "a\x80b": false,
+		"\u2028": false, "\u2029": false, "\x1b[2K": false,
+	} {
+		if got := Printable(s); got != want {
+			t.Errorf("Printable(%q) = %v, want %v", s, got, want)
+		}
+	}
+}

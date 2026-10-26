@@ -33,6 +33,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -83,6 +84,13 @@ func Prepare(steps []config.Step, repo, home string) ([]Plan, error) {
 		return nil, err
 	}
 	if err := trust.CheckTree(repo); err != nil {
+		return nil, err
+	}
+	// Steps run with HOME set to home and are skipped when their creates
+	// path exists there, so a home that others could write to would let
+	// them plant a file that makes a step look done, or redirect what a
+	// step installs; link requires the same of home.
+	if err := trust.CheckDirectory(home); err != nil {
 		return nil, err
 	}
 	plans := make([]Plan, 0, len(steps))
@@ -177,7 +185,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 			}
 			continue
 		}
-		if err := trust.CheckTree(opts.Repo); err != nil {
+		if err := errors.Join(trust.CheckTree(opts.Repo), trust.CheckDirectory(opts.Home)); err != nil {
 			return fmt.Errorf("before setup step %s: %w", plan.Step.Name, err)
 		}
 		if err := Describe(opts.Output, *plan, opts.Repo); err != nil {
@@ -216,12 +224,12 @@ func Describe(w io.Writer, plan Plan, dir string) error {
 	var text strings.Builder
 	fmt.Fprintf(&text, "%s\t%s\n", plan.State, plan.Step.Name)
 	if plan.State == Done && plan.Found != "" {
-		fmt.Fprintf(&text, "  found: %s\n", plan.Found)
+		fmt.Fprintf(&text, "  found: %s\n", printable(plan.Found))
 	} else {
 		for _, command := range plan.Step.Run {
 			fmt.Fprintf(&text, "  run: %s\n", Quote(command))
 		}
-		fmt.Fprintf(&text, "  in:  %s\n", dir)
+		fmt.Fprintf(&text, "  in:  %s\n", printable(dir))
 	}
 	_, err := io.WriteString(w, text.String())
 	return err
@@ -302,8 +310,16 @@ func executeCommand(ctx context.Context, command []string, opts Options) error {
 func runDetached(cmd *exec.Cmd) error {
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+	// A signal the process was started ignoring, as nohup ignores SIGHUP and
+	// a shell ignores SIGINT for a background job, stays ignored: Notify
+	// would otherwise start delivering it, and the step would die of the
+	// very signal the user shut out. The step inherits the ignoring too.
 	signals := make(chan os.Signal, 1)
-	signal.Notify(signals, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
+		if !signal.Ignored(sig) {
+			signal.Notify(signals, sig)
+		}
+	}
 	defer signal.Stop(signals)
 	if err := cmd.Start(); err != nil {
 		return err
@@ -335,7 +351,9 @@ func runDetached(cmd *exec.Cmd) error {
 	err := cmd.Wait()
 	close(done)
 	<-stopped
-	// A signal that arrived as the step finished still counts.
+	// A signal that arrived as the step finished still counts. Stop first:
+	// once it returns nothing more is sent, so the drain below misses none.
+	signal.Stop(signals)
 	if interrupted == nil {
 		select {
 		case interrupted = <-signals:
@@ -422,6 +440,16 @@ func Quote(argv []string) string {
 		parts[i] = "'" + strings.ReplaceAll(arg, "'", `'\''`) + "'"
 	}
 	return strings.Join(parts, " ")
+}
+
+// printable returns path for display, quoted when it holds control or
+// formatting characters, so a path cannot rewrite the terminal, as the CLI's
+// view does for its own paths.
+func printable(path string) string {
+	if !config.Printable(path) {
+		return strconv.Quote(path)
+	}
+	return path
 }
 
 // shellSafe lists characters that need no quoting in a POSIX shell word.

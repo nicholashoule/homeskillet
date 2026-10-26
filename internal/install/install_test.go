@@ -29,6 +29,11 @@ func fixture(t *testing.T) (Layout, string) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Not left to the umask: the ownership rules need the ancestors of a
+	// repository, home, or prefix not writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
+		t.Fatal(err)
+	}
 	builds := filepath.Join(root, "builds")
 	if err := os.Mkdir(builds, 0o700); err != nil {
 		t.Fatal(err)
@@ -550,5 +555,61 @@ func TestReplaceLinkLeavesLeftovers(t *testing.T) {
 	}
 	if target, err := os.Readlink(leftover); err != nil || target != "stale" {
 		t.Fatalf("leftover reused: %q, %v", target, err)
+	}
+}
+
+// TestUseRepairsBrokenCurrent checks that a pin to a version whose directory
+// was deleted by hand is reported, not fatal: self use points current at an
+// installed version again, and a reinstall is not blocked.
+func TestUseRepairsBrokenCurrent(t *testing.T) {
+	layout, builds := fixture(t)
+	install(t, layout, program(t, builds, "one"), "v1.0.0")
+	install(t, layout, program(t, builds, "two"), "v1.1.0")
+	if err := layout.Use("v1.0.0", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Join(layout.Data, versions, "v1.0.0")); err != nil {
+		t.Fatal(err)
+	}
+	state, err := layout.Inspect()
+	if err != nil || state.Current != "" || state.Broken != filepath.Join(versions, "v1.0.0") {
+		t.Fatalf("broken pin: %+v, %v", state, err)
+	}
+	if err := layout.Use(Latest, false, nil); err != nil {
+		t.Fatalf("self use could not repair the pin: %v", err)
+	}
+	if state, err := layout.Inspect(); err != nil || state.Broken != "" || state.Current != "v1.1.0" || !state.Following {
+		t.Fatalf("after repair: %+v, %v", state, err)
+	}
+	if got := runs(t, layout); got != "two" {
+		t.Fatalf("command runs %q after repair", got)
+	}
+}
+
+// TestUnchangedInstallKeepsRecord checks that reinstalling a version that is
+// already installed from the same source, with different bytes, leaves both
+// the binary and its record alone, so the record keeps describing the bytes.
+func TestUnchangedInstallKeepsRecord(t *testing.T) {
+	layout, builds := fixture(t)
+	first := build("v1.0.0")
+	first.Built = "2026-10-25T00:00:00Z"
+	var log bytes.Buffer
+	if err := layout.Install(program(t, builds, "one"), first, false, &log); err != nil {
+		t.Fatal(err)
+	}
+	rebuilt := first
+	rebuilt.Built = "2026-12-31T00:00:00Z"
+	log.Reset()
+	if err := layout.Install(program(t, builds, "one-rebuilt"), rebuilt, false, &log); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(log.String(), "unchanged") {
+		t.Fatalf("rebuild from the same source: %s", log.String())
+	}
+	if recorded, err := layout.Build("v1.0.0"); err != nil || recorded.Built != first.Built {
+		t.Fatalf("record rewritten for an unchanged install: %+v, %v", recorded, err)
+	}
+	if got := runs(t, layout); got != "one" {
+		t.Fatalf("command runs %q", got)
 	}
 }

@@ -88,8 +88,9 @@ left unchanged.
 `unlink` removes only listed symlinks pointing to the selected configuration
 repository, including dangling links. Anything else at a listed target is
 reported as `skipped` and left alone, and the other entries are still unlinked.
-`unlink` skips the ownership checks of the repository and home, so it can
-clean up after a deleted source or a repository whose permissions went wrong.
+`unlink` skips the ownership checks of the repository and home, and looks at
+no source, so it can clean up after a source that was deleted or replaced, or
+a repository whose permissions went wrong.
 It still requires a private data directory, checked before anything changes:
 the record there decides which links are homeskillet's, and `unlink` must save
 it afterward. `unlink` does not remove sources or parent directories, or
@@ -112,6 +113,9 @@ A setup step is code from the repository, which may be someone else's, so
 
 - Every file and directory in the repository must pass the ownership rules
   above, not just the manifest, because a step can run or source any of them.
+  So must the home directory, as for `link`: steps run with `HOME` set to it,
+  and a step is skipped when its `creates` path exists there, so someone who
+  could write to it could plant that file or redirect what a step installs.
 - Every symlink in the repository must lead, at every hop, to something
   inside it. A step that runs a symlinked script runs whatever the link points
   at, so a link leading outside, even on its way back in, or a dangling one
@@ -122,7 +126,8 @@ A setup step is code from the repository, which may be someone else's, so
 - Each pending step is shown exactly as it will run, with its arguments quoted
   and its working directory, before you are asked; a step with several
   commands shows them all and is approved once. Only `y` or `yes` runs it.
-  Anything else, including closed or redirected input, declines. A step that
+  Anything else, including end of input, declines, so a closed or empty
+  redirected input never approves by accident; `echo y |` is an approval. A step that
   is done is listed with the file that shows it, never silently skipped.
 - Commands run without a shell unless the step names one, so you see any
   pipeline or substitution in the review.
@@ -195,5 +200,7 @@ directories, `/root`, and homes anywhere else are fine.
 
 Operations are idempotent but not transactional. An I/O failure can leave a
 partial installation; resolve it and rerun. Do not modify the manifest or
-directory structure concurrently with the CLI. Cloning from git, templating, and
+directory structure concurrently with the CLI, and run one homeskillet at a
+time per data directory: two runs, as for a scratch home and the real one, can
+each save the record of links without the other's update. Cloning from git, templating, and
 secret management remain outside the manager's scope.

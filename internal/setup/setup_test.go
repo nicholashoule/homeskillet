@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -29,6 +30,11 @@ func fixture(t *testing.T, steps ...config.Step) (repo, home string) {
 	t.Helper()
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
+		t.Fatal(err)
+	}
+	// t.TempDir leaves the mode to the umask; the ownership rules need the
+	// ancestors of a repository or home not writable by others.
+	if err := os.Chmod(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	repo, home = filepath.Join(root, "repo"), filepath.Join(root, "home")
@@ -485,6 +491,53 @@ func interrupt(t *testing.T, steps ...config.Step) (home string, err error) {
 func TestRunYesPassesInterrupts(t *testing.T) {
 	if _, err := interrupt(t, config.Step{Name: "slow", Run: config.Commands{{"sh", "-c", `: > "$HOME/started"; sleep 30`}}}); err == nil {
 		t.Fatal("the interrupted step succeeded")
+	}
+}
+
+// TestRunYesKeepsIgnoredSignals checks that a signal the process started out
+// ignoring, as under nohup, stays ignored: the step is not stopped by it and
+// setup finishes.
+func TestRunYesKeepsIgnoredSignals(t *testing.T) {
+	signal.Ignore(syscall.SIGHUP)
+	t.Cleanup(func() { signal.Reset(syscall.SIGHUP) })
+	steps := []config.Step{{Name: "slow", Run: config.Commands{{"sh", "-c", `: > "$HOME/started"; sleep 0.5; : > "$HOME/finished"`}}}}
+	repo, home := fixture(t, steps...)
+	plans := prepare(t, steps, repo, home)
+	result := make(chan error, 1)
+	go func() {
+		result <- Run(context.Background(), plans, Options{Repo: repo, Home: home, Yes: true, Output: io.Discard, Errors: io.Discard})
+	}()
+	deadline := time.Now().Add(10 * time.Second)
+	for !exists(filepath.Join(home, "started")) {
+		if time.Now().After(deadline) {
+			t.Fatal("the step did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if err := syscall.Kill(os.Getpid(), syscall.SIGHUP); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-result:
+		if err != nil || !exists(filepath.Join(home, "finished")) {
+			t.Fatalf("an ignored hangup stopped the step: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("setup did not finish")
+	}
+}
+
+// TestPrepareRejectsSharedHome checks that setup, like link, refuses a home
+// directory others can write to, where a planted file could make a step look
+// done.
+func TestPrepareRejectsSharedHome(t *testing.T) {
+	steps := []config.Step{touch("x")}
+	repo, home := fixture(t, steps...)
+	if err := os.Chmod(home, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Prepare(steps, repo, home); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+		t.Fatalf("shared home accepted: %v", err)
 	}
 }
 

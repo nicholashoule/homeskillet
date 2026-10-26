@@ -111,6 +111,7 @@ jobs:
 
       # Last, so a Release appears only once ghcr.io has the same binaries. A
       # tag with a pre-release part, such as v1.2.3-rc.1, makes a pre-release.
+      # A rerun after a failed upload adds the files to the Release it finds.
       - name: Create the Release
         env:
           GH_TOKEN: ${{ github.token }}
@@ -120,5 +121,9 @@ jobs:
           if [[ $TAG == *-* ]]; then
             prerelease=(--prerelease)
           fi
-          gh release create "$TAG" bin/homeskillet-*-* bin/SHA256SUMS \
-            --verify-tag --title "homeskillet $TAG" --generate-notes "${prerelease[@]}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" bin/homeskillet-*-* bin/SHA256SUMS --clobber
+          else
+            gh release create "$TAG" bin/homeskillet-*-* bin/SHA256SUMS \
+              --verify-tag --title "homeskillet $TAG" --generate-notes "${prerelease[@]}"
+          fi

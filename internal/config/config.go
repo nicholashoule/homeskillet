@@ -30,6 +30,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/nicholashoule/homeskillet/internal/safefile"
 )
@@ -321,8 +322,11 @@ func (m Manifest) SetupFor(p Platform) []Step {
 // OVERRIDE reorder text, so either could disguise what a link or setup step
 // really does.
 func Printable(s string) bool {
-	return !strings.ContainsFunc(s, func(r rune) bool {
-		return unicode.IsControl(r) || unicode.Is(unicode.Cf, r)
+	// Invalid UTF-8 is refused too: a raw byte such as 0x9B is a control
+	// character to a terminal that is not in UTF-8 mode, and encoding/json
+	// would replace it, so a record could no longer name the file.
+	return utf8.ValidString(s) && !strings.ContainsFunc(s, func(r rune) bool {
+		return unicode.IsControl(r) || unicode.In(r, unicode.Cf, unicode.Zl, unicode.Zp)
 	})
 }
 

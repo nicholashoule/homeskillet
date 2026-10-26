@@ -132,7 +132,8 @@ homeskillet self install --dry-run    # preview; the self commands all take it
 ```
 
 A pinned version stays pinned when you install another; `self install` says
-so. `self remove` refuses the version that runs. An installed version is never
+so. If the pinned version's directory is deleted by hand, the command dangles;
+`self list` says so, and `homeskillet self use latest` repairs it. `self remove` refuses the version that runs. An installed version is never
 rewritten: installing the same version with different contents is refused,
 except for `+dirty` builds, which name no exact build. Rebuilding a release
 from the same commit, with the same Go and platform, differs only in its build

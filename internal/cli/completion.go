@@ -84,6 +84,8 @@ complete -o filenames -F _homeskillet homeskillet
 // zshCompletion is the zsh script, usable with eval or saved on fpath.
 const zshCompletion = `#compdef homeskillet
 # zsh completion for homeskillet, written by: homeskillet completion zsh
+# Copyright 2026 nicholashoule
+# SPDX-License-Identifier: Apache-2.0
 # Load it from ~/.zshrc, after compinit:
 #   command -v homeskillet >/dev/null && eval "$(homeskillet completion zsh)"
 # or save it as _homeskillet in a directory on fpath. homeskillet works out
