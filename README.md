@@ -6,12 +6,14 @@
 [![License](https://img.shields.io/github/license/nicholashoule/homeskillet)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](go.mod)
 
-A small, dependency-free Go CLI for bootstrapping anyone's dotfiles on Linux
-and macOS. Configuration belongs in separate repositories. homeskillet links
+A small, dependency-free Go CLI for bootstrapping anyone's dotfiles on Linux,
+macOS, or Windows, natively and in WSL. Configuration belongs in separate
+repositories. homeskillet links
 the files a repository keeps under `home/`, or the files its optional
-`dotfiles.json` manifest lists. After you approve each one, it also runs the
-setup steps the manifest declares, such as installing a prompt, fonts, or
-language tools. It does not ship or assume any particular dotfiles or tools.
+manifest, `bootstrap.json` or `dotfiles.json`, lists. After you approve each
+one, it also runs the setup steps the manifest declares, such as installing a
+prompt, fonts, or language tools. It does not ship or assume any particular
+dotfiles or tools.
 
 ## Supported Environments
 
@@ -22,14 +24,10 @@ your shell, so it works the same whatever your login shell is.
 |---|---|
 | Linux with bash | Any distribution. Tested. |
 | macOS with bash or zsh | zsh is the macOS default and reads `.zshrc`/`.zprofile`, not the bash files. Each shell reads only its own startup files, so a manifest can list both. Cross-compiled but not yet tested natively. |
-| Windows via WSL (Ubuntu) | Run homeskillet inside WSL. Clone the configuration repository into the Linux filesystem (for example under `~/`), not under `/mnt/c`. Windows drives show every file as world-writable and ignore `chmod` by default, so homeskillet refuses them. |
+| Windows 10 and 11 with PowerShell | Native, x64 and Arm64. Linking needs Developer Mode, which lets programs make symlinks. Keep the repository under your profile directory, not at a drive's root or in OneDrive. Run from a terminal that is not elevated. [docs/windows.md](docs/windows.md) covers setup and how to lay out a repository for Windows. |
+| Windows via WSL (Ubuntu) | The Linux build, run inside WSL for Linux dotfiles. Clone the configuration repository into the Linux filesystem (for example under `~/`), not under `/mnt/c`. Windows drives show every file as world-writable and ignore `chmod` by default, so homeskillet refuses them. |
+| Windows and WSL together | `homeskillet.exe` links your Windows profile, and the Linux build inside WSL links your Linux home; neither links into the other. Keep WSL's files in a Windows repository's `home/wsl/`, which `homeskillet wsl link` copies into WSL and links there, or in a repository cloned inside WSL ([docs/windows.md](docs/windows.md#windows-and-wsl-together)). |
 | Docker and other Linux containers | Containers often run as root, which needs `--allow-root` and a repository owned by root inside the container. A repository bind-mounted from the host belongs to another user and is refused for root. Alternatively, run as a regular user that owns the clone and has a real home directory. Builds that exclude `.git` record no version; pass `make build VERSION=v0.0.1`. |
-
-Native Windows (cmd.exe or PowerShell) is not supported at this time: a
-Windows build only prints a message saying so and suggesting WSL. A
-configuration repository can already target Windows and be checked from Linux
-or macOS with `--platform windows`; [docs/windows.md](docs/windows.md) has
-what works and what native support still needs.
 
 ## Build and Install
 
@@ -49,9 +47,10 @@ installs under another prefix.
 
 Without Go, download a release for your OS and architecture from the Releases
 page, make it executable, and run its `self install`
-([docs/install.md](docs/install.md#downloading-a-release)).
+([docs/install.md](docs/install.md#downloading-a-release)). On Windows, see
+[docs/windows.md](docs/windows.md#installing).
 
-For tab completion in bash or zsh, see
+For tab completion in bash, zsh, or PowerShell, see
 [docs/install.md](docs/install.md#shell-completion).
 
 `make build` alone leaves the binary in `bin/` without installing it. Both
@@ -84,6 +83,8 @@ homeskillet link ~/dotfiles .bashrc --force   # replace ~/.bashrc, keeping a bac
 homeskillet unlink ~/dotfiles
 homeskillet setup ~/dotfiles                  # offer each setup step
 homeskillet setup ~/dotfiles uv               # only the step named uv
+homeskillet check ~/dotfiles                  # list every issue in the repository, or say it is valid
+homeskillet wsl link .                        # on Windows: link home/wsl/ into WSL's home
 ```
 
 Files after the repository limit `status`, `link`, and `unlink` to them: a
@@ -93,7 +94,8 @@ is not one, to the one repository already linked into the home, so after the
 first link, `homeskillet link` alone works anywhere. Options go anywhere after
 the command, and `homeskillet help` (or `-h`) lists every command and option. Without a command, `status` runs. There, and after `setup`, where
 other words name steps, the repository must plainly be a path (`.`, `..`, or
-containing `/`), so a mistyped command is never read as a directory. `--home` selects another home, `--dry-run` changes nothing,
+containing `/`, or on Windows `\`), so a mistyped command is never read as a directory. A path that starts with `~`
+means your home from any shell, `cmd` included. `--home` selects another home, `--dry-run` changes nothing,
 `--quiet` prints nothing but errors (not for `setup`, whose steps must be
 shown), and `setup --yes` runs every pending step without asking, for
 unattended builds such as a Dockerfile.
@@ -103,7 +105,8 @@ conflicting file (never a directory) into the data directory's `backups/`, at
 its path with the Unix time appended (`backups/.bashrc.1761393600`), then
 links; move a backup back to restore it. In a terminal, homeskillet says what
 it is running and where, groups files by what happens to them, and ends with
-what changed or what to do; in a pipe or script it prints one tab-separated
+what changed or what to do, and after `link` or `status` with any setup steps
+still pending; in a pipe or script it prints one tab-separated
 line per file, a stable format to parse. Keep the clone in a permanent place:
 links point into it.
 
@@ -143,11 +146,14 @@ usually means the repository path names the wrong directory.
 ### The Manifest
 
 A repository needs no manifest: files under `home/` are linked as they are.
-Add `dotfiles.json` at its root only for what `home/` cannot say: `platforms`,
-the systems the repository is for; `setup`, commands that install what the
-linked files use, run only when you approve them; or `files`, an explicit list
-that replaces `home/`. `homeskillet init` writes a starter, and never replaces
-an existing manifest:
+Add `bootstrap.json` at its root only for what `home/` cannot say:
+`platforms`, the systems the repository is for; `setup`, commands that install
+what the linked files use, run only when you approve them; or `files`, an
+explicit list that replaces `home/`. `dotfiles.json` is read the same way, and
+a repository may keep both, such as its files in one and the steps that
+install tools in the other; they merge. `homeskillet init` writes a starter
+where no manifest is, and `homeskillet check` lists every issue in a
+repository, or says it is valid:
 
 ```json
 {
@@ -168,8 +174,9 @@ steps run, including running only the steps you name.
 
 homeskillet never overwrites or deletes a file it did not create: a conflict
 makes `status` and `link` exit nonzero with nothing changed. It refuses to run
-as root without `--allow-root`, and refuses system directories such as `/etc`
-and `/usr`. Linked files such as `.bashrc` and setup steps run as you, so:
+as root, or elevated on Windows, without `--allow-root`, and refuses system
+directories such as `/etc`, `/usr`, and `C:\Windows`. Linked files such as
+`.bashrc` and setup steps run as you, so:
 
 - **Nobody else can change what you link.** homeskillet refuses a repository,
   source file, or symlink hop that another user could modify, following
@@ -194,11 +201,11 @@ home directory.
 
 ## Documentation
 
-- [The Manifest](docs/manifest.md): what `dotfiles.json` is for, platforms, and setup steps.
+- [The Manifest](docs/manifest.md): `bootstrap.json` and `dotfiles.json`, platforms, setup steps, and `check`.
 - [Safety](docs/safety.md): every refusal, and the reasoning behind it.
 - [Installing and Updating](docs/install.md): versions, rollback, and build details.
 - [Architecture](docs/architecture.md): ownership, execution flow, and safety limits.
 - [Development](docs/development.md): build, test, CI, and cross-repository checks.
 - [Releasing](docs/release.md): versions, the changelog, and what a pushed tag publishes.
-- [Windows](docs/windows.md): what works for Windows today and what native support needs.
+- [Windows](docs/windows.md): what is supported, setting up Windows, laying out a repository for it, and Windows with WSL.
 - [CHANGELOG.md](CHANGELOG.md): what changed in each release; [SECURITY.md](SECURITY.md): how to report a vulnerability.

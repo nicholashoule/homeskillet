@@ -7,8 +7,8 @@
 // detected. Linux can run foreign binaries through emulators such as QEMU,
 // which is not. So the result is a default, and --platform overrides it.
 //
-// Windows itself is not supported yet: a Windows build only says so (see
-// main_unsupported.go). The detection here is ready for when it is.
+// On Windows, it also finds the known folders, such as Documents, wherever
+// Windows keeps them, and whether this process may make symlinks.
 package host
 
 import (

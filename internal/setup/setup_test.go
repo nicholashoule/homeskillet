@@ -355,7 +355,7 @@ func TestRunChecksEachStepAgain(t *testing.T) {
 		t.Fatalf("second step ran after the first did its work: %v\n%s", err, output.String())
 	}
 	// A step that loosens the repository stops the steps after it.
-	loosen := config.Step{Name: "loosen", Run: config.Commands{{"sh", "-c", `chmod 666 "$HOMESKILLET_REPO/dotfiles.json"`}}}
+	loosen := config.Step{Name: "loosen", Run: config.Commands{{"sh", "-c", `chmod 666 "$HOMESKILLET_REPO/` + config.FileName + `"`}}}
 	steps = []config.Step{loosen, touch("after")}
 	repo, home = fixture(t, steps...)
 	err = Run(context.Background(), prepare(t, steps, repo, home), Options{Repo: repo, Home: home, Yes: true, Output: io.Discard})

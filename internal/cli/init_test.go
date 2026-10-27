@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Tests of init: the starter manifest it writes, that it never replaces one,
 // its dry run, and its refusal of a repository others could write to.
@@ -100,6 +100,7 @@ func TestInit(t *testing.T) {
 // TestInitNeverReplaces checks that an existing manifest, even a symlink, is
 // left alone, and that an existing home/ is kept as it is.
 func TestInitNeverReplaces(t *testing.T) {
+	requireSymlinks(t)
 	repo := emptyRepository(t)
 	path := filepath.Join(repo, config.FileName)
 	if err := os.WriteFile(path, []byte(`{"setup": []}`), 0o600); err != nil {
@@ -121,6 +122,16 @@ func TestInitNeverReplaces(t *testing.T) {
 	}
 	if _, err := initialize(repo); err == nil || !strings.Contains(err.Error(), "already exists") {
 		t.Fatalf("dangling manifest symlink: %v", err)
+	}
+
+	// A manifest under the other name is not added to either.
+	repo = emptyRepository(t)
+	if err := os.WriteFile(filepath.Join(repo, config.DotfilesFileName), []byte(`{}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initialize(repo); err == nil || !strings.Contains(err.Error(), config.DotfilesFileName+" already exists") ||
+		exists(filepath.Join(repo, config.FileName)) {
+		t.Fatalf("%s beside %s: %v", config.FileName, config.DotfilesFileName, err)
 	}
 
 	repo = emptyRepository(t)
@@ -153,6 +164,7 @@ func TestInitDryRun(t *testing.T) {
 // TestInitRefusesSharedRepository checks that init writes nothing into a
 // directory another user could write to, since the manifest decides what runs.
 func TestInitRefusesSharedRepository(t *testing.T) {
+	requireUnix(t)
 	repo := emptyRepository(t)
 	if err := os.Chmod(repo, 0o777); err != nil {
 		t.Fatal(err)
@@ -169,6 +181,7 @@ func TestInitRefusesSharedRepository(t *testing.T) {
 // exists but Load would refuse it, and accepts a symlink to a directory
 // inside the repository, as Load does.
 func TestInitRefusesUnusableHome(t *testing.T) {
+	requireSymlinks(t)
 	outside := t.TempDir()
 	for name, test := range map[string]struct {
 		make func(t *testing.T, repo string)

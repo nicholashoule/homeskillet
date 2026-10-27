@@ -1,8 +1,8 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
-// The init command, which writes a starter dotfiles.json for a repository that
-// wants platforms or setup steps. A repository with only a home/ directory
-// needs no manifest.
+// The init command, which writes a starter bootstrap.json for a repository
+// that wants platforms or setup steps. A repository with only a home/
+// directory needs no manifest.
 
 package cli
 
@@ -29,9 +29,11 @@ import (
 // still found under home/, which it creates when missing so the repository
 // works at once.
 //
-// It never replaces a manifest, and refuses a directory that another user
-// could write to, as the manifest decides what runs. With --dry-run it prints
-// the manifest instead of writing it.
+// It writes nothing into a repository that has a manifest under either name
+// (see config.FileNames), so it never replaces one or adds to one, and
+// refuses a directory that another user could write to, as the manifest
+// decides what runs. With --dry-run it prints the manifest instead of writing
+// it.
 func runInit(inv invocation, output io.Writer) error {
 	repo, err := canonicalDirectory(inv.repo)
 	if err != nil {
@@ -44,10 +46,13 @@ func runInit(inv invocation, output io.Writer) error {
 	exists := fmt.Errorf("%s already exists; init never replaces it", path)
 	// Checked first for a clear error before anything is created; the write
 	// itself refuses a manifest that appears after this (see safefile.Create).
-	if _, err := os.Lstat(path); err == nil {
-		return exists
-	} else if !errors.Is(err, fs.ErrNotExist) {
-		return err
+	for _, name := range config.FileNames() {
+		existing := filepath.Join(repo, name)
+		if _, err := os.Lstat(existing); err == nil {
+			return fmt.Errorf("%s already exists; init only starts a repository that has no manifest", existing)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
 	}
 	if err := trust.CheckRepository(repo); err != nil {
 		return err

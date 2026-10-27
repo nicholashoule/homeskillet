@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Carrying out plans that Prepare has checked: making the missing symlinks for
 // link, and removing for unlink only the symlinks that point where homeskillet
@@ -11,7 +11,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"syscall"
 )
 
 // Create removes every Orphaned link and links every Missing target to its
@@ -97,16 +96,6 @@ func removeOrphans(plans []Plan, log io.Writer) error {
 		if _, err := fmt.Fprintf(log, "unlinked\t%s\n", plan.Target); err != nil {
 			return err
 		}
-	}
-	return nil
-}
-
-// unlink removes the symlink at path. Unlike os.Remove, it never removes a
-// directory, so a directory that replaced the link after Prepare looked is
-// left alone, with an error, instead of deleted.
-func unlink(path string) error {
-	if err := syscall.Unlink(path); err != nil {
-		return &os.PathError{Op: "unlink", Path: path, Err: err}
 	}
 	return nil
 }

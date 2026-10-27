@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // The record of links, links.json in the data directory: the links each
 // repository made in each home. It lets a later run find links whose files
@@ -173,10 +173,10 @@ func Save(repo, home, data string, plans []Plan, scoped bool) error {
 	if scoped {
 		covered := map[string]bool{}
 		for _, plan := range plans {
-			covered[plan.Target] = true
+			covered[trust.PathKey(plan.Target)] = true
 		}
 		for _, link := range repos[repo] {
-			if !covered[filepath.Join(home, link.Target)] {
+			if !covered[trust.PathKey(filepath.Join(home, link.Target))] {
 				links = append(links, link)
 			}
 		}
@@ -245,12 +245,12 @@ func orphans(repo, home, data string, declared []string) ([]Plan, error) {
 	}
 	isDeclared := make(map[string]bool, len(declared))
 	for _, target := range declared {
-		isDeclared[target] = true
+		isDeclared[trust.PathKey(target)] = true
 	}
 	var found []Plan
 	for _, link := range rec.Homes[home][repo] {
 		target := filepath.Join(home, link.Target)
-		if isDeclared[target] || checkParents(home, target) != nil {
+		if isDeclared[trust.PathKey(target)] || checkParents(home, target) != nil {
 			continue
 		}
 		state, err := targetState(link.Source, target)

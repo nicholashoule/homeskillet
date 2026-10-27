@@ -6,10 +6,12 @@ install.
 
 ## Downloading a Release
 
-Each version tag publishes the static binaries `make cross` builds, for Linux
-and macOS, on the repository's Releases page: one `homeskillet-<os>-<arch>` per
-platform, with a `SHA256SUMS` file to check them against. In the commands
-below, `OWNER` is the GitHub account that hosts homeskillet.
+Each version tag publishes the static binaries `make cross` builds, for Linux,
+macOS, and Windows, on the repository's Releases page: one
+`homeskillet-<os>-<arch>` per platform, `.exe` for Windows, with a `SHA256SUMS`
+file to check them against. In the commands below, `OWNER` is the GitHub
+account that hosts homeskillet; on Windows, see
+[windows.md](windows.md#installing).
 
 ```sh
 gh release download v0.1.1 --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS
@@ -26,10 +28,10 @@ release the workflow used gives the same `SHA256SUMS`
 
 ## Shell Completion
 
-`homeskillet completion bash` and `homeskillet completion zsh` print a
-completion script for commands, options, platforms, setup step names, and
-installed versions. Load it from your shell's startup file, so it always
-matches the installed version:
+`homeskillet completion bash`, `zsh`, and `pwsh` print a completion script
+for commands, options, platforms, setup step names, and installed versions.
+Load it from your shell's startup file, so it always matches the installed
+version; for PowerShell, see [windows.md](windows.md#installing):
 
 ```sh
 # ~/.bashrc
@@ -43,7 +45,7 @@ For zsh, the script may instead be saved as `_homeskillet` in a directory on
 
 The scripts are fixed text and ask homeskillet for each completion through a
 hidden `homeskillet __complete` command, which only reads
-([safety.md](safety.md#starter-manifests-and-completion)).
+([safety.md](safety.md#starter-manifests-checks-and-completion)).
 
 ## Version Information
 
@@ -90,7 +92,8 @@ build you later tag `v0.0.1`, and an installed version is never rewritten.
 
 Each install keeps its own copy in the
 [data directory](../README.md#data-directory), and symlinks choose which one
-runs. With the default data directory:
+runs. With the default data directory, on Linux and macOS (Windows keeps
+`current` as a file instead; see [windows.md](windows.md#installing-homeskillet)):
 
 ```text
 ~/.local/share/homeskillet/versions/v0.0.1/homeskillet
@@ -120,8 +123,9 @@ homeskillet self install --dry-run    # preview; the self commands all take it
 
 A pinned version stays pinned when you install another; `self install` says
 so. If the pinned version's directory is deleted by hand, the command dangles;
-`self list` says so, and `homeskillet self use latest` repairs it. `self remove` refuses the version that runs. An installed version is never
-rewritten: installing the same version with different contents is refused,
+`self list` says so, and `homeskillet self use latest` repairs it. `self remove`
+refuses the version the command runs and the one running at the moment. An
+installed version is never rewritten: installing the same version with different contents is refused,
 except for `+dirty` builds, which name no exact build. Rebuilding a release
 from the same commit, with the same Go and platform, differs only in its build
 time, so it counts as already installed and the installed binary stays. A

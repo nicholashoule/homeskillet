@@ -10,6 +10,54 @@ what was committed; earlier releases are linked at the bottom
 
 ## [Unreleased]
 
+### Added
+
+- Run homeskillet natively on Windows 10 and 11, from PowerShell, on x64 and
+  Arm64: link, unlink, status, setup, and self install work as on Linux and
+  macOS, with Windows binaries on the Releases page. Linking needs Developer
+  Mode ([docs/windows.md](docs/windows.md)).
+- On Windows, the ownership rules read each file's owner and access control
+  list, refuse junctions, and refuse system locations such as drive roots,
+  `C:\Users`, and `C:\Windows`; an elevated terminal is refused, like root,
+  without `--allow-root`.
+- On Windows, setup steps find programs through `PATHEXT`, get `USERPROFILE`
+  set to the selected home, and can run what an earlier step installed with
+  winget, since the `PATH` installers record in the registry is appended.
+- A step's `creates` can start with `{documents}/`, for files in your
+  Documents folder such as PowerShell's profile, wherever OneDrive has moved
+  it.
+- `homeskillet completion pwsh` completes commands, options, step names, and
+  paths in PowerShell 7.3 and later.
+- At a terminal, `link` and `status` end by saying how many setup steps are
+  still pending and the command that offers them, so a freshly linked
+  repository's setup is not missed.
+- Name a manifest `bootstrap.json`, which `homeskillet init` now writes, or
+  keep `dotfiles.json`. A repository can keep both, such as its files in one
+  and the steps that install tools in the other, and they merge
+  ([docs/manifest.md](docs/manifest.md#one-file-or-two)).
+- `homeskillet check` lists every issue in a repository's manifests and files,
+  for every platform, or says it is valid, without touching a home; in a
+  script it prints one line per issue and exits nonzero.
+- Use Windows and WSL side by side: `homeskillet.exe` run from a WSL shell
+  uses the Windows repository it linked before, and each side refuses the
+  other's files with a message saying where to run instead
+  ([docs/windows.md](docs/windows.md#windows-and-wsl-together)).
+- Configure WSL from a Windows repository: files in `home/wsl/` are linked
+  into WSL's home and nowhere else, and `homeskillet wsl install`, `link`,
+  `unlink`, `setup`, and `status` install the Linux build in a distribution
+  and run there, on a checked copy of the Windows clone, or on a clone already
+  inside WSL.
+- Write a manifest's targets and `creates` as `~/.bashrc` or `$HOME/.bashrc`
+  as well as `.bashrc`, on every system.
+- A path given to homeskillet that starts with `~` means your home from any
+  shell, including `cmd`.
+
+### Changed
+
+- `provides` may not contain `\` or `:`, as it already may not contain `/`.
+- `self remove` also refuses the version that is running at the moment.
+- An error in a manifest lists every issue found in it, not only the first.
+
 ## [0.1.1] - 2026-10-26
 
 The first release. homeskillet links the files a configuration repository keeps

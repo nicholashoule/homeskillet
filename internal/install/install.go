@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Package install keeps several versions of the homeskillet binary side by
 // side and uses symlinks to choose which one runs, so an update never
@@ -6,7 +6,7 @@
 // version.
 //
 // With the default data directory, ~/.local/share/homeskillet, the layout
-// is:
+// on Linux and macOS is:
 //
 //	~/.local/share/homeskillet/versions/v0.0.1/homeskillet
 //	~/.local/share/homeskillet/versions/v0.0.2/homeskillet
@@ -29,6 +29,16 @@
 // complete binary. Installed versions are never rewritten: installing a
 // version again with different contents is refused, except for builds marked
 // +dirty, which by definition do not name one exact build.
+//
+// Windows cannot rename one link over another that leads to a directory, so
+// there the command links straight to a version's homeskillet.exe, and a new
+// link renamed over it chooses another version. current is a small file
+// naming latest or a version, and latest and previous are worked out from
+// the versions installed (see install_windows.go):
+//
+//	%USERPROFILE%\.local\share\homeskillet\versions\v0.0.3\homeskillet.exe
+//	%USERPROFILE%\.local\share\homeskillet\current      (holds "latest")
+//	%USERPROFILE%\.local\bin\homeskillet.exe            -> ...\versions\v0.0.3\homeskillet.exe
 package install
 
 import (
@@ -44,13 +54,16 @@ import (
 	"slices"
 	"strings"
 
+	"github.com/nicholashoule/homeskillet/internal/host"
 	"github.com/nicholashoule/homeskillet/internal/safefile"
 	"github.com/nicholashoule/homeskillet/internal/trust"
 	"github.com/nicholashoule/homeskillet/internal/version"
 )
 
 const (
-	// Binary is the program's file name, in Bin and in each version directory.
+	// Binary is the program's name: the name of its directory in share,
+	// and, with the system's executable suffix, of its file in Bin and in
+	// each version directory (see programFile).
 	Binary = "homeskillet"
 	// Latest names the link to the highest installed version.
 	Latest = "latest"
@@ -59,6 +72,8 @@ const (
 
 	current  = "current"
 	versions = "versions"
+	// programFile is the program's file name: Binary, plus .exe on Windows.
+	programFile = Binary + exe
 	// buildFile records, beside each binary, the version.Info of the build
 	// that installed it, which is the build being installed: Install copies
 	// the running program. Reading it costs nothing, where parsing build
@@ -113,12 +128,12 @@ func (l Layout) check() error {
 
 // Command returns the path of the homeskillet command in Bin.
 func (l Layout) Command() string {
-	return filepath.Join(l.Bin, Binary)
+	return filepath.Join(l.Bin, programFile)
 }
 
 // Program returns the path of installed version v's binary.
 func (l Layout) Program(v string) string {
-	return filepath.Join(l.Data, versions, v, Binary)
+	return filepath.Join(l.Data, versions, v, programFile)
 }
 
 func (l Layout) buildPath(v string) string {
@@ -144,12 +159,6 @@ func (l Layout) Build(v string) (version.Info, error) {
 		return version.Info{}, fmt.Errorf("%s: %w", l.buildPath(v), err)
 	}
 	return info, nil
-}
-
-// commandTarget is what the homeskillet command in Bin links to. It goes
-// through current, so choosing a version never touches Bin.
-func (l Layout) commandTarget() string {
-	return filepath.Join(l.Data, current, Binary)
 }
 
 // State is an installation as Inspect found it.
@@ -217,12 +226,11 @@ func (l Layout) Inspect() (State, error) {
 		}
 	}
 	slices.SortFunc(state.Versions, order)
-	link := filepath.Join(l.Data, current)
-	target, err := os.Readlink(link)
+	target, err := l.currentTarget()
 	switch {
-	case errors.Is(err, fs.ErrNotExist):
 	case err != nil:
-		return State{}, fmt.Errorf("%s must be a symlink: %w", link, err)
+		return State{}, err
+	case target == "":
 	case target == Latest:
 		state.Following, state.Current = true, state.Latest()
 	default:
@@ -288,11 +296,7 @@ func (l Layout) Install(executable string, build version.Info, dryRun bool, log 
 
 func (l Layout) install(source *os.File, build version.Info, dryRun bool, log io.Writer) error {
 	v := build.Version
-	info, err := source.Stat()
-	if err != nil {
-		return err
-	}
-	if err := trust.CheckProgram(source.Name(), info); err != nil {
+	if err := trust.CheckProgram(source); err != nil {
 		return err
 	}
 	for _, dir := range []string{filepath.Dir(l.Program(v)), l.Bin} {
@@ -321,6 +325,11 @@ func (l Layout) install(source *os.File, build version.Info, dryRun bool, log io
 	if err != nil {
 		return err
 	}
+	// Windows makes symlinks only in Developer Mode, and finding out from
+	// the first link would leave the version installed without its command.
+	if err := host.CheckSymlinks(); err != nil {
+		return err
+	}
 
 	// Every check has passed; from here on, only changes.
 	if err := say(log, "%s\t%s\t%s\n", action, v, l.Program(v)); err != nil {
@@ -345,36 +354,37 @@ func (l Layout) install(source *os.File, build version.Info, dryRun bool, log io
 	if err := applyLinks(links, dryRun, log); err != nil {
 		return err
 	}
+	// The version that runs from now on: latest, unless current is pinned.
+	chosen := State{Versions: after}.Latest()
 	if state.Current == "" && !state.Following {
 		if err := say(log, "current\t%s\n", Latest); err != nil {
 			return err
 		}
 		if !dryRun {
-			if err := replaceLink(Latest, filepath.Join(l.Data, current)); err != nil {
+			if err := l.setCurrent(Latest); err != nil {
 				return err
 			}
 		}
+	} else if !state.Following {
+		chosen = state.Current
 	}
 	if err := reportRunning(log, state, after, v); err != nil {
 		return err
 	}
-	if createCommand {
-		if err := say(log, "linked\t%s -> %s\n", l.Command(), l.commandTarget()); err != nil {
-			return err
-		}
-		if !dryRun {
-			if err := os.MkdirAll(l.Bin, 0o700); err != nil {
-				return err
-			}
-			// os.Symlink never replaces an existing file, so a command
-			// created since the check makes this fail rather than be lost.
-			if err := os.Symlink(l.commandTarget(), l.Command()); err != nil {
-				return err
-			}
-			return safefile.SyncDir(l.Bin)
-		}
+	return l.pointCommand(chosen, createCommand, dryRun, log)
+}
+
+// createCommand makes the homeskillet command in Bin a link to target.
+// os.Symlink never replaces an existing file, so a command created since
+// commandMissing looked makes this fail rather than be lost.
+func (l Layout) createCommand(target string) error {
+	if err := os.MkdirAll(l.Bin, 0o700); err != nil {
+		return err
 	}
-	return nil
+	if err := os.Symlink(target, l.Command()); err != nil {
+		return err
+	}
+	return safefile.SyncDir(l.Bin)
 }
 
 // reportRunning says when the version just installed is not the one that
@@ -443,11 +453,11 @@ func (l Layout) commandMissing() (bool, error) {
 		return false, err
 	}
 	if info.Mode()&os.ModeSymlink != 0 {
-		if target, err := os.Readlink(path); err == nil && target == l.commandTarget() {
+		if target, err := os.Readlink(path); err == nil && l.ownsCommand(target) {
 			return false, nil
 		}
 	}
-	return false, fmt.Errorf("%s already exists and is not homeskillet's link to %s; move it aside, then install again", path, l.commandTarget())
+	return false, fmt.Errorf("%s already exists and is not homeskillet's link to %s; move it aside, then install again", path, l.commandTargets())
 }
 
 // Use chooses what the homeskillet command runs. Latest follows the highest
@@ -492,13 +502,21 @@ func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 	if err != nil {
 		return err
 	}
+	if err := host.CheckSymlinks(); err != nil {
+		return err
+	}
 	if err := applyLinks(links, dryRun, log); err != nil {
 		return err
 	}
-	if err := say(log, "current\t%s\n", line); err != nil || dryRun {
+	if err := say(log, "current\t%s\n", line); err != nil {
 		return err
 	}
-	return replaceLink(target, filepath.Join(l.Data, current))
+	if !dryRun {
+		if err := l.setCurrent(target); err != nil {
+			return err
+		}
+	}
+	return l.pointCommand(cmp.Or(pinned, state.Latest()), false, dryRun, log)
 }
 
 // Remove deletes installed version v and recomputes latest and previous. It
@@ -525,6 +543,12 @@ func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 	if v == state.Current {
 		return fmt.Errorf("%s is the version that runs; choose another first with homeskillet self use", v)
 	}
+	// The program running now may be another version, run by its path.
+	// Windows cannot delete a running program, and would refuse only after
+	// part of the version was gone.
+	if running, err := os.Executable(); err == nil && trust.SamePath(running, l.Program(v)) {
+		return fmt.Errorf("%s is running now; run homeskillet self remove %s from another version", v, v)
+	}
 	dir := filepath.Dir(l.Program(v))
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -535,7 +559,7 @@ func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 		// creates no directories here, and removing one would fail only
 		// after latest and previous had moved, so any directory stops
 		// Remove before it changes anything.
-		if name := entry.Name(); entry.IsDir() || name != Binary && name != buildFile && !strings.HasPrefix(name, safefile.TempPrefix) {
+		if name := entry.Name(); entry.IsDir() || name != programFile && name != buildFile && !strings.HasPrefix(name, safefile.TempPrefix) {
 			return fmt.Errorf("%s contains %q, which homeskillet did not create; remove the directory by hand", dir, name)
 		}
 	}
@@ -576,30 +600,6 @@ func (l Layout) checkData() error {
 type linkChange struct {
 	name, version string
 	path, target  string
-}
-
-// linkChanges lists the changes that make latest and previous name the
-// highest and second-highest of installed, which is sorted by order. An
-// existing file at either path that is not a symlink is an error.
-func (l Layout) linkChanges(installed []string) ([]linkChange, error) {
-	state := State{Versions: installed}
-	var changes []linkChange
-	for name, v := range map[string]string{Latest: state.Latest(), Previous: state.Previous()} {
-		change := linkChange{name: name, version: v, path: filepath.Join(l.Data, name)}
-		if v != "" {
-			change.target = filepath.Join(versions, v)
-		}
-		target, err := os.Readlink(change.path)
-		if err != nil && !errors.Is(err, fs.ErrNotExist) {
-			return nil, fmt.Errorf("%s must be a symlink: %w", change.path, err)
-		}
-		if target != change.target {
-			changes = append(changes, change)
-		}
-	}
-	// Map order is random; report latest before previous every time.
-	slices.SortFunc(changes, func(a, b linkChange) int { return strings.Compare(a.name, b.name) })
-	return changes, nil
 }
 
 func applyLinks(changes []linkChange, dryRun bool, log io.Writer) error {

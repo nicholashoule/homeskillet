@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Shell completion: the bash and zsh scripts the completion command prints,
 // and the hidden __complete command they call. Candidates come from the same
@@ -28,11 +28,12 @@ import (
 const completeCommand = "__complete"
 
 // completionScripts holds the script completion writes for each shell: bash
-// and zsh, the shells homeskillet supports (see the README). Each is a thin
+// and zsh, the shells homeskillet supports on Linux and macOS, and pwsh,
+// PowerShell, the one it supports on Windows (see the README). Each is a thin
 // wrapper that asks homeskillet for its candidates (see complete), so
 // completion matches the installed version and needs no second copy of the
 // commands and options to keep in step.
-var completionScripts = map[string]string{"bash": bashCompletion, "zsh": zshCompletion}
+var completionScripts = map[string]string{"bash": bashCompletion, "zsh": zshCompletion, "pwsh": powershellCompletion}
 
 // bashCompletion is the bash script. It avoids what bash 4 added, such as
 // mapfile, so it also works with bash 3.2, which macOS ships; compopt, also
@@ -120,6 +121,66 @@ if [[ ${funcstack[1]} == _homeskillet ]]; then
 elif (( $+functions[compdef] )); then
     compdef _homeskillet homeskillet
 fi
+`
+
+// powershellCompletion is the PowerShell script, for PowerShell 7.3 and later on
+// any system. Earlier versions drop an empty argument to a program, and the
+// empty word being completed after a space would go missing with it. It holds
+// no backquote, PowerShell's escape character, since Go's raw string cannot.
+const powershellCompletion = `# PowerShell completion for homeskillet, written by: homeskillet completion pwsh
+# Copyright 2026 nicholashoule
+# SPDX-License-Identifier: Apache-2.0
+# Load it from your profile, in PowerShell 7.3 or later:
+#   if (Get-Command homeskillet -ErrorAction SilentlyContinue) {
+#       homeskillet completion pwsh | Out-String | Invoke-Expression
+#   }
+# homeskillet works out the candidates itself, so they match the installed
+# version.
+Register-ArgumentCompleter -Native -CommandName homeskillet, homeskillet.exe -ScriptBlock {
+    param($wordToComplete, $commandAst, $cursorPosition)
+    # The words after the program name, ending with the word being completed,
+    # which is empty when the cursor follows a space.
+    $words = @(
+        foreach ($element in $commandAst.CommandElements | Select-Object -Skip 1) {
+            if ($element.Extent.EndOffset -ge $cursorPosition) { break }
+            if ($element -is [System.Management.Automation.Language.StringConstantExpressionAst]) {
+                $element.Value
+            } else {
+                $element.Extent.Text
+            }
+        }
+    ) + [string]$wordToComplete
+    # homeskillet writes UTF-8, which PowerShell reads only when told to.
+    $encoding = [Console]::OutputEncoding
+    try { [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false) } catch { }
+    try {
+        $reply = @(& homeskillet __complete @words 2>$null)
+    } catch {
+        $reply = @()
+    } finally {
+        try { [Console]::OutputEncoding = $encoding } catch { }
+    }
+    if ($reply.Count -eq 0) { return }
+    # A value after --option= is completed alone, and PowerShell replaces the
+    # whole word, so the option goes back in front of each candidate.
+    $prefix, $value = '', [string]$wordToComplete
+    if ($wordToComplete -match '^(--?[^=]+=)(.*)$') { $prefix, $value = $Matches[1], $Matches[2] }
+    foreach ($candidate in @($reply | Select-Object -Skip 1)) {
+        $text = $prefix + $candidate
+        if ($text -match '[\s''"$;&(){}@,|<>#]') { $text = "'" + ($text -replace "'", "''") + "'" }
+        [System.Management.Automation.CompletionResult]::new($text, $candidate, 'ParameterValue', $candidate)
+    }
+    # Names on disk come from PowerShell's own completer, which quotes them.
+    # When nothing is offered at all, PowerShell completes file names, as it
+    # does for every program.
+    if ($reply[0] -eq ':dirs' -or $reply[0] -eq ':files') {
+        foreach ($result in [System.Management.Automation.CompletionCompleters]::CompleteFilename($value)) {
+            if ($reply[0] -eq ':files' -or $result.ResultType -eq 'ProviderContainer') {
+                [System.Management.Automation.CompletionResult]::new($prefix + $result.CompletionText, $result.ListItemText, $result.ResultType, $result.ToolTip)
+            }
+        }
+    }
+}
 `
 
 // writeCompletion writes the completion script for shell, for completion.
@@ -262,7 +323,11 @@ func arguments(inv invocation, command string, rest []string, current string) (s
 		}
 		names := slices.DeleteFunc(stepNames(inv), func(name string) bool { return slices.Contains(rest, name) })
 		return ":none", matching(names, current)
-	case command == "init" && len(rest) == 0:
+	case (command == "init" || command == "check") && len(rest) == 0:
+		return ":dirs", nil
+	case command == "wsl" && len(rest) == 0:
+		return ":none", matching(wslCommands, current)
+	case command == "wsl" && len(rest) == 1 && rest[0] != "install":
 		return ":dirs", nil
 	case command == "self" && len(rest) == 0:
 		return ":none", matching(selfCommands, current)
@@ -280,10 +345,11 @@ func arguments(inv invocation, command string, rest []string, current string) (s
 
 // pathLike reports whether word, partly typed, is heading for a path rather
 // than a command or setup step name, neither of which starts with ".", "/",
-// or "~" or contains "/".
+// or "~" or is a path by isPath, as one with a "/", or on Windows a "\" or a
+// drive, is.
 func pathLike(word string) bool {
 	return strings.HasPrefix(word, ".") || strings.HasPrefix(word, "/") || strings.HasPrefix(word, "~") ||
-		strings.Contains(word, "/")
+		isPath(word)
 }
 
 // joinValues puts back together an option and its value that bash split at
@@ -400,7 +466,7 @@ func installedVersions(inv invocation) []string {
 // resolves it. Running as root, completion reads nothing without
 // --allow-root, as every command refuses root without it.
 func completionHome(inv invocation) (string, bool) {
-	if os.Geteuid() == 0 && !inv.root {
+	if privileged() && !inv.root {
 		return "", false
 	}
 	path := inv.home

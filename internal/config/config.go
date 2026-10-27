@@ -2,11 +2,12 @@
 // homeskillet links into a home directory and the setup steps it offers to
 // run.
 //
-// A repository declares them in a dotfiles.json manifest at its root, or
-// relies on a convention: when the manifest is absent or omits "files", every
-// file under the repository's home directory is linked to the same relative
-// path in the user's home, so home/.bashrc becomes ~/.bashrc. Setup steps
-// always come from the manifest, because commands are never inferred.
+// A repository declares them in a manifest at its root, bootstrap.json,
+// dotfiles.json, or both, merged, or relies on a convention: when no manifest
+// lists "files", every file under the repository's home directory is linked
+// to the same relative path in the user's home, so home/.bashrc becomes
+// ~/.bashrc. Setup steps always come from a manifest, because commands are
+// never inferred.
 //
 // Validation here is lexical: it looks only at the manifest's text and at file
 // names, so it applies to every entry regardless of platform. Checks that
@@ -36,11 +37,35 @@ import (
 )
 
 const (
-	// FileName is the manifest's name at the configuration repository root.
-	FileName = "dotfiles.json"
+	// FileName is the manifest's name at the configuration repository root,
+	// and the name init gives a new one: besides the dotfiles to link, a
+	// manifest lists the setup steps that install what they use.
+	FileName = "bootstrap.json"
+	// DotfilesFileName is the manifest's other name, the one it first had. A
+	// repository may use either name or both, for example listing its files
+	// in dotfiles.json and its setup steps in bootstrap.json; Load merges
+	// them (see Manifest.merge).
+	DotfilesFileName = "dotfiles.json"
 	// HomeDir is the repository directory that mirrors a home directory. Its
 	// files are linked when the manifest is absent or omits "files".
 	HomeDir = "home"
+	// WSLHomeDir is the directory in HomeDir that mirrors the home of a WSL
+	// distribution, for a Windows repository that configures WSL as well.
+	// When it exists, its files are linked on Linux alone, which is what WSL
+	// runs, whatever the manifest's platforms say, and HomeDir's other files
+	// on the other systems the manifest covers.
+	WSLHomeDir = HomeDir + "/wsl"
+	// HomePrefix may start a path a manifest gives relative to the home, a
+	// listed file's target or a step's creates, to say so the same way on
+	// every system: "~/.bashrc" is ".bashrc", whether the home is /home/you
+	// or C:\Users\you. "$HOME/" and "${HOME}/" may too (see fromHome).
+	HomePrefix = "~/"
+	// DocumentsPrefix starts a step's creates path that is relative to the
+	// user's Documents folder rather than the home directory, such as
+	// {documents}/PowerShell/profile.ps1, where PowerShell reads its profile.
+	// On Windows, OneDrive and administrators can move Documents out of the
+	// profile, so package setup asks Windows where it is.
+	DocumentsPrefix = "{documents}/"
 )
 
 // Manifest is what a repository declares, as returned by Load.
@@ -70,6 +95,9 @@ type Entry struct {
 	// means the manifest's default. To apply everywhere despite a narrower
 	// default, list every platform.
 	Platforms []string `json:"platforms,omitempty"`
+	// from names the manifest that lists the entry, for errors. It is empty
+	// for a file found under HomeDir, whose path says where it is.
+	from string
 }
 
 // Step is a command that prepares the environment, such as installing a tool
@@ -87,12 +115,15 @@ type Step struct {
 	// Platforms, when set, replaces Manifest.Platforms for this step, as
 	// for Entry.Platforms.
 	Platforms []string `json:"platforms,omitempty"`
-	// Creates is a path relative to the home directory. If it exists, the
-	// step is already done and is not offered.
+	// Creates is a path relative to the home directory, or, starting with
+	// DocumentsPrefix, relative to the user's Documents folder. If it exists,
+	// the step is already done and is not offered.
 	Creates string `json:"creates,omitempty"`
 	// Provides is a command name. If it is found on PATH, the step is already
 	// done and is not offered.
 	Provides string `json:"provides,omitempty"`
+	// from names the manifest that lists the step, for errors.
+	from string
 }
 
 // ErrNothingToManage is returned by Load for a directory with nothing to
@@ -101,12 +132,16 @@ var ErrNothingToManage = errors.New("not a configuration repository")
 
 // Load reads the declarations of the configuration repository rooted at repo.
 //
-// The manifest is optional. Without one, or when it omits "files", Load
-// discovers the files under HomeDir, in lexical order. An explicit empty list,
-// "files": [], links nothing, for a repository that only declares setup
+// The manifest is optional, and may be split between FileName and
+// DotfilesFileName, which Load merges. When no manifest lists "files", Load
+// discovers the files under HomeDir, in lexical order. An explicit empty
+// list, "files": [], links nothing, for a repository that only declares setup
 // steps. A repository with neither a manifest nor a home directory is an
 // error, not an empty configuration, because it most likely means the wrong
 // directory was given.
+//
+// The error joins every issue found, so that one run shows all there is to
+// fix; Issues splits it.
 //
 // Every read goes through an os.Root, so neither a symlinked manifest nor a
 // symlink under HomeDir can make Load read from outside repo.
@@ -120,7 +155,7 @@ func Load(repo string) (Manifest, error) {
 }
 
 func load(root *os.Root) (Manifest, error) {
-	manifest, err := readManifest(root)
+	manifest, found, err := readManifests(root)
 	if err != nil {
 		return Manifest{}, err
 	}
@@ -128,7 +163,7 @@ func load(root *os.Root) (Manifest, error) {
 	// explicit [] decodes to an empty, non-nil slice and disables discovery.
 	hasHome, listed := false, manifest.Files != nil
 	if !listed {
-		manifest.Files, hasHome, err = discover(root)
+		manifest.Files, hasHome, err = manifest.discoverAll(root, homes(root))
 		if err != nil {
 			return Manifest{}, err
 		}
@@ -141,34 +176,162 @@ func load(root *os.Root) (Manifest, error) {
 		// neither a manifest nor a home directory, from a manifest that lists
 		// nothing. HomeDir gets its slash so that it never reads as the home
 		// directory homeskillet links into.
-		why := fmt.Sprintf("it has no %s and no %s/ directory", FileName, HomeDir)
-		if _, err := root.Lstat(FileName); err == nil && listed {
-			why = fmt.Sprintf("its %s lists no files or setup steps", FileName)
-		} else if err == nil {
-			why = fmt.Sprintf("it has no %s/ directory, and its %s lists no setup steps", HomeDir, FileName)
+		why := fmt.Sprintf("it has no %s or %s and no %s/ directory", FileName, DotfilesFileName, HomeDir)
+		names, verb := strings.Join(found, " and "), "lists"
+		if len(found) > 1 {
+			verb = "list"
+		}
+		switch {
+		case len(found) > 0 && listed:
+			why = fmt.Sprintf("its %s %s no files or setup steps", names, verb)
+		case len(found) > 0:
+			why = fmt.Sprintf("it has no %s/ directory, and its %s %s no setup steps", HomeDir, names, verb)
 		}
 		return Manifest{}, fmt.Errorf("%s is %w: %s", root.Name(), ErrNothingToManage, why)
 	}
 	return manifest, nil
 }
 
-// readManifest decodes and validates FileName from root. It returns an empty
-// Manifest when the repository has none. A manifest that exists but cannot be
-// read, such as a dangling symlink, is an error rather than an absent
-// manifest, so a broken manifest never silently falls back to discovery.
-func readManifest(root *os.Root) (Manifest, error) {
-	if _, err := root.Lstat(FileName); errors.Is(err, fs.ErrNotExist) {
-		return Manifest{}, nil
+// FileNames returns the names a manifest may have at the repository root, in
+// the order Load merges them.
+func FileNames() []string {
+	return []string{FileName, DotfilesFileName}
+}
+
+// Issues splits an error from Load into the issues it joins, in the order
+// they were found. Any other error is a single issue. Load joins issues only
+// at the top, never inside an error that adds its own words, so splitting
+// what errors.As finds keeps each issue whole.
+func Issues(err error) []error {
+	if err == nil {
+		return nil
 	}
-	file, err := root.Open(FileName)
+	var joined interface{ Unwrap() []error }
+	if !errors.As(err, &joined) {
+		return []error{err}
+	}
+	var issues []error
+	for _, issue := range joined.Unwrap() {
+		issues = append(issues, Issues(issue)...)
+	}
+	return issues
+}
+
+// readManifests reads every manifest root has (see FileNames) and merges
+// them, returning the names it found. What is valid in each is merged even
+// when the other has issues, so that the error lists every issue in both,
+// those of merging included.
+func readManifests(root *os.Root) (Manifest, []string, error) {
+	var (
+		merged Manifest
+		found  []string
+		issues []error
+	)
+	for _, name := range FileNames() {
+		manifest, exists, err := readManifest(root, name)
+		if !exists {
+			continue
+		}
+		found = append(found, name)
+		if err != nil {
+			issues = append(issues, err)
+		}
+		issues = append(issues, merged.merge(manifest)...)
+	}
+	return merged, found, errors.Join(issues...)
+}
+
+// readManifest decodes and validates the manifest called name in root, and
+// reports whether it exists. A manifest that exists but cannot be read, such
+// as a dangling symlink, is an error rather than an absent manifest, so a
+// broken manifest never silently falls back to discovery.
+func readManifest(root *os.Root, name string) (Manifest, bool, error) {
+	if _, err := root.Lstat(name); errors.Is(err, fs.ErrNotExist) {
+		return Manifest{}, false, nil
+	}
+	// The error names the file already.
+	file, err := root.Open(name)
 	if err != nil {
-		return Manifest{}, err
+		return Manifest{}, true, err
 	}
+	// Not errors.Join: Issues splits joined errors, and this is one issue.
 	data, err := safefile.ReadAll(file, maxManifest)
-	if err := errors.Join(err, file.Close()); err != nil {
-		return Manifest{}, fmt.Errorf("%s: %w", FileName, err)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
 	}
-	return decode(bytes.NewReader(data))
+	if err != nil {
+		return Manifest{}, true, fmt.Errorf("%s: %w", name, err)
+	}
+	manifest, err := decode(bytes.NewReader(data), name)
+	return manifest, true, err
+}
+
+// merge adds next, a manifest read after the ones already in m, to m, and
+// returns the issues that keep them apart. Platforms and files are combined,
+// with next's files after m's and next's steps after m's, so a repository can
+// keep its files in one manifest and its setup steps in the other. An entry
+// or step m already has, the same in every field, is skipped, so a line
+// copied into both counts once. Two different steps with one name are an
+// issue rather than one silently replacing the other: steps are chosen by
+// name, and the one left out could be the one just edited.
+func (m *Manifest) merge(next Manifest) []error {
+	for _, platform := range next.Platforms {
+		if !slices.Contains(m.Platforms, platform) {
+			m.Platforms = append(m.Platforms, platform)
+		}
+	}
+	var issues []error
+	// A listed "files", even an empty one, turns discovery off (see load),
+	// so it must stay non-nil when merged.
+	if next.Files != nil {
+		earlier := m.Files
+		if m.Files == nil {
+			m.Files = []Entry{}
+		}
+		for _, entry := range next.Files {
+			if !slices.ContainsFunc(earlier, entry.same) {
+				m.Files = append(m.Files, entry)
+			}
+		}
+	}
+	earlier := m.Setup
+	for _, step := range next.Setup {
+		i := slices.IndexFunc(earlier, func(other Step) bool { return other.Name == step.Name })
+		switch {
+		case i < 0:
+			m.Setup = append(m.Setup, step)
+		case !earlier[i].same(step):
+			issues = append(issues, fmt.Errorf("%ssetup step %s is listed twice, differently; keep one", origin(earlier[i].from, step.from), step.Name))
+		}
+	}
+	return issues
+}
+
+// same reports whether e and other are the same entry, field for field.
+func (e Entry) same(other Entry) bool {
+	return e.Source == other.Source && e.Target == other.Target && slices.Equal(e.Platforms, other.Platforms)
+}
+
+// same reports whether s and other are the same step, field for field.
+func (s Step) same(other Step) bool {
+	return s.Name == other.Name && s.Creates == other.Creates && s.Provides == other.Provides &&
+		slices.Equal(s.Platforms, other.Platforms) && slices.EqualFunc(s.Run, other.Run, slices.Equal)
+}
+
+// origin starts an error about entries or steps with the manifests that list
+// them, as "bootstrap.json: " or "bootstrap.json and dotfiles.json: ". It is
+// empty for files found under HomeDir, whose paths say where they are.
+func origin(from ...string) string {
+	var names []string
+	for _, name := range from {
+		if name != "" && !slices.Contains(names, name) {
+			names = append(names, name)
+		}
+	}
+	if len(names) == 0 {
+		return ""
+	}
+	return strings.Join(names, " and ") + ": "
 }
 
 // maxManifest bounds what readManifest reads. A manifest listing thousands of
@@ -177,57 +340,184 @@ func readManifest(root *os.Root) (Manifest, error) {
 // it can exhaust memory.
 const maxManifest = 1 << 20
 
-// decode parses and validates a manifest.
+// decode parses and validates the manifest called name. It returns every
+// issue it finds, joined, rather than only the first, with the manifest
+// without the entries and steps that have them, so the rest can still be
+// merged and checked against the other manifest.
 //
 // Decoding is strict. Unknown fields and trailing values are rejected so that
 // a typo such as a singular "platform" key fails loudly instead of silently
 // linking a file on every operating system.
-func decode(r io.Reader) (Manifest, error) {
+func decode(r io.Reader, name string) (Manifest, error) {
 	var manifest Manifest
 	decoder := json.NewDecoder(r)
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&manifest); err != nil {
-		return Manifest{}, fmt.Errorf("%s: %w", FileName, err)
+		return Manifest{}, fmt.Errorf("%s: %w", name, err)
 	}
 	if err := decoder.Decode(new(any)); !errors.Is(err, io.EOF) {
-		return Manifest{}, fmt.Errorf("%s must contain exactly one JSON object", FileName)
+		return Manifest{}, fmt.Errorf("%s must contain exactly one JSON object", name)
 	}
 	// Errors name entries by position rather than quoting them, because a
 	// rejected value may itself be unsafe to print.
+	var issues []error
 	if err := validatePlatforms(manifest.Platforms); err != nil {
-		return Manifest{}, fmt.Errorf("%s platforms: %w", FileName, err)
+		issues = append(issues, fmt.Errorf("%s platforms: %w", name, err))
+		manifest.Platforms = nil
 	}
+	// Slicing keeps a listed "files", even an empty one, non-nil (see load),
+	// and an omitted one nil.
+	files := manifest.Files[:0:0]
 	for i, entry := range manifest.Files {
-		if err := entry.validate(); err != nil {
-			return Manifest{}, fmt.Errorf("%s file %d: %w", FileName, i+1, err)
+		entry.from = name
+		entry.Target = fromHome(entry.Target)
+		if unexpanded(entry.Source) || unexpanded(entry.Target) {
+			issues = append(issues, fmt.Errorf(`%s file %d: a source is relative to the repository and a target to the home, as ".bashrc", "~/.bashrc", or "$HOME/.bashrc"; `+
+				"neither may otherwise start with ~, $, or %%, as homeskillet expands no variables", name, i+1))
+			continue
 		}
+		if err := entry.validate(); err != nil {
+			issues = append(issues, fmt.Errorf("%s file %d: %w", name, i+1, err))
+			continue
+		}
+		files = append(files, entry)
 	}
+	manifest.Files = files
+	var steps []Step
 	names := make(map[string]bool)
 	for i, step := range manifest.Setup {
-		if err := step.validate(); err != nil {
-			return Manifest{}, fmt.Errorf("%s setup step %d: %w", FileName, i+1, err)
-		}
-		if names[step.Name] {
-			return Manifest{}, fmt.Errorf("%s setup step %d: duplicate name %s", FileName, i+1, step.Name)
+		step.from = name
+		step.Creates = fromHome(step.Creates)
+		switch err := step.validate(); {
+		case err != nil:
+			issues = append(issues, fmt.Errorf("%s setup step %d: %w", name, i+1, err))
+		// Only a valid name is printed, as it cannot rewrite the terminal.
+		case names[step.Name]:
+			issues = append(issues, fmt.Errorf("%s setup step %d: duplicate name %s", name, i+1, step.Name))
+		default:
+			steps = append(steps, step)
 		}
 		names[step.Name] = true
 	}
-	return manifest, nil
+	manifest.Setup = steps
+	return manifest, errors.Join(issues...)
 }
 
-// discover lists every file under HomeDir as an entry linking it to the same
-// relative path in the home directory. It reports whether HomeDir exists.
+// homes returns the directories other than HomeDir whose files are linked on
+// one operating system alone, by system: WSLHomeDir, for Linux, when root
+// has it.
+func homes(root *os.Root) map[string]string {
+	if info, err := root.Stat(WSLHomeDir); err == nil && info.IsDir() {
+		return map[string]string{"linux": WSLHomeDir}
+	}
+	return nil
+}
+
+// homeRoot is a directory files are found under and the operating systems
+// whose homes they are linked into (see homes).
+type homeRoot struct {
+	dir     string
+	systems []string
+}
+
+// homeRoots returns the directories files are found under, HomeDir's first,
+// each with the operating systems it serves.
+func homeRoots(homes map[string]string) []homeRoot {
+	var roots []homeRoot
+	for _, system := range operatingSystems {
+		dir, ok := homes[system]
+		if !ok {
+			dir = HomeDir
+		}
+		i := slices.IndexFunc(roots, func(r homeRoot) bool { return r.dir == dir })
+		if i < 0 {
+			roots = append(roots, homeRoot{dir: dir})
+			i = len(roots) - 1
+		}
+		roots[i].systems = append(roots[i].systems, system)
+	}
+	slices.SortStableFunc(roots, func(a, b homeRoot) int {
+		return boolOrder(a.dir != HomeDir) - boolOrder(b.dir != HomeDir)
+	})
+	return roots
+}
+
+// boolOrder is 1 for true and 0 for false, for sorting.
+func boolOrder(b bool) int {
+	if b {
+		return 1
+	}
+	return 0
+}
+
+// discoverAll lists the files under every directory files are found under
+// (see homes) and reports whether any of them exists. With HomeDir alone,
+// its entries take the manifest's platforms as listed ones do. Otherwise
+// each directory's entries apply to the systems it serves, as their own
+// platforms: WSLHomeDir's to Linux, whatever the default says, since that is
+// what the directory is for, and HomeDir's to the default's other systems.
+// A directory never lists the files of another one inside it, so
+// WSLHomeDir's files are never also linked from HomeDir.
+func (m Manifest) discoverAll(root *os.Root, homes map[string]string) (entries []Entry, found bool, err error) {
+	if len(homes) == 0 {
+		return discover(root, HomeDir, nil, nil)
+	}
+	roots := homeRoots(homes)
+	for _, r := range roots {
+		var inside []string
+		for _, other := range roots {
+			if strings.HasPrefix(other.dir, r.dir+"/") {
+				inside = append(inside, other.dir)
+			}
+		}
+		platforms := m.rootPlatforms(r, homes)
+		if len(platforms) == 0 {
+			continue
+		}
+		listed, exists, err := discover(root, r.dir, inside, platforms)
+		if err != nil {
+			return nil, false, err
+		}
+		entries = append(entries, listed...)
+		found = found || exists
+	}
+	return entries, found, nil
+}
+
+// rootPlatforms returns the platforms the files found under r apply to (see
+// discoverAll): each system that has r as a home of its own, and each other
+// system r serves that the manifest's default covers, with the default's
+// architecture.
+func (m Manifest) rootPlatforms(r homeRoot, homes map[string]string) []string {
+	var platforms []string
+	for _, system := range r.systems {
+		if _, own := homes[system]; own || len(m.Platforms) == 0 {
+			platforms = append(platforms, system)
+			continue
+		}
+		for _, value := range m.Platforms {
+			if p, err := ParsePlatform(value); err == nil && p.OS == system && !slices.Contains(platforms, value) {
+				platforms = append(platforms, value)
+			}
+		}
+	}
+	return platforms
+}
+
+// discover lists every file under dir, except under the directories in skip,
+// as an entry linking it to the same relative path in the home directory,
+// with platforms as its own. It reports whether dir exists.
 //
 // Symlinks are listed, not followed. Package link then requires each source,
 // listed or discovered, to resolve to a regular file inside the repository,
 // and checks the ownership of every directory from the repository root down to
 // it. So a file that another user added, or placed in a directory another user
 // can write, is still refused even though no manifest names it.
-func discover(root *os.Root) (entries []Entry, found bool, err error) {
+func discover(root *os.Root, dir string, skip, platforms []string) (entries []Entry, found bool, err error) {
 	// Stat rather than Lstat: a home directory that is a symlink within the
 	// repository, for example to one of several per-machine directories, is
 	// fine, and os.Root refuses one that leads outside.
-	info, err := root.Stat(HomeDir)
+	info, err := root.Stat(dir)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, false, nil
 	}
@@ -235,9 +525,9 @@ func discover(root *os.Root) (entries []Entry, found bool, err error) {
 		return nil, false, err
 	}
 	if !info.IsDir() {
-		return nil, false, fmt.Errorf("%s in %s is not a directory", HomeDir, root.Name())
+		return nil, false, fmt.Errorf("%s in %s is not a directory", dir, root.Name())
 	}
-	err = fs.WalkDir(root.FS(), HomeDir, func(name string, d fs.DirEntry, err error) error {
+	err = fs.WalkDir(root.FS(), dir, func(name string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}
@@ -247,7 +537,7 @@ func discover(root *os.Root) (entries []Entry, found bool, err error) {
 		if !Printable(name) {
 			return fmt.Errorf("%q: names must not contain control or formatting characters", name)
 		}
-		if name != HomeDir && ignored(d.Name()) {
+		if name != dir && ignored(d.Name()) || d.IsDir() && slices.Contains(skip, name) {
 			if d.IsDir() {
 				return fs.SkipDir
 			}
@@ -257,10 +547,11 @@ func discover(root *os.Root) (entries []Entry, found bool, err error) {
 			return nil
 		}
 		// fs.FS names always use forward slashes and are rooted at the
-		// repository, so the target is the name without the HomeDir prefix.
+		// repository, so the target is the name without the directory.
 		entry := Entry{
-			Source: filepath.FromSlash(name),
-			Target: filepath.FromSlash(strings.TrimPrefix(name, HomeDir+"/")),
+			Source:    filepath.FromSlash(name),
+			Target:    filepath.FromSlash(strings.TrimPrefix(name, dir+"/")),
+			Platforms: platforms,
 		}
 		// The same lexical rules as a listed entry, so the two can never
 		// drift apart.
@@ -349,11 +640,10 @@ type Platform struct {
 	Arch string // "" means any architecture
 }
 
-// The operating systems and architectures a platform may name. homeskillet
-// runs only on Linux and macOS so far, but a manifest may already target
-// windows, and --platform windows checks such a repository from Linux or
-// macOS: its files link into a scratch home and its steps can be listed, never
-// run. See docs/windows.md for what running on Windows still needs.
+// The operating systems and architectures a platform may name. With
+// --platform, homeskillet acts for one of them from another, as --platform
+// windows checks a Windows repository from Linux or macOS: its files link into
+// a scratch home and its steps can be listed, never run.
 var (
 	operatingSystems = []string{"linux", "darwin", "windows"}
 	architectures    = []string{"amd64", "arm64"}
@@ -421,32 +711,64 @@ func (m Manifest) targets(own []string, goos string) bool {
 // meant for Windows (see targets), so a repository checked on Linux or macOS
 // cannot hold names that Windows could not create: device names such as CON
 // or NUL, names ending in a dot or a space, the characters <>:"|?*\, and two
-// targets that differ only in case, which Windows treats as one file.
+// targets that differ only in case, which Windows treats as one file. A
+// repository with anything for Windows is cloned there, so the source of
+// every file in it is held to the same rules, whatever system the file is
+// for, as a Windows repository's home/wsl is.
+//
+// It returns every issue, joined, rather than only the first.
 func (m Manifest) checkWindowsNames() error {
-	seen := make(map[string]string)
+	var issues []error
+	cloned := m.forWindows()
+	targets, sources := make(map[string]Entry), make(map[string]Entry)
 	for _, entry := range m.Files {
-		if !m.targets(entry.Platforms, "windows") {
+		meant := m.targets(entry.Platforms, "windows")
+		if !meant && !cloned {
 			continue
 		}
-		for _, path := range []string{entry.Source, entry.Target} {
+		paths := []string{entry.Source}
+		if meant {
+			paths = append(paths, entry.Target)
+		}
+		for _, path := range paths {
 			if err := windowsPath(path); err != nil {
-				return fmt.Errorf("%s: %q cannot exist on Windows: %w", FileName, path, err)
+				issues = append(issues, fmt.Errorf("%s%q cannot exist on Windows: %w", origin(entry.from), path, err))
 			}
 		}
-		key := strings.ToLower(filepath.ToSlash(entry.Target))
-		if other, ok := seen[key]; ok {
-			return fmt.Errorf("%s: targets %q and %q are the same file on Windows, which ignores case", FileName, other, entry.Target)
+		key := strings.ToLower(filepath.ToSlash(entry.Source))
+		if other, ok := sources[key]; !ok {
+			sources[key] = entry
+		} else if other.Source != entry.Source {
+			issues = append(issues, fmt.Errorf("%ssources %q and %q are the same file on Windows, which ignores case",
+				origin(other.from, entry.from), other.Source, entry.Source))
 		}
-		seen[key] = entry.Target
+		if !meant {
+			continue
+		}
+		key = strings.ToLower(filepath.ToSlash(entry.Target))
+		if other, ok := targets[key]; ok {
+			issues = append(issues, fmt.Errorf("%stargets %q and %q are the same file on Windows, which ignores case",
+				origin(other.from, entry.from), other.Target, entry.Target))
+			continue
+		}
+		targets[key] = entry
 	}
 	for _, step := range m.Setup {
 		if step.Creates != "" && m.targets(step.Platforms, "windows") {
-			if err := windowsPath(step.Creates); err != nil {
-				return fmt.Errorf("%s setup step %s: creates %q cannot exist on Windows: %w", FileName, step.Name, step.Creates, err)
+			if err := windowsPath(strings.TrimPrefix(step.Creates, DocumentsPrefix)); err != nil {
+				issues = append(issues, fmt.Errorf("%ssetup step %s: creates %q cannot exist on Windows: %w", origin(step.from), step.Name, step.Creates, err))
 			}
 		}
 	}
-	return nil
+	return errors.Join(issues...)
+}
+
+// forWindows reports whether anything in m is meant for Windows, so that the
+// repository is cloned there (see checkWindowsNames).
+func (m Manifest) forWindows() bool {
+	return m.targets(nil, "windows") ||
+		slices.ContainsFunc(m.Files, func(entry Entry) bool { return m.targets(entry.Platforms, "windows") }) ||
+		slices.ContainsFunc(m.Setup, func(step Step) bool { return m.targets(step.Platforms, "windows") })
 }
 
 // windowsReserved are the device names Windows reserves in every directory,
@@ -491,6 +813,31 @@ func validatePlatforms(platforms []string) error {
 // symlinks can only be seen on disk and are caught in package link.
 func localFile(path string) bool {
 	return filepath.IsLocal(path) && filepath.Clean(path) != "."
+}
+
+// homePrefixes are the ways a manifest path may say it is relative to the
+// home: HomePrefix, and $HOME as shells write it. Each is a fixed prefix
+// that fromHome removes, never a variable that is expanded.
+var homePrefixes = []string{HomePrefix, "$HOME/", "${HOME}/"}
+
+// fromHome returns p, a path relative to the home, in the one form the rest
+// of homeskillet takes, without any of homePrefixes.
+func fromHome(p string) string {
+	for _, prefix := range homePrefixes {
+		if rest, ok := strings.CutPrefix(p, prefix); ok {
+			return rest
+		}
+	}
+	return p
+}
+
+// unexpanded reports whether p, a manifest path after fromHome, starts as a
+// shell path homeskillet does not expand would: with ~, as in ~user, $, as
+// in $XDG_CONFIG_HOME, or %, as in %USERPROFILE%. homeskillet expands no
+// variables, so such a path would name a directory called ~user or
+// $XDG_CONFIG_HOME, which is never what was meant.
+func unexpanded(p string) bool {
+	return strings.HasPrefix(p, "~") || strings.HasPrefix(p, "$") || strings.HasPrefix(p, "%")
 }
 
 func (e Entry) validate() error {
@@ -569,11 +916,17 @@ func (s Step) validate() error {
 			}
 		}
 	}
-	if s.Creates != "" && (!localFile(s.Creates) || !Printable(s.Creates)) {
-		return errors.New("creates must be a printable relative path inside the home directory")
+	// Only DocumentsPrefix may start with a brace, so a misspelled prefix,
+	// such as {document}/, fails instead of naming a directory in home.
+	if creates, documents := strings.CutPrefix(s.Creates, DocumentsPrefix); s.Creates != "" &&
+		(!localFile(creates) || !Printable(creates) || unexpanded(creates) || !documents && strings.HasPrefix(creates, "{")) {
+		return errors.New("creates must be a printable path in the home directory, as .local/bin/uv, ~/.local/bin/uv, or $HOME/.local/bin/uv, or start with " +
+			DocumentsPrefix + "; homeskillet expands no other variables")
 	}
-	if s.Provides != "" && (strings.ContainsRune(s.Provides, '/') || !Printable(s.Provides)) {
-		return errors.New("provides must be a printable command name without '/'")
+	// A name with a separator or, on Windows, a drive would be a path, which
+	// command lookup returns as it is, found or not.
+	if s.Provides != "" && (strings.ContainsAny(s.Provides, `/\:`) || !Printable(s.Provides)) {
+		return errors.New(`provides must be a printable command name without '/', '\', or ':'`)
 	}
 	return validatePlatforms(s.Platforms)
 }

@@ -147,12 +147,21 @@ func TestStickyExcusesOnlyDirectories(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := CheckProgram(program, info); err != nil {
+	file, err := os.Open(program)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := file.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	if err := CheckProgram(file); err != nil {
 		t.Fatalf("private program rejected: %v", err)
 	}
 	// The sticky bit restricts renaming a directory's entries; it does
 	// nothing to stop others writing to a regular file.
-	if err := CheckProgram(program, withMode{info, os.ModeSticky | 0o777}); err == nil {
+	if err := checkShared(program, withMode{info, os.ModeSticky | 0o777}); err == nil {
 		t.Fatal("world-writable program accepted because of the sticky bit")
 	}
 	dir, err := os.Stat(root)
@@ -190,26 +199,29 @@ func TestCheckRepositoryManifest(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	manifest := filepath.Join(repo, config.FileName)
 	// The manifest is optional, so a repository without one passes.
 	if err := CheckRepository(repo); err != nil {
 		t.Fatalf("repository without a manifest rejected: %v", err)
 	}
-	for destination, accept := range map[string]bool{
-		filepath.Join("private", "manifest.json"): true,
-		// Others can replace the private file through the shared directory.
-		filepath.Join("shared", "manifest.json"): false,
-		filepath.Join(outside, "manifest.json"):  false,
-		"missing.json":                           false,
-	} {
-		if err := os.Symlink(destination, manifest); err != nil {
-			t.Fatal(err)
-		}
-		if err := CheckRepository(repo); (err == nil) != accept {
-			t.Errorf("manifest -> %s: got %v, want accepted %v", destination, err, accept)
-		}
-		if err := os.Remove(manifest); err != nil {
-			t.Fatal(err)
+	// Each name is checked, so neither can be the way around the rules.
+	for _, name := range config.FileNames() {
+		manifest := filepath.Join(repo, name)
+		for destination, accept := range map[string]bool{
+			filepath.Join("private", "manifest.json"): true,
+			// Others can replace the private file through the shared directory.
+			filepath.Join("shared", "manifest.json"): false,
+			filepath.Join(outside, "manifest.json"):  false,
+			"missing.json":                           false,
+		} {
+			if err := os.Symlink(destination, manifest); err != nil {
+				t.Fatal(err)
+			}
+			if err := CheckRepository(repo); (err == nil) != accept {
+				t.Errorf("%s -> %s: got %v, want accepted %v", name, destination, err, accept)
+			}
+			if err := os.Remove(manifest); err != nil {
+				t.Fatal(err)
+			}
 		}
 	}
 }

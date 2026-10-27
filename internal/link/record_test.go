@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Tests of the record of links: orphans, keeping repositories and homes apart,
 // and refusing a record that is invalid or that someone else could have
@@ -70,10 +70,11 @@ func recordedTargets(t *testing.T, home string) map[string][]string {
 }
 
 func TestOrphans(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}, {Source: "b", Target: ".config/b"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)
-	if got := recordedTargets(t, home)[repo]; strings.Join(got, ",") != "a,.config/b" {
+	if got := recordedTargets(t, home)[repo]; strings.Join(got, ",") != "a,"+filepath.Join(".config", "b") {
 		t.Fatalf("recorded %v", got)
 	}
 
@@ -108,6 +109,7 @@ func TestOrphans(t *testing.T) {
 }
 
 func TestUnlinkRemovesOrphans(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}, {Source: "b", Target: "b"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)
@@ -120,6 +122,7 @@ func TestUnlinkRemovesOrphans(t *testing.T) {
 }
 
 func TestOrphansOnlyIncludeOwnLinks(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}, {Source: "b", Target: "b"}, {Source: "c", Target: "c"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)
@@ -154,6 +157,7 @@ func TestOrphansOnlyIncludeOwnLinks(t *testing.T) {
 }
 
 func TestRecordKeepsOtherRepositories(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}}
 	repo, home := fixture(t, entries...)
 	other := filepath.Join(filepath.Dir(repo), "other")
@@ -205,6 +209,7 @@ func TestInvalidRecordsRefused(t *testing.T) {
 }
 
 func TestSharedRecordDirectoryRefused(t *testing.T) {
+	requireModes(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)
@@ -235,6 +240,7 @@ func TestDataDirectoryIsNotATarget(t *testing.T) {
 }
 
 func TestSharedDataDirectoryKeepsHomesApart(t *testing.T) {
+	requireSymlinks(t)
 	// One absolute data directory serves the real home and a scratch home,
 	// as with HOMESKILLET_DATA_DIR set during a --home trial run.
 	entries := []config.Entry{{Source: "a", Target: "a"}}
@@ -285,6 +291,7 @@ func TestSharedDataDirectoryKeepsHomesApart(t *testing.T) {
 }
 
 func TestScopedSaveKeepsOtherLinks(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}, {Source: "b", Target: "b"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)
@@ -311,6 +318,7 @@ func TestScopedSaveKeepsOtherLinks(t *testing.T) {
 }
 
 func TestRecordRejectsTrailingData(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)

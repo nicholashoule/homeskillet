@@ -7,16 +7,17 @@ It is independent of any particular configuration repository. The module is
 `github.com/nicholashoule/homeskillet`, requires Go 1.24 or newer, and uses
 only the standard library.
 
-Configuration repositories own the installable files, an optional
-`dotfiles.json` manifest, and any configuration-specific checks. The interface
-between the two is small and documented in the README and
-[manifest.md](manifest.md):
+Configuration repositories own the installable files, an optional manifest,
+`bootstrap.json`, `dotfiles.json`, or both, and any configuration-specific
+checks. The interface between the two is small and documented in the README
+and [manifest.md](manifest.md):
 
 - Files under the repository's `home/` directory mirror the home directory and
-  are linked when the manifest is absent or omits `files`.
+  are linked when no manifest lists `files`.
 - A manifest's `files` list replaces that convention with explicit entries,
-  and its `setup` list declares setup steps, which are never inferred.
-  `homeskillet init` writes a starter manifest, never replacing one.
+  and its `setup` list declares setup steps, which are never inferred. Two
+  manifests merge into one.
+  `homeskillet init` writes a starter `bootstrap.json` where no manifest is.
 
 Do not move Go code back into a configuration repository or add runtime
 dependencies on the sibling checkout.
@@ -27,7 +28,7 @@ dependencies on the sibling checkout.
 
 | Package | Owns |
 |---|---|
-| `internal/cli` | Arguments, root refusal, path canonicalization, printed output, help, shell completion, and `init` |
+| `internal/cli` | Arguments, root refusal, path canonicalization, printed output, help, shell completion, `init`, and `check` |
 | `internal/config` | Reading a repository: manifest decoding, `home/` discovery, lexical validation |
 | `internal/trust` | Ownership and permission rules for the repository |
 | `internal/link` | Link planning and changes: states, conflicts, containment, the record of links and orphans |
@@ -35,7 +36,9 @@ dependencies on the sibling checkout.
 | `internal/install` | Versioned installs of homeskillet itself: the `latest`, `previous`, and `current` links |
 | `internal/safefile` | Size-limited reads and atomic, flushed writes of the files homeskillet keeps |
 | `internal/version` | Build details (version, commit, toolchain) and semantic version ordering |
-| `internal/host` | Detecting the operating system and architecture homeskillet runs on, including Rosetta 2 |
+| `internal/host` | Detecting the operating system and architecture homeskillet runs on, including Rosetta 2; Windows known folders and the registry |
+| `internal/wsl` | For `homeskillet wsl` on Windows: finding a distribution in the registry, starting it, and running commands there with `--exec` |
+| `internal/mirror` | Copying a Windows clone into a distribution: sending what Windows checked, and receiving it into a private directory, whole or not at all |
 
 A command runs in this order:
 
@@ -46,20 +49,38 @@ A command runs in this order:
    the help text to standard output, `version` prints `version.Current`,
    `completion` prints a shell script, and the hidden `__complete` command
    those scripts call works out candidates (see completion.go); each then
-   stops. Every other command refuses to run as root without `--allow-root`.
-   `init` then writes its starter manifest (see init.go). The rest refuse a
+   stops. Every other command refuses to run as root, or elevated on Windows
+   (`privileged`), without `--allow-root`.
+   `init` then writes its starter manifest (see init.go), and `check` reports
+   on the repository and stops (see check.go): the steps below through
+   `config.Load`, then `link.CheckSource` for every entry, for every platform,
+   with each issue collected rather than the first returned. `wsl` (see
+   wsl_windows.go) passes the command on to the Linux build in a
+   distribution, after copying a Windows clone there through the hidden
+   `__mirror` command (see wsl.go and package mirror), which that build runs
+   on the copy it receives. The rest refuse a
    home directory that fails `trust.CheckLocation`; `self` then continues as
    described under [Installing homeskillet](#installing-homeskillet).
-2. `canonicalDirectory` resolves the repository and existing home directory.
+2. `canonicalDirectory` resolves the repository and existing home directory,
+   with a leading `~` as the user's home, which no shell expands in `cmd`.
    Packages link and trust compare path strings, which is only sound for
    canonical paths. The resolved repository must pass `trust.CheckLocation`.
+   A current directory it refuses, when no repository is named, counts as no
+   repository, as one without a manifest does (see `openRepository`).
 3. `config.Load` opens the repository as an `os.Root`, so no read can leave it.
-   It decodes the manifest if there is one, rejecting unknown fields, trailing
-   JSON values, escaping paths, and control or formatting characters. If there
-   is no manifest, or it omits `files`, Load lists every file under `home/`
-   instead, skipping `.DS_Store`, `Thumbs.db`, `desktop.ini`, and `.git`, and
-   validates each discovered entry with the same rules. Entries and steps
-   meant for Windows must also use names Windows can create. It fails if the repository has neither. The CLI
+   It decodes each manifest there is, `bootstrap.json` and then
+   `dotfiles.json`, rejecting unknown fields, trailing JSON values, escaping
+   paths, and control or formatting characters, and merges them
+   (`Manifest.merge`). If no manifest lists `files`, Load lists every file
+   under `home/` instead, skipping `.DS_Store`, `Thumbs.db`, `desktop.ini`,
+   and `.git`, and validates each discovered entry with the same rules. When
+   `home/wsl/` exists, its files are Linux's and the rest of `home/` the
+   other systems' (`discoverAll`). Targets and `creates` lose a leading `~/`
+   or `$HOME/` (`fromHome`). Entries and steps meant for Windows, and every
+   source of a repository with anything for Windows, must also use names
+   Windows can create.
+   Its error joins every issue found (`config.Issues` splits it). It fails if
+   the repository has neither a manifest nor `home/`. The CLI
    then chooses the platform, `--platform` or else `host.Detect`, and
    `FilesFor` and `SetupFor` select the entries for it: an entry's own
    `platforms`, or else the manifest's default, must cover it. When nothing
@@ -120,16 +141,17 @@ repository the record of links shows linked into the home (`openRepository`,
 listed. The record's data directory must pass the usual location and
 ownership checks first, since a repository taken from it is acted on without
 being named, and the header says where it came from. With no command, a first
-argument that is plainly a path (`.`, `..`, or containing `/`) means `status`
-for that repository; the test is lexical so that a mistyped command is never
-read as a directory, and `status` changes nothing either way. `--home`
+argument that is plainly a path (`.`, `..`, or containing `/`, or on Windows `\`
+or a drive) means `status` for that repository; the test is lexical so that a
+mistyped command is never read as a directory, and `status` changes nothing either way. `--home`
 defaults to the user's home. Options go anywhere after the command. `--quiet`
 replaces the output with nothing, leaving errors and the exit status; `setup`
-refuses it, since its steps must be shown before approval. Only Linux
-and macOS (`darwin`) are supported; a build constraint enforces this because the
-ownership checks read Unix file metadata. On any other system, the program
-builds from `main_unsupported.go` instead, which only says that the system is
-not supported (and, on Windows, to use WSL).
+refuses it, since its steps must be shown before approval. Linux, macOS
+(`darwin`), and Windows are supported; a build constraint enforces this because
+the ownership checks read each system's own file metadata, in `_unix.go` and
+`_windows.go` files ([windows.md](windows.md#how-windows-differs)). On any other
+system, the program builds from `main_unsupported.go` instead, which only says
+that the system is not supported.
 
 ## Installing homeskillet
 
@@ -142,12 +164,15 @@ prefix's existing directories, then:
   `share/homeskillet/versions/`, and `latest` and `previous` are recomputed
   as the highest and second-highest installed versions. `current` is created
   following `latest` if it is missing, and `bin/homeskillet` is created
-  linking to `share/homeskillet/current/homeskillet` if it is missing.
+  linking to `share/homeskillet/current/homeskillet` if it is missing. On
+  Windows, `current` is a file, `latest` and `previous` are computed rather
+  than linked, and `bin/homeskillet.exe` links to the chosen version's program
+  (`pointCommand`, [windows.md](windows.md#installing-homeskillet)).
 - `self use` points `current` at `latest` (follow) or at one version (pin).
   `previous` is resolved when the command runs, so a later install never
   changes a pin.
-- `self remove` deletes one version that is not running, after moving
-  `latest` and `previous` off it.
+- `self remove` deletes one version that is neither current nor the running
+  program, after moving `latest` and `previous` off it.
 - `self list` reports versions, roles, and the build details in each
   version's `build.json`. Install writes that record from `version.Current`,
   which describes the binary being copied because it is the running program.
@@ -164,12 +189,15 @@ and dry runs stop after the checks.
   `/etc`, `/usr` (including `/usr/local`), `/proc`, and macOS's `/System` and
   `/Library`, and refuses `/`, `/home`, and `/Users` themselves, so `HOME=/`
   in a container or `--prefix /usr/local` fails before anything is read or
-  written. The CLI, `link.Prepare`, `setup.Prepare` and `setup.Run`, and every
+  written. On Windows it refuses drive roots, `C:\Users`, the Windows and
+  program directories, and device paths
+  ([windows.md](windows.md#system-locations)). The CLI, `link.Prepare`,
+  `setup.Prepare` and `setup.Run`, and every
   `install.Layout` method apply it, and it also rejects relative and unclean
   paths, so an empty path never means the current directory.
 - `init` checks the repository with `trust.CheckRepository` before writing,
   and shell completion reaches files only through `openRepository` and
-  `selfLayout`, as `status` and `self list` do; [safety.md](safety.md#starter-manifests-and-completion)
+  `selfLayout`, as `status` and `self list` do; [safety.md](safety.md#starter-manifests-checks-and-completion)
   has the rules both follow.
 - Sources are regular files inside the selected configuration repository.
 - Targets are relative to the selected home and may neither lie inside nor
@@ -178,12 +206,14 @@ and dry runs stop after the checks.
 - Manifest paths and names discovered under `home/` may not contain control or
   formatting characters, which could forge terminal output. Directory names
   are checked before the directory is read, so error messages are safe too.
-- The manifest is optional. Without it, or when it omits `files`, every file
-  under `home/` is an entry. An explicit `"files": []` links nothing. A
-  manifest that exists but cannot be read is an error, never treated as absent.
-- For `status` and `link`, the repository, the manifest if present, and every
+- Manifests are optional. When none lists `files`, every file under `home/` is
+  an entry. An explicit `"files": []` links nothing. A manifest that exists
+  but cannot be read is an error, never treated as absent. Two manifests
+  merge; identical entries and steps count once, and two different steps
+  with one name are an error rather than one silently replacing the other.
+- For `status` and `link`, the repository, each manifest present, and every
   path to a source must be owned by the current user and not group- or
-  world-writable. Symlinks on the way to a source or the manifest are
+  world-writable. Symlinks on the way to a source or a manifest are
   followed one step at a time (`trust.Resolve`): every hop must stay inside
   the repository and every directory passed through must be private, so a
   hop through `/tmp` or a shared directory cannot be retargeted later.
@@ -193,7 +223,13 @@ and dry runs stop after the checks.
   existing directory a link goes into follow the repository rules
   (`trust.CheckDirectory`, `trust.CheckExisting`), since anyone who could
   write there could replace a link.
-- Running as root requires `--allow-root`.
+- Running as root, or elevated on Windows, requires `--allow-root`.
+- On Windows, owners and permissions come from security descriptors, and
+  junctions and other reparse points that are not directories are refused
+  wherever ownership is checked ([windows.md](windows.md#ownership-and-permissions)).
+  Nothing crosses between Windows and WSL: the Windows build refuses
+  `\\wsl.localhost` and `\\wsl$`, and the Linux build Windows drives under
+  `/mnt` ([windows.md](windows.md#windows-and-wsl-together)).
 - Existing files, directories, and foreign symlinks are conflicts, never
   replaced except by `link --force`, which moves files and symlinks, never
   directories, into `backups/` in the data directory with the Unix time
@@ -201,7 +237,8 @@ and dry runs stop after the checks.
   if one fails, and moves back what linking did not replace if linking fails.
 - Conflicts and absent sources block every change by `link`; under `--force`,
   only absent sources do.
-- New parent directories are created `0700`.
+- New parent directories are created `0700`; on Windows they inherit the
+  access control list of the checked directory they are made in.
 - `unlink` removes only listed links pointing to their expected source paths,
   including dangling owned links. It skips conflicts and ownership checks so
   cleanup is always possible.
@@ -212,8 +249,10 @@ and dry runs stop after the checks.
   step has been shown exactly and approved (or `--yes` was given). Unclear
   answers and end of input decline, and only the start of an answer is kept.
 - Setup steps run as argument vectors from the repository root with `HOME` set
-  to the selected home; no shell is added. The home's `.local/bin` is appended
-  to `PATH`, never prepended, and only when it passes the ownership rules.
+  to the selected home, and on Windows `USERPROFILE` too; no shell is added.
+  The home's `.local/bin` is appended to `PATH`, never prepended, and only
+  when it passes the ownership rules; on Windows, so are the registry's
+  system and user `PATH` and winget's links directory, under the same rule.
   Command lookup skips relative `PATH` entries, and the program receives the
   reviewed name as `argv[0]`.
 - Setup names and arguments may not contain control or formatting characters.
@@ -254,13 +293,13 @@ and dry runs stop after the checks.
   repository. No link target may be inside it.
 - Configuration must be unlinked before the configuration clone is moved.
 
-Files homeskillet parses are read with size limits: 1 MiB for the manifest and
+Files homeskillet parses are read with size limits: 1 MiB for each manifest and
 64 KiB for a `build.json`. Exported functions treat a nil output writer as
 discarding and a nil context as `context.Background`.
 
 Preflight is not a transaction or a concurrency guarantee, and two `self`
 commands running at once can race. An application-time
-I/O failure may leave partial changes. Do not change the manifest or filesystem
+I/O failure may leave partial changes. Do not change a manifest or filesystem
 structure concurrently with a command. Setup safety rests on review, not
 sandboxing: an approved step runs with the user's full privileges. No force
 overwrite, automatic backup, Git wrapper, templating, or secret storage is

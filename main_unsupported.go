@@ -1,10 +1,10 @@
-//go:build !linux && !darwin
+//go:build !linux && !darwin && !windows
 
-// Command homeskillet runs on Linux and macOS only: its ownership checks read
-// Unix file metadata. On any other system the program builds from this file
-// instead, so that someone who runs, say, a Windows build learns why it does
-// nothing and where to run homeskillet instead, rather than finding that it
-// will not compile.
+// Command homeskillet runs on Linux, macOS, and Windows only: its ownership
+// checks read each system's own file metadata. On any other system the
+// program builds from this file instead, so that someone who runs, say, a
+// FreeBSD build learns why it does nothing, rather than finding that it will
+// not compile.
 package main
 
 import (
@@ -20,8 +20,5 @@ func main() {
 
 // unsupported explains that goos is not supported.
 func unsupported(goos string) string {
-	if goos == "windows" {
-		return "homeskillet: Windows isn't supported at this time; run homeskillet inside WSL, such as Ubuntu on WSL, instead"
-	}
-	return "homeskillet: " + goos + " isn't supported at this time; homeskillet runs on Linux and macOS"
+	return "homeskillet: " + goos + " isn't supported at this time; homeskillet runs on Linux, macOS, and Windows"
 }

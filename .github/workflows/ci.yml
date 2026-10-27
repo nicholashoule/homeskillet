@@ -1,7 +1,8 @@
 # CI: the checks `make check` runs, on every Go release from the go.mod floor to
-# the latest, on Linux and macOS; on Windows, the packages that build there and
-# the unsupported-system refusal; release cross builds; and golangci-lint,
-# repogov, and demojify. See Continuous Integration in docs/development.md.
+# the latest, on Linux, macOS, and Windows, where a built homeskillet also links
+# and unlinks a repository; release cross builds; and golangci-lint for the
+# Linux and Windows builds, repogov, and demojify. See Continuous Integration
+# in docs/development.md.
 name: CI
 
 on:
@@ -46,26 +47,36 @@ jobs:
         if: runner.os != 'Windows'
         run: make test
 
-      # homeskillet refuses to run on Windows for now (docs/windows.md). What
-      # builds there is tested there: the packages without Unix-only code and
-      # the program's refusal.
+      # The Makefile targets Linux and macOS, so Windows runs the same checks
+      # directly. The runner runs them elevated, which is also what lets the
+      # tests make symlinks there (docs/windows.md).
       - name: Vet and test (Windows)
         if: runner.os == 'Windows'
         run: |
           go vet ./...
           go test ./...
 
-      - name: Refuses to run (Windows)
+      # A built homeskillet links a repository into a scratch home, reports it,
+      # and unlinks it, as a user would. The runner is elevated, which every
+      # command refuses without --allow-root.
+      - name: Link and unlink (Windows)
         if: runner.os == 'Windows'
-        shell: bash
+        shell: pwsh
         run: |
+          $ErrorActionPreference = 'Stop'
+          $PSNativeCommandUseErrorActionPreference = $true
           go build -o homeskillet.exe .
-          if output=$(./homeskillet.exe 2>&1); then
-            echo "::error::homeskillet.exe succeeded on Windows: $output"
-            exit 1
-          fi
-          echo "$output"
-          [[ $output == *"Windows isn't supported"* ]]
+          $root = Join-Path ([IO.Path]::GetTempPath()) homeskillet-smoke
+          $repo, $scratch = (Join-Path $root repo), (Join-Path $root home)
+          $file = '.config/powershell/profile.ps1'
+          $source, $target = (Join-Path $repo "home/$file"), (Join-Path $scratch $file)
+          New-Item -ItemType Directory -Force (Split-Path $source), $scratch | Out-Null
+          Set-Content -LiteralPath $source -Value '# profile'
+          ./homeskillet.exe link --allow-root --home $scratch $repo
+          if ((Get-Item -LiteralPath $target).LinkType -ne 'SymbolicLink') { throw 'link made no symlink' }
+          ./homeskillet.exe status --allow-root --home $scratch $repo
+          ./homeskillet.exe unlink --allow-root --home $scratch $repo
+          if (Test-Path -LiteralPath $target) { throw 'unlink left the symlink' }
 
       - name: Release builds
         if: matrix.go-version == 'stable' && runner.os == 'Linux'
@@ -93,6 +104,14 @@ jobs:
       # Keep the version in step with the one used locally (make check).
       - name: golangci-lint
         uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        with:
+          version: v2.15.0
+
+      # Files for Windows build only there, so a Linux lint never sees them.
+      - name: golangci-lint (Windows build)
+        uses: golangci/golangci-lint-action@ba0d7d2ec06a0ea1cb5fa41b2e4a3ab91d21278a # v9.3.0
+        env:
+          GOOS: windows
         with:
           version: v2.15.0
 

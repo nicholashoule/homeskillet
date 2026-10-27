@@ -63,11 +63,12 @@ Linked files such as `.bashrc` run as you, so `status` and `link` refuse a
 repository that another user could change, following OpenSSH's rules for
 `~/.ssh`:
 
-- The repository, its manifest if it has one, and every directory and file
-  leading to a source must be owned by you and not writable by group or
-  others. Files found under `home/` are checked exactly like listed ones.
+- The repository, each manifest it has (`bootstrap.json`, `dotfiles.json`),
+  and every directory and file leading to a source must be owned by you and
+  not writable by group or others. Files found under `home/` are checked
+  exactly like listed ones.
 - Symlinks are followed one step at a time. Every symlink on the way to a
-  source or the manifest must lead inside the repository, not only the last,
+  source or a manifest must lead inside the repository, not only the last,
   and every directory the path passes through must be private. A link that
   bounces through `/tmp` back into the repository is refused, because
   whoever controls the hop in `/tmp` could retarget it later.
@@ -84,6 +85,43 @@ repository that another user could change, following OpenSSH's rules for
 
 Parent directories that `link` creates are private (`0700`); existing ones are
 left unchanged.
+
+Windows has no mode bits, so there the same rules read each file's owner and
+access control list, an elevated process counts as root, and junctions are
+refused wherever ownership is checked
+([windows.md](windows.md#ownership-and-permissions)).
+
+Nothing is linked across the line between Windows and WSL. The Windows build
+refuses a WSL distribution's files, under `\\wsl.localhost` or `\\wsl$`,
+where Windows reports no owner at all, and inside WSL the Linux build refuses
+Windows drives under `/mnt`, where every file looks writable by everyone. Each
+system's homeskillet links its own home from files on its own file system
+([windows.md](windows.md#windows-and-wsl-together)).
+
+## Copies in WSL
+
+`homeskillet wsl` gives WSL a Windows clone by copying it, so what WSL links
+must be exactly what Windows checked:
+
+- The clone passes every check the other commands make, the ownership rules
+  for each file included, before anything is sent, and each file is checked
+  again as it is read. Only files and folders are sent; a symlink, which the
+  copy could not check the way it leads, is refused.
+- The Linux build writes the copy through an `os.Root` into a new private
+  directory, creating every file anew, so no name in it can reach outside it,
+  through `..` or a link. Names with control characters, a stream too large or
+  with too many files, and a stream that ends early are refused, and nothing
+  changes.
+- The new copy replaces the old only once all of it has arrived, by renames,
+  so links into it never lead into a half-written copy. `status` and dry runs
+  never change it.
+- `wsl install` installs only a Linux build of its own version: a release's,
+  checked against that release's `SHA256SUMS` inside the distribution, or one
+  given with `--from` that passes the rules for a program homeskillet
+  installs. Either is checked to have arrived whole before it runs.
+- Commands run in the distribution with `wsl.exe --exec`, never through a
+  shell there, and `wsl.exe` comes from the system directory, never `PATH`.
+  Only a command that changes nothing is ever retried.
 
 ## Unlinking and Orphaned Links
 
@@ -114,7 +152,7 @@ A setup step is code from the repository, which may be someone else's, so
 `setup` relies on your review:
 
 - Every file and directory in the repository must pass the ownership rules
-  above, not just the manifest, because a step can run or source any of them.
+  above, not just the manifests, because a step can run or source any of them.
   So must the home directory, as for `link`: steps run with `HOME` set to it,
   and a step is skipped when its `creates` path exists there, so someone who
   could write to it could plant that file or redirect what a step installs.
@@ -135,8 +173,9 @@ A setup step is code from the repository, which may be someone else's, so
   pipeline or substitution in the review.
 - Setup names and arguments cannot contain control or formatting characters,
   which could hide part of a command from the review.
-- `HOME` is set to the selected home, so `--home` pointed at a scratch
-  directory keeps installers that honor `HOME` out of your real one.
+- `HOME` is set to the selected home, and on Windows `USERPROFILE` too, so
+  `--home` pointed at a scratch directory keeps installers that honor them
+  out of your real one.
 - Under `--yes`, each step is shown but not asked about, and runs with no
   input and no terminal, in a session of its own. An unattended run never
   hangs on a step that prompts, even one that reads the terminal directly as
@@ -147,8 +186,12 @@ A setup step is code from the repository, which may be someone else's, so
   cannot stop `sudo` set up to need no password (`NOPASSWD`) or to share one
   cached password across terminals (`timestamp_type=global`). Ctrl-C stops
   the step, kills whatever it started that is still running a few seconds
-  later, and stops setup even if the step then exits successfully. Steps you approve one at a time
-  keep the terminal.
+  later, and stops setup even if the step then exits successfully. Steps you
+  approve one at a time keep the terminal. On Windows, a step under `--yes`
+  keeps the console but gets no input, and Windows's `sudo` asks through a
+  dialog every time; Linux `sudo` reached through `wsl.exe` can still ask on
+  that console, so such a step must check for a terminal itself
+  ([windows.md](windows.md#setup-steps)).
 - A Homebrew directory counts for `provides` only when you or root own it, so
   another account, such as a user named `linuxbrew`, cannot make a step look
   done.
@@ -156,14 +199,18 @@ A setup step is code from the repository, which may be someone else's, so
 Review a step before approving it. homeskillet cannot tell what an installer
 will do once it runs.
 
-## Starter Manifests and Completion
+## Starter Manifests, Checks, and Completion
 
-- `init` writes `dotfiles.json` only where none exists, not even as a symlink,
-  and never over one that appears while it runs, and refuses a repository
-  directory another user could write to, since the manifest decides what runs.
+- `init` writes `bootstrap.json` only into a repository with no manifest under
+  either name, not even as a symlink, never over one that appears while it
+  runs, and refuses a repository directory another user could write to, since
+  the manifest decides what runs.
   An existing `home/` must be a directory, or a symlink to one inside the
   repository, as linking requires. It creates a missing `home/` private, and
   removes it again if writing the manifest fails.
+- `check` only reads: it applies the location, ownership, and manifest rules
+  of the other commands, never runs a step, and never looks at a home.
+  Like every other command, it refuses to run as root without `--allow-root`.
 - Shell completion only reads, as `status` and `self list` do: it never runs a
   setup step or writes a file. Running as root, it reads nothing without
   `--allow-root`, and it never offers a candidate with control or formatting
@@ -196,7 +243,9 @@ themselves, or be inside `/etc`, `/usr` (including `/usr/local`), `/bin`,
 `/lib`, `/proc`, `/sys`, `/var/lib`, or macOS's `/System` and `/Library`, among
 others. That turns mistakes such as `HOME=/` in a container or
 `--prefix /usr/local` into errors before anything is read or written. Temporary
-directories, `/root`, and homes anywhere else are fine.
+directories, `/root`, and homes anywhere else are fine. On Windows, drive
+roots, `C:\Users` itself, and the Windows and program directories are refused
+the same way ([windows.md](windows.md#system-locations)).
 
 ## Limits
 

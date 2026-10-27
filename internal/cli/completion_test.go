@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Tests of shell completion: the candidates __complete offers, the completion
 // command, and the bash and zsh scripts loaded into real shells, with the test
@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -92,10 +93,11 @@ func TestCompletions(t *testing.T) {
 		{[]string{"setup", repo, "--home", home, "fonts", ""}, ":none", []string{"fzf", "uv"}},
 		{[]string{"setup", "--home", home, "--repo", repo, "--platform", "windows", "u"}, ":none", []string{"uv"}},
 		{[]string{"init", ""}, ":dirs", nil},
+		{[]string{"check", ""}, ":dirs", nil},
 		{[]string{"self", ""}, ":none", selfCommands},
 		{[]string{"self", "use", "--home", home, "l"}, ":none", []string{"latest"}},
 		{[]string{"version", "-"}, ":none", nil},
-		{[]string{"completion", ""}, ":none", []string{"bash", "zsh"}},
+		{[]string{"completion", ""}, ":none", []string{"bash", "pwsh", "zsh"}},
 		{[]string{"help", "se"}, ":none", []string{"setup", "self"}},
 		// After the terminator, nothing is an option: --d is the repository.
 		{[]string{"link", "--", "--d"}, ":dirs", nil},
@@ -137,7 +139,7 @@ func TestCompletionCommand(t *testing.T) {
 			t.Errorf("%s: %v", args, err)
 		}
 	}
-	if err := writeCompletion("fish", new(bytes.Buffer)); err == nil || !strings.Contains(err.Error(), "bash or zsh") {
+	if err := writeCompletion("fish", new(bytes.Buffer)); err == nil || !strings.Contains(err.Error(), "bash or pwsh or zsh") {
 		t.Errorf("fish: %v", err)
 	}
 	// The hidden command is never offered or listed.
@@ -155,6 +157,17 @@ func homeskillet(t *testing.T) string {
 		t.Fatal(err)
 	}
 	dir := t.TempDir()
+	// Windows runs no shebang scripts, so there the command is a batch file.
+	// Not a link to the test binary, which Windows could not delete while it
+	// runs, nor a copy, which antivirus software may hold open to scan for
+	// longer than TempDir waits to remove it.
+	if runtime.GOOS == "windows" {
+		script := "@echo off\r\nset " + asHomeskillet + "=1\r\n\"" + executable + "\" %*\r\n"
+		if err := os.WriteFile(filepath.Join(dir, "homeskillet.cmd"), []byte(script), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		return dir
+	}
 	script := "#!/bin/sh\n" + asHomeskillet + "=1 exec '" + executable + "' \"$@\"\n"
 	if err := os.WriteFile(filepath.Join(dir, "homeskillet"), []byte(script), 0o700); err != nil {
 		t.Fatal(err)
@@ -187,6 +200,7 @@ func bashes() []string {
 // through the real homeskillet __complete, under set -u. On macOS it also
 // runs under /bin/bash, which is bash 3.2.
 func TestBashCompletion(t *testing.T) {
+	requireUnix(t)
 	if len(bashes()) == 0 {
 		t.Skip("bash is not installed")
 	}
@@ -223,7 +237,7 @@ if ((${#COMPREPLY[@]})); then printf '%s\n' "${COMPREPLY[@]}"; fi`
 		{[]string{"link", "--platform", "=", "darwin/a"}, []string{"darwin/amd64", "darwin/arm64"}},
 		{[]string{"link", "--home", filepath.Join(dirs, "al")}, []string{filepath.Join(dirs, "alpha")}},
 		{[]string{"link", "--home", "=", filepath.Join(dirs, "al")}, []string{filepath.Join(dirs, "alpha")}},
-		{[]string{"completion", ""}, []string{"bash", "zsh"}},
+		{[]string{"completion", ""}, []string{"bash", "pwsh", "zsh"}},
 		// Nothing to offer, or no homeskillet at all, offers nothing.
 		{[]string{"version", ""}, nil},
 		{[]string{"missing", ""}, nil},
@@ -263,5 +277,62 @@ print -r -- ${_comps[homeskillet]}`
 	output, err := cmd.CombinedOutput()
 	if err != nil || strings.TrimSpace(string(output)) != "_homeskillet" {
 		t.Fatalf("zsh did not register the completion: %q, %v", output, err)
+	}
+}
+
+// TestPowerShellCompletion loads the PowerShell script, as a profile would,
+// and completes command lines with TabExpansion2, PowerShell's own entry
+// point for completion, through the real homeskillet __complete. It runs
+// where pwsh is installed.
+func TestPowerShellCompletion(t *testing.T) {
+	pwsh, err := exec.LookPath("pwsh")
+	if err != nil {
+		t.Skip("pwsh is not installed")
+	}
+	repo, home := completionFixture(t)
+	dirs := t.TempDir()
+	if err := os.Mkdir(filepath.Join(dirs, "alpha"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	driver := filepath.Join(t.TempDir(), "driver.ps1")
+	// On Windows the stand-in is a batch file (see homeskillet), to which
+	// PowerShell passes arguments the legacy way unless told otherwise,
+	// dropping empty ones; Standard passes them as homeskillet.exe gets them.
+	const script = `param($Script, $Line)
+$ErrorActionPreference = 'Stop'
+$PSNativeCommandArgumentPassing = 'Standard'
+Invoke-Expression $Script
+$result = TabExpansion2 -inputScript $Line -cursorColumn $Line.Length
+$result.CompletionMatches | ForEach-Object CompletionText
+`
+	if err := os.WriteFile(driver, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	alpha := filepath.Join(dirs, "alpha")
+	path := homeskillet(t) + string(filepath.ListSeparator) + os.Getenv("PATH")
+	for _, test := range []struct {
+		line string
+		want []string
+	}{
+		{"homeskillet li", []string{"link"}},
+		{"homeskillet ", commands},
+		{"homeskillet setup --repo " + repo + " --home " + home + " f", []string{"fonts", "fzf"}},
+		{"homeskillet link --platform darwin/a", []string{"darwin/amd64", "darwin/arm64"}},
+		// After --option=, PowerShell replaces the whole word, so each
+		// candidate keeps the option.
+		{"homeskillet link --platform=darwin/a", []string{"--platform=darwin/amd64", "--platform=darwin/arm64"}},
+		{"homeskillet link --home " + filepath.Join(dirs, "al"), []string{alpha}},
+		{"homeskillet link --home=" + filepath.Join(dirs, "al"), []string{"--home=" + alpha}},
+		{"homeskillet completion ", []string{"bash", "pwsh", "zsh"}},
+		// With nothing offered, PowerShell completes file names, as it does
+		// for any program, so there is no case for that here.
+	} {
+		cmd := exec.CommandContext(t.Context(), pwsh, "-NoLogo", "-NoProfile", "-NonInteractive", "-File", driver, "-Script", powershellCompletion, "-Line", test.line) //nolint:gosec // G204: runs pwsh on the script under test with fixed arguments
+		cmd.Env = append(os.Environ(), "PATH="+path, asHomeskillet+"=1", "HOME="+home)
+		output, err := cmd.CombinedOutput()
+		got := strings.Fields(string(output))
+		if err != nil || !slices.Equal(got, test.want) {
+			t.Errorf("%q: got %q, want %q (%v)", test.line, got, test.want, err)
+		}
 	}
 }

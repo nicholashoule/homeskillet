@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // The help text for --help and the help command. Options are described by
 // their flag definitions, so the text cannot drift from what parse accepts,
@@ -22,29 +22,37 @@ const helpWidth = 120
 const usageLines = `  homeskillet [status|link|unlink] [REPOSITORY [FILE...]] [options]
   homeskillet setup [REPOSITORY] [options]
   homeskillet init [REPOSITORY] [options]
+  homeskillet check [REPOSITORY] [options]
+  homeskillet wsl install [options]
+  homeskillet wsl status|link|unlink|setup [REPOSITORY [FILE...|STEP...]] [options]
   homeskillet self install|list [options]
   homeskillet self use latest|previous|VERSION [options]
   homeskillet self remove VERSION [options]
   homeskillet version
-  homeskillet completion bash|zsh
+  homeskillet completion bash|zsh|pwsh
   homeskillet help
 `
 
 // commandHelp describes each of commands.
 var commandHelp = map[string]string{
-	"status":     "Show whether each file is linked (the default)",
-	"link":       "Link the repository's files into the home directory",
-	"unlink":     "Remove the repository's links from the home directory",
-	"setup":      "Show each setup step, and run the ones you approve",
-	"init":       "Write a starter " + config.FileName + " for platforms and setup steps; a " + config.HomeDir + "/ directory alone needs none",
-	"self":       "Install, list, switch, or remove versions of homeskillet",
-	"version":    "Show the version and build details",
-	"completion": "Print a shell completion script; load it with eval \"$(homeskillet completion bash)\" in ~/.bashrc, or zsh in ~/.zshrc",
-	"help":       "Show this help",
+	"status": "Show whether each file is linked (the default)",
+	"link":   "Link the repository's files into the home directory",
+	"unlink": "Remove the repository's links from the home directory",
+	"setup":  "Show each setup step, and run the ones you approve",
+	"init":   "Write a starter " + config.FileName + " for platforms and setup steps; a " + config.HomeDir + "/ directory alone needs none",
+	"check":  "Check the repository's manifests and files, for every platform, and list each issue, or say that it is valid",
+	"wsl": "On Windows, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
+		"there on a copy of a Windows clone, or on a clone in the distribution written / or ~ first",
+	"self":    "Install, list, switch, or remove versions of homeskillet",
+	"version": "Show the version and build details",
+	"completion": "Print a shell completion script; load it with eval \"$(homeskillet completion bash)\" in ~/.bashrc, zsh in ~/.zshrc, " +
+		"or in PowerShell with homeskillet completion pwsh | Out-String | Invoke-Expression in $PROFILE",
+	"help": "Show this help",
 }
 
 var argumentHelp = [][2]string{
-	{"REPOSITORY", "A directory with " + config.FileName + ", a " + config.HomeDir + "/ directory, or both " +
+	{"REPOSITORY", "A directory with a manifest, " + config.FileName + " or " + config.DotfilesFileName + " or both, a " +
+		config.HomeDir + "/ directory, or both " +
 		"(default: the current directory, else the one linked into the home). Without a command, write it as a path: . or ./dotfiles"},
 	{"FILE", "Limits status, link, or unlink to this file or directory, named by link (.bashrc) or source (" +
 		config.HomeDir + "/.bashrc). Put -- before a name starting with -"},
@@ -61,6 +69,7 @@ var optionGroups = []struct {
 	{"link", []string{"force"}},
 	{"setup", []string{"yes"}},
 	{"self", []string{"prefix"}},
+	{"wsl", []string{"distribution", "from"}},
 }
 
 // help writes the help text to w: the version, how to run each command, and

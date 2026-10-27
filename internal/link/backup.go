@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // link --force: moving conflicting files and symlinks, never directories, into
 // the data directory's backups/ before linking, never overwriting a backup,

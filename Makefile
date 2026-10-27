@@ -17,7 +17,7 @@
 BINARY    := homeskillet
 BIN       := bin
 XPLAT     := go run ./tools/xplat
-PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
+PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64 windows-amd64 windows-arm64
 
 # The race detector needs cgo on Linux, and Go disables cgo when no C compiler
 # is installed, as on a fresh WSL Ubuntu or a slim container image. Enable
@@ -25,6 +25,12 @@ PLATFORMS := linux-amd64 linux-arm64 darwin-amd64 darwin-arm64
 # musl-based images such as Alpine, where the race detector is unsupported) or
 # `make test RACE=-race`. `?=` defers the `go env` call until RACE is used.
 RACE ?= $(if $(filter 1,$(shell go env CGO_ENABLED)),-race)
+
+# The executable suffix of this machine's builds: .exe on Windows, which runs
+# no file without one, and empty elsewhere. The $(eval) asks go once, when a
+# recipe first needs it, and a plain = keeps an environment variable named EXE
+# from renaming the build.
+EXE = $(eval EXE := $(shell go env GOEXE))$(EXE)
 
 # Sibling configuration repository used by `make integration`.
 INTEGRATION_REPO ?= ../dotfiles-linux
@@ -72,8 +78,7 @@ fmt: ## Format sources (gofmt -s and goimports, via golangci-lint)
 	golangci-lint fmt ./...
 
 # Vetting for macOS and Windows as well catches code that breaks those builds
-# from any machine: macOS is a target, and Windows builds the
-# unsupported-system stub and the packages that build everywhere.
+# from any machine, since each has files of its own.
 vet: ## Run go vet for this machine, macOS, and Windows
 	go vet ./...
 	env GOOS=darwin go vet ./...
@@ -97,24 +102,25 @@ hooks: ## Install the pre-commit hook: check, repogov, and demojify on each comm
 # CGO_ENABLED=0 makes the binary static, so it runs on any distribution or
 # container image of the same architecture, as the cross builds do.
 build: ## Build a static, stripped bin/homeskillet (VERSION=v0.0.1 to stamp one)
-	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/$(BINARY) .
+	env CGO_ENABLED=0 go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/$(BINARY)$(EXE) .
 
 install: build ## Install the build as a new version and update latest/previous (PREFIX=~/.local)
-	$(BIN)/$(BINARY) self install $(if $(PREFIX),--prefix "$(PREFIX)")
+	$(BIN)/$(BINARY)$(EXE) self install $(if $(PREFIX),--prefix "$(PREFIX)")
 
 cross: $(addprefix cross-,$(PLATFORMS)) ## Build bin/homeskillet-<os>-<arch> for every release platform
 
 # cross-<os>-<arch> builds one platform. `env` scopes GOOS and GOARCH to this
 # one go command, so cross targets never change how xplat or other targets
 # build. CGO_ENABLED=0 gives static binaries, -trimpath keeps local filesystem
-# paths out of them, and LDFLAGS strips them (see above).
+# paths out of them, and LDFLAGS strips them (see above). Windows runs only
+# files with an extension such as .exe, so its builds get one.
 cross-%:
 	env GOOS=$(word 1,$(subst -, ,$*)) GOARCH=$(word 2,$(subst -, ,$*)) CGO_ENABLED=0 \
-		go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/$(BINARY)-$* .
+		go build -trimpath -ldflags "$(LDFLAGS)" -o $(BIN)/$(BINARY)-$*$(if $(findstring windows,$*),.exe) .
 
 integration: build ## Link the dotfiles-linux manifest into a temporary home (needs bash)
 	@$(XPLAT) require $(INTEGRATION_REPO)/tests/check.sh "integration: $(INTEGRATION_REPO)/tests/check.sh not found; set INTEGRATION_REPO=<path>"
-	bash $(INTEGRATION_REPO)/tests/check.sh "$(CURDIR)/$(BIN)/$(BINARY)"
+	bash $(INTEGRATION_REPO)/tests/check.sh "$(CURDIR)/$(BIN)/$(BINARY)$(EXE)"
 
 clean: ## Remove bin/
 	$(XPLAT) rmrf $(BIN)

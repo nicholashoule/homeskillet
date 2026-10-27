@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Tests of the command line as a whole, through Run: parsing, linking and
 // unlinking end to end, setup, the default repository, the data directory,
@@ -91,6 +91,7 @@ func invoke(command, repo, home string, extra ...string) (string, error) {
 }
 
 func TestLifecycle(t *testing.T) {
+	requireSymlinks(t)
 	file := ".config/prompt/theme.json"
 	repo, home := fixture(t, file)
 	source, target := filepath.Join(repo, file), filepath.Join(home, file)
@@ -205,6 +206,7 @@ func TestCLIArguments(t *testing.T) {
 }
 
 func TestRepositoryArgument(t *testing.T) {
+	requireSymlinks(t)
 	for _, test := range []struct {
 		args    []string
 		command string
@@ -292,7 +294,7 @@ func TestSetup(t *testing.T) {
 	repo, home := fixture(t, "config")
 	manifest := config.Manifest{
 		Files: []config.Entry{{Source: "config", Target: "config"}},
-		Setup: []config.Step{{Name: "marker", Run: config.Commands{{"sh", "-c", `: > "$HOME/marker"`}}, Creates: "marker"}},
+		Setup: []config.Step{{Name: "marker", Run: config.Commands{touchCommand("marker")}, Creates: "marker"}},
 	}
 	data, err := json.Marshal(manifest)
 	if err != nil {
@@ -346,7 +348,7 @@ func TestSetupSteps(t *testing.T) {
 
 	repo, home := repository(t)
 	touch := func(name string, platforms ...string) config.Step {
-		return config.Step{Name: name, Run: config.Commands{{"sh", "-c", `: > "$HOME/$1"`, "sh", name}}, Platforms: platforms}
+		return config.Step{Name: name, Run: config.Commands{touchCommand(name)}, Platforms: platforms}
 	}
 	other := "darwin"
 	if runtime.GOOS == "darwin" {
@@ -376,6 +378,7 @@ func TestSetupSteps(t *testing.T) {
 }
 
 func TestWithoutManifest(t *testing.T) {
+	requireSymlinks(t)
 	files := []string{".bashrc", ".config/prompt/theme.json"}
 	repo, home := repository(t, "home/.bashrc", "home/.config/prompt/theme.json")
 	output, err := invoke("status", repo, home)
@@ -399,10 +402,8 @@ func TestWithoutManifest(t *testing.T) {
 		t.Fatalf("unlink: %s, %v", output, err)
 	}
 	// Discovered files get the same ownership checks as listed ones.
-	if err := os.Chmod(filepath.Join(repo, "home", ".config"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := invoke("status", repo, home); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+	makeShared(t, filepath.Join(repo, "home", ".config"))
+	if _, err := invoke("status", repo, home); err == nil || !strings.Contains(err.Error(), "is writable by") {
 		t.Fatalf("shared directory under home accepted: %v", err)
 	}
 	// With no steps to run, setup has nothing to protect and must not fail
@@ -452,6 +453,7 @@ func TestSelf(t *testing.T) {
 }
 
 func TestRefusesSystemLocations(t *testing.T) {
+	requireUnix(t)
 	repo, home := fixture(t, "config")
 	// The CLI checks home before any command runs, so even a command with
 	// nothing to do, such as setup without steps, fails clearly.
@@ -491,6 +493,7 @@ func TestEmptyValues(t *testing.T) {
 }
 
 func TestNilStreams(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := fixture(t, "config")
 	//nolint:staticcheck // SA1012: a nil context is what this test checks
 	if err := Run(nil, []string{"link", "--repo", repo, "--home", home}, nil, nil, nil); err != nil {
@@ -510,6 +513,10 @@ func TestMain(m *testing.M) {
 	if err := os.Unsetenv(dataDirVariable); err != nil {
 		panic(err)
 	}
+	// GitHub's Windows runners run tests elevated, the counterpart of root,
+	// which every command refuses. The rules under test are the same either
+	// way, and TestRefusesRoot covers the refusal itself.
+	privileged = func() bool { return false }
 	// The test binary stands in for homeskillet when a test runs a shell
 	// script that calls it (see TestBashCompletion).
 	if os.Getenv(asHomeskillet) == "1" {
@@ -523,6 +530,7 @@ func TestMain(m *testing.M) {
 }
 
 func TestOrphanedLinks(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/kept", "home/deleted")
 	if _, err := invoke("link", repo, home); err != nil {
 		t.Fatal(err)
@@ -562,6 +570,7 @@ func TestOrphanedLinks(t *testing.T) {
 }
 
 func TestDataDir(t *testing.T) {
+	requireUnix(t)
 	_, home := repository(t)
 	elsewhere := filepath.Join(filepath.Dir(home), "elsewhere")
 	for name, test := range map[string]struct {
@@ -593,6 +602,7 @@ func TestDataDir(t *testing.T) {
 }
 
 func TestDataDirOption(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/file")
 	if _, err := invoke("link", repo, home, "--data-dir", "~/.config/homeskillet"); err != nil {
 		t.Fatal(err)
@@ -603,8 +613,14 @@ func TestDataDirOption(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(home, ".local", "share", "homeskillet")); !errors.Is(err, fs.ErrNotExist) {
 		t.Fatalf("default data directory used anyway: %v", err)
 	}
+	// A system directory: /etc, or on Windows, where /etc is no absolute path,
+	// the Windows directory.
+	system := "/etc/homeskillet"
+	if runtime.GOOS == "windows" {
+		system = filepath.Join(os.Getenv("SystemRoot"), "homeskillet")
+	}
 	for _, args := range [][]string{
-		{"link", "--repo", repo, "--home", home, "--data-dir", "/etc/homeskillet"},
+		{"link", "--repo", repo, "--home", home, "--data-dir", system},
 		{"link", "--repo", repo, "--home", home, "--data-dir", filepath.Join(repo, "data")},
 		{"setup", "--repo", repo, "--home", home, "--data-dir", "~/x"},
 	} {
@@ -615,7 +631,8 @@ func TestDataDirOption(t *testing.T) {
 }
 
 func TestPlatforms(t *testing.T) {
-	other := map[string]string{"linux": "darwin", "darwin": "linux"}[runtime.GOOS]
+	requireSymlinks(t)
+	other := map[string]string{"linux": "darwin", "darwin": "linux", "windows": "linux"}[runtime.GOOS]
 	repo, home := repository(t, "home/.zshrc")
 	manifest := `{"platforms": ["` + other + `"], "setup": [{"name": "marker", "run": ["sh", "-c", ": > \"$HOME/ran\""]}]}`
 	if err := os.WriteFile(filepath.Join(repo, config.FileName), []byte(manifest), 0o600); err != nil {
@@ -664,6 +681,7 @@ func TestPlatforms(t *testing.T) {
 }
 
 func TestSelectFiles(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/.bashrc", "home/.vimrc", "home/.config/app/a", "home/.config/app/b")
 	linked := func(target string) bool {
 		_, err := os.Readlink(filepath.Join(home, target))
@@ -710,6 +728,7 @@ func TestSelectFiles(t *testing.T) {
 }
 
 func TestForce(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/.bashrc", "home/.vimrc")
 	bashrc := filepath.Join(home, ".bashrc")
 	if err := os.WriteFile(bashrc, []byte("mine\n"), 0o600); err != nil {
@@ -767,6 +786,7 @@ func TestForce(t *testing.T) {
 }
 
 func TestView(t *testing.T) {
+	requireSymlinks(t)
 	if newView(new(bytes.Buffer)) != nil {
 		t.Fatal("a buffer is not a terminal")
 	}
@@ -850,6 +870,7 @@ func (f *failAfter) Write(p []byte) (int, error) {
 }
 
 func TestForceStoppedPartway(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/a", "home/b")
 	for _, name := range []string{"a", "b"} {
 		if err := os.WriteFile(filepath.Join(home, name), []byte("mine "+name), 0o600); err != nil {
@@ -882,6 +903,7 @@ func TestForceStoppedPartway(t *testing.T) {
 }
 
 func TestSelectionIgnoresOtherEntries(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/.bashrc", "home/.config/app/conf")
 	// A shared directory where another entry would go blocks that entry,
 	// not the one named.
@@ -889,9 +911,7 @@ func TestSelectionIgnoresOtherEntries(t *testing.T) {
 	if err := os.Mkdir(shared, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(shared, 0o777); err != nil {
-		t.Fatal(err)
-	}
+	makeShared(t, shared)
 	if _, err := invoke("link", repo, home); err == nil {
 		t.Fatal("linking into a shared directory succeeded")
 	}
@@ -910,6 +930,7 @@ func TestSelectionIgnoresOtherEntries(t *testing.T) {
 }
 
 func TestDefaultRepository(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/.bashrc")
 	elsewhere := t.TempDir()
 	// From a directory that is not a repository, naming none, with nothing
@@ -932,6 +953,24 @@ func TestDefaultRepository(t *testing.T) {
 		!strings.Contains(output.String(), "linked\t"+filepath.Join(home, ".bashrc")) {
 		t.Fatalf("remembered repository: %q, %v", output.String(), err)
 	}
+	// From a directory homeskillet refuses to act on, such as the root, or
+	// for homeskillet.exe run from a WSL shell the distribution's files, the
+	// remembered repository is used too. Named, the directory is refused.
+	root := string(filepath.Separator)
+	if runtime.GOOS == "windows" {
+		root = filepath.VolumeName(os.Getenv("SystemRoot")) + `\`
+	}
+	t.Chdir(root)
+	output.Reset()
+	if err := Run(context.Background(), []string{"status", "--home", home}, nil, &output, new(bytes.Buffer)); err != nil ||
+		!strings.Contains(output.String(), "linked\t"+filepath.Join(home, ".bashrc")) {
+		t.Fatalf("remembered repository from %s: %q, %v", root, output.String(), err)
+	}
+	err = Run(context.Background(), []string{"status", ".", "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
+	if err == nil || !strings.Contains(err.Error(), "refusing to act on") {
+		t.Fatalf("%s named as the repository: %v", root, err)
+	}
+	t.Chdir(elsewhere)
 	// Named, the current directory is used even when it is not a
 	// repository, and the error has no hint.
 	err = Run(context.Background(), []string{"link", ".", "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
@@ -966,14 +1005,13 @@ func TestDefaultRepository(t *testing.T) {
 // directory it could not save the record to before removing any link, so the
 // failure leaves every link in place.
 func TestUnlinkChecksDataDirectoryFirst(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/.bashrc")
 	if _, err := invoke("link", repo, home); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.Chmod(filepath.Join(home, ".local", "share", "homeskillet"), 0o777); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := invoke("unlink", repo, home); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+	makeShared(t, filepath.Join(home, ".local", "share", "homeskillet"))
+	if _, err := invoke("unlink", repo, home); err == nil || !strings.Contains(err.Error(), "is writable by") {
 		t.Fatalf("unlink with a shared data directory: %v", err)
 	}
 	if _, err := os.Readlink(filepath.Join(home, ".bashrc")); err != nil {
@@ -982,6 +1020,7 @@ func TestUnlinkChecksDataDirectoryFirst(t *testing.T) {
 }
 
 func TestQuiet(t *testing.T) {
+	requireSymlinks(t)
 	repo, home := repository(t, "home/.bashrc")
 	var output bytes.Buffer
 	if err := Run(context.Background(), []string{"link", repo, "--home", home, "--quiet"}, nil, &output, new(bytes.Buffer)); err != nil || output.Len() != 0 {
@@ -1069,5 +1108,80 @@ func TestSetupView(t *testing.T) {
 	}
 	if lines.String() != "done\tgit\t"+filepath.Join(home, ".gitconfig")+"\npending\ttools\tbrew install jq; brew install rg\n" {
 		t.Errorf("script lines:\n%s", lines.String())
+	}
+}
+
+func TestRefusesRoot(t *testing.T) {
+	repo, home := repository(t, "home/config")
+	defer func(previous func() bool) { privileged = previous }(privileged)
+	privileged = func() bool { return true }
+	for _, args := range [][]string{
+		{"status", "--repo", repo, "--home", home},
+		{"setup", "--repo", repo, "--home", home, "--dry-run"},
+		{"self", "list", "--home", home},
+		{"init", repo},
+	} {
+		if err := Run(context.Background(), args, nil, nil, nil); err == nil || err.Error() != rootRefusal {
+			t.Errorf("%v as root: %v", args, err)
+		}
+	}
+	// What only prints, and reads nothing, runs.
+	for _, args := range [][]string{{"version"}, {"help"}, {"completion", "bash"}} {
+		if err := Run(context.Background(), args, nil, nil, nil); err != nil {
+			t.Errorf("%v as root: %v", args, err)
+		}
+	}
+	// Completion reads nothing for root without --allow-root either.
+	if _, ok := completionHome(invocation{home: home}); ok {
+		t.Error("completion read the home as root")
+	}
+	if err := Run(context.Background(), []string{"status", "--repo", repo, "--home", home, "--allow-root"}, nil, nil, nil); err != nil {
+		t.Errorf("status --allow-root: %v", err)
+	}
+}
+
+// TestNextSetup checks that link and status at a terminal end with the setup
+// steps still pending, and say nothing once every step is done.
+func TestNextSetup(t *testing.T) {
+	repo, home := repository(t)
+	steps := []config.Step{
+		{Name: "profile", Run: config.Commands{touchCommand("profile")}, Creates: "profile"},
+		{Name: "done", Run: config.Commands{touchCommand("done")}, Creates: "done"},
+	}
+	if err := os.WriteFile(filepath.Join(home, "done"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(config.Manifest{Setup: steps})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, config.FileName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	t.Chdir(repo)
+	if next := nextSetup(steps, repo, home); next != "Next: homeskillet setup offers 1 pending setup step, each shown before it runs." {
+		t.Fatalf("from the repository: %q", next)
+	}
+	t.Chdir(home)
+	if next := nextSetup(steps, repo, home); !strings.Contains(next, "homeskillet setup "+setup.Quote([]string{repo})+" offers") {
+		t.Fatalf("from elsewhere, the repository is not named: %q", next)
+	}
+	if err := os.WriteFile(filepath.Join(home, "profile"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if next := nextSetup(steps, repo, home); next != "" {
+		t.Fatalf("with every step done: %q", next)
+	}
+	// The view prints it after the closing line, and not when linking is
+	// blocked, which has a next step of its own.
+	v := &view{next: "Next: run setup."}
+	var output bytes.Buffer
+	if err := v.links(&output, "status", nil, false, false, nil); err != nil || !strings.HasSuffix(output.String(), "Next: run setup.\n") {
+		t.Fatalf("status output lacks the next step: %q, %v", output.String(), err)
+	}
+	output.Reset()
+	blocked := []link.Plan{{Source: filepath.Join(repo, "a"), Target: filepath.Join(home, "a"), State: link.Conflict}}
+	if err := v.links(&output, "link", blocked, false, false, nil); err != nil || strings.Contains(output.String(), "Next: run setup.") {
+		t.Fatalf("blocked link names the setup step: %q, %v", output.String(), err)
 	}
 }
