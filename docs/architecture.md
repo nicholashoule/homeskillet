@@ -59,7 +59,9 @@ A command runs in this order:
    wsl_windows.go) passes the command on to the Linux build in a
    distribution, after copying a Windows clone there through the hidden
    `__mirror` command (see wsl.go and package mirror), which that build runs
-   on the copy it receives. The rest refuse a
+   on the copy it receives; `wsl install` records itself there through the
+   hidden `__windows-build` command, and the Linux build's `wsl` hands over to
+   that recorded program (see wsl_unix.go). The rest refuse a
    home directory that fails `trust.CheckLocation`; `self` then continues as
    described under [Installing homeskillet](#installing-homeskillet), and
    `backups` lists, or purges once approved, the data directory's backups

@@ -211,7 +211,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	// steps waiting, such as the one that makes their shell load what was
 	// linked, so the view says what to run next.
 	if v != nil && (inv.command == "link" || inv.command == "status") && len(steps) > 0 {
-		v.next = nextSetup(steps, repo, home)
+		v.next = nextSetup(steps, repo, home, remembered)
 	}
 	data, err := dataDir(inv, home)
 	if err != nil {
@@ -222,8 +222,8 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 
 // runApart runs the commands that do not act on a repository and a home
 // here, as the rest do, and reports whether inv was one of them: init and
-// check, which need only the repository, and wsl and the copy it sends,
-// which work in a WSL distribution's home.
+// check, which need only the repository, and wsl and the copy and record it
+// sends, which work in a WSL distribution's home.
 func runApart(ctx context.Context, inv invocation, input io.Reader, output, diagnostics io.Writer) (bool, error) {
 	switch inv.command {
 	case "init":
@@ -234,6 +234,8 @@ func runApart(ctx context.Context, inv invocation, input io.Reader, output, diag
 		return true, runWSL(ctx, inv, input, output, diagnostics)
 	case mirrorCommand:
 		return true, runMirror(inv, input, output)
+	case windowsBuildCommand:
+		return true, runWindowsBuild(inv)
 	}
 	return false, nil
 }
@@ -443,6 +445,9 @@ func parseHidden(args []string) (invocation, bool, error) {
 		return invocation{command: completeCommand, words: args[1:]}, true, nil
 	case mirrorCommand:
 		inv, err := parseMirror(args[1:])
+		return inv, true, err
+	case windowsBuildCommand:
+		inv, err := parseWindowsBuild(args[1:])
 		return inv, true, err
 	}
 	return invocation{}, false, nil

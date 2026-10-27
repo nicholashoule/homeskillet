@@ -42,7 +42,7 @@ var commandHelp = map[string]string{
 	"setup":  "Show each setup step, and run the ones you approve",
 	"init":   "Write a starter " + config.FileName + " for platforms and setup steps; a " + config.HomeDir + "/ directory alone needs none",
 	"check":  "Check the repository's manifests and files, for every platform, and list each issue, or say that it is valid",
-	"wsl": "On Windows, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
+	"wsl": "On Windows, or from a WSL shell, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
 		"there on a copy of a Windows clone, or on a clone in the distribution written / or ~ first",
 	"backups": "List the files link --force moved into a backup; backups purge deletes them after showing them and asking",
 	"self":    "Install, list, switch, or remove versions of homeskillet",

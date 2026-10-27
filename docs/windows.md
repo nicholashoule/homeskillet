@@ -346,8 +346,9 @@ Windows path first; if that path is not on Windows, the error says so.
 
 ### The wsl Command
 
-`homeskillet wsl install|status|link|unlink|setup` runs on Windows and acts in
-a distribution, WSL's default unless `--distribution NAME` names another:
+`homeskillet wsl install|status|link|unlink|setup` runs on Windows, or in a WSL
+shell ([below](#from-a-wsl-shell)), and acts in a distribution, WSL's default
+unless `--distribution NAME` names another:
 
 - **install** puts homeskillet's Linux build, of the same version, in the
   distribution. A release downloads `homeskillet-linux-<arch>` with Windows's
@@ -364,14 +365,18 @@ a distribution, WSL's default unless `--distribution NAME` names another:
   ([install.md](install.md#versions-and-updates)). What `wsl.exe` starts
   reads no shell startup file, so install cannot tell whether your shells
   there put `~/.local/bin` on `PATH`; its note says what to add if a new shell
-  cannot run `homeskillet`.
+  cannot run `homeskillet`. Last, it records itself there, in
+  `windows-build.json` in the data directory, as the Windows build `wsl` in
+  that distribution hands over to: your installed `homeskillet.exe` when it is
+  the one running, so the record follows the version you choose on Windows, or
+  else the program that ran, such as a development build.
 - **status, link, unlink, and setup** run the Linux build in the distribution,
   which must be this version: the one in `--home`'s `.local/bin`, if a home is
   given and has one, as `wsl install --home` puts it there, or else the one in
   your own home there. A repository written `/` or `~` first is a clone
   there and is used as it is. With none named, it is the current directory or,
   as for the other commands, the Windows repository linked before, so
-  `homeskillet.exe wsl link` alone works from a WSL shell. Any other is a
+  `homeskillet wsl link` alone works from a WSL shell. Any other is a
   Windows clone: after every check
   the other commands make, it is copied into a private directory in the
   distribution's data directory, `mirrors/`, and the command runs on the copy.
@@ -405,19 +410,31 @@ nothing else, so no command ever runs twice; and runs each command with
 
 ### From a WSL Shell
 
-`homeskillet` runs the Linux build and, as WSL adds Windows's `PATH` by
-default, `homeskillet.exe` runs the Windows one, which acts on your Windows
-home. Started in a WSL directory, which it will not act on, the Windows build
-uses the repository it linked before. WSL passes standard input on to Windows
-programs, so in a script give `homeskillet.exe` `</dev/null`, or it reads the
-script's own input.
+`homeskillet wsl` works from a WSL shell as from Windows: the Linux build hands
+it to the Windows build `wsl install` recorded (see install above), with the
+same arguments and `--distribution` set to this distribution, and says
+`running the Windows build, C:\...\homeskillet.exe` on standard error, unless
+`--quiet`. It runs only that program, never a `homeskillet.exe` found on
+`PATH`, where WSL puts Windows's directories in an order you do not see. A
+repository or `--from` given as a path on a Windows drive, such as
+`/mnt/c/...` or `.` there, goes as Windows names it, by WSL's `wslpath`; a
+repository elsewhere is a clone in the distribution. With no Windows build
+recorded, or WSL's interop with Windows turned off in `/etc/wsl.conf`, it
+fails and says to run `homeskillet wsl` from Windows; it never falls back to
+something else. On Linux elsewhere and on macOS, `wsl` is refused.
 
-The Linux build acts on the copy as on any repository, but never updates it:
-`homeskillet link` in WSL, with the copy as the repository it linked before,
-relinks the copy as it is. At a terminal its header says so, with a
-`copy of:` line naming the Windows clone and when the copy was last updated.
-To bring over changes made since, run `homeskillet.exe wsl link`, from
-Windows or from that shell.
+Run without `wsl`, `homeskillet` is the Linux build, acting on the
+distribution as on any Linux. It acts on the copy as on any repository, but
+never updates it: `homeskillet link` in WSL, with the copy as the repository
+it linked before, relinks the copy as it is. At a terminal its header says so,
+with a `copy of:` line naming the Windows clone and when the copy was last
+updated. To bring over changes made since, run `homeskillet wsl link`.
+
+As WSL adds Windows's `PATH` by default, `homeskillet.exe` runs the Windows
+build directly, acting on your Windows home. Started in a WSL directory, which
+it will not act on, it uses the repository it linked before. WSL passes
+standard input on to Windows programs, so in a script give `homeskillet.exe`,
+or `homeskillet wsl`, `</dev/null`, or it reads the script's own input.
 
 ## Limits
 

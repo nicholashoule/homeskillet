@@ -29,9 +29,11 @@ Windows, on x64 and Arm64, join those for Linux and macOS
   `unlink`, `setup`, and `status` install the Linux build in a distribution
   and run there, on a checked copy of the Windows clone, or on a clone already
   inside WSL ([docs/windows.md](docs/windows.md#windows-and-wsl-together)).
-- Use Windows and WSL side by side: `homeskillet.exe` run from a WSL shell
-  uses the Windows repository it linked before, and each side refuses the
-  other's files with a message saying where to run instead.
+- Use Windows and WSL side by side: `homeskillet wsl link` and the other `wsl`
+  commands work from a WSL shell too, handed to the Windows build that
+  installed homeskillet there; `homeskillet.exe` run from a WSL shell uses the
+  Windows repository it linked before; and each side refuses the other's files
+  with a message saying where to run instead.
 - Name a manifest `bootstrap.json`, which `homeskillet init` now writes, or
   keep `dotfiles.json`. A repository can keep both, such as its files in one
   and the steps that install tools in the other, and they merge

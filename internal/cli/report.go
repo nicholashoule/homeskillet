@@ -209,7 +209,8 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 // person who has just linked it learns that, for example, the step that makes
 // their shell load what was linked has not run. It is "" when no step is
 // pending, or when the steps cannot be checked, which setup itself reports.
-func nextSetup(steps []config.Step, repo, home string) string {
+// remembered marks a repository taken from the record, as setup takes it too.
+func nextSetup(steps []config.Step, repo, home string, remembered bool) string {
 	plans, err := setup.Prepare(steps, repo, home)
 	if err != nil {
 		return ""
@@ -223,9 +224,10 @@ func nextSetup(steps []config.Step, repo, home string) string {
 	if pending == 0 {
 		return ""
 	}
-	// The repository can go unnamed when it is the current directory.
+	// The repository can go unnamed when it is the current directory, or the
+	// one in the record, which setup falls back to as link did.
 	command := "homeskillet setup"
-	if cwd, err := os.Getwd(); err != nil || !samePlace(cwd, repo) {
+	if cwd, err := os.Getwd(); !remembered && (err != nil || !samePlace(cwd, repo)) {
 		command += " " + setup.Quote([]string{repo})
 	}
 	return fmt.Sprintf("Next: %s offers %s, each shown before it runs.", command, files(pending, "pending setup step"))

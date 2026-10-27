@@ -135,6 +135,12 @@ must be exactly what Windows checked:
 - Commands run in the distribution with `wsl.exe --exec`, never through a
   shell there, and `wsl.exe` comes from the system directory, never `PATH`.
   Only a command that changes nothing is ever retried.
+- `wsl` from a WSL shell runs only the Windows build `wsl install` recorded,
+  never a `homeskillet.exe` found on `PATH`, and reads that record only from a
+  data directory that passes the ownership rules, since it names a program to
+  run. The program itself is on a Windows drive, where WSL shows no owner or
+  permissions to check, so Windows's own access rules guard it, as when it
+  runs from Windows.
 
 ## Unlinking and Orphaned Links
 

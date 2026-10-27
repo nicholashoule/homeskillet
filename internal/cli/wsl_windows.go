@@ -369,7 +369,49 @@ func installWSL(ctx context.Context, runner wsl.Runner, inv invocation, output, 
 	if _, err := io.WriteString(output, installNotes(installed, runner.Distribution())); err != nil || inv.dryRun {
 		return err
 	}
-	return selectInstalled(ctx, runner, file, current, inv, output, diagnostics)
+	if err := selectInstalled(ctx, runner, file, current, inv, output, diagnostics); err != nil {
+		return err
+	}
+	return recordWindowsBuild(ctx, runner, file, inv)
+}
+
+// recordWindowsBuild records in the distribution the Windows build that
+// installed homeskillet there, so that homeskillet wsl run there hands over
+// to it (see handOff) rather than to whatever homeskillet.exe comes first on
+// PATH. wslpath, WSL's own, says where the distribution sees it, as wsl.conf
+// can move Windows's drives.
+func recordWindowsBuild(ctx context.Context, runner wsl.Runner, file string, inv invocation) error {
+	program, err := windowsProgram()
+	if err != nil {
+		return err
+	}
+	seen, err := runner.Output(ctx, nil, "wslpath", "-u", program)
+	if err != nil {
+		return err
+	}
+	args := append([]string{file, windowsBuildCommand, program, strings.TrimSpace(seen)}, mirrorOptions(inv)...)
+	_, err = runner.Output(ctx, nil, args...)
+	return err
+}
+
+// windowsProgram returns the Windows build to record: the installed command
+// in the home's .local\bin when it runs this program, so the record follows
+// the version chosen on Windows, or else this program itself, such as a
+// development build.
+func windowsProgram() (string, error) {
+	program, err := os.Executable()
+	if err != nil {
+		return "", err
+	}
+	// Without a home, there is no installed command to prefer.
+	if home, err := os.UserHomeDir(); err == nil {
+		layout, err := selfLayout(invocation{}, home)
+		self, selfErr := filepath.EvalSymlinks(program)
+		if err == nil && selfErr == nil && samePlace(layout.Command(), self) {
+			return layout.Command(), nil
+		}
+	}
+	return program, nil
 }
 
 // selectInstalled makes the command in the distribution run current, the

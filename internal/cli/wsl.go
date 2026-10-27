@@ -45,6 +45,29 @@ var mirrorModes = []string{"update", "compare", "temporary"}
 // mirrorsDir is the data directory's directory of copies.
 const mirrorsDir = "mirrors"
 
+// windowsBuildCommand is the hidden command wsl install runs in a
+// distribution to record the Windows build that installed homeskillet there,
+// so that homeskillet wsl run in the distribution can hand over to it (see
+// handOff). It is not in commands, so help and errors never offer it.
+const windowsBuildCommand = "__windows-build"
+
+// windowsBuildFile is the data directory's record of the Windows build.
+const windowsBuildFile = "windows-build.json"
+
+// windowsBuild is the record windowsBuildCommand writes: the Windows build's
+// program as Windows names it, to show, and as the distribution does, to run.
+type windowsBuild struct {
+	Windows string `json:"windows"`
+	Path    string `json:"path"`
+}
+
+// valid reports whether b names a Windows program in full, both ways, with
+// nothing in either name that could disguise what it shows.
+func (b windowsBuild) valid() bool {
+	exe := func(name string) bool { return len(name) > 4 && strings.EqualFold(name[len(name)-4:], ".exe") }
+	return config.Printable(b.Windows) && config.Printable(b.Path) && exe(b.Windows) && exe(b.Path) && path.IsAbs(b.Path)
+}
+
 // parseWSL reads the arguments after wsl: a command (see wslCommands); then,
 // except for install, a repository, a Windows clone to copy into the
 // distribution or, written / or ~ first, a clone already there; and options.
@@ -310,8 +333,8 @@ type copyRecord struct {
 	Updated time.Time `json:"updated"`
 }
 
-// maxCopyRecord bounds what describeCopy reads of a record.
-const maxCopyRecord = 64 << 10
+// maxRecord bounds what is read of a record wsl keeps in the data directory.
+const maxRecord = 64 << 10
 
 // runMirror receives a copy of a repository on input, for mirrorCommand, and
 // writes where it is, or for compare how it differs from the copy there is.
@@ -387,11 +410,11 @@ func describeCopy(inv invocation, home, repo string) string {
 	}
 	text := "a Windows clone, kept by homeskillet wsl"
 	var record copyRecord
-	raw, err := safefile.Read(repo+".json", maxCopyRecord)
+	raw, err := safefile.Read(repo+".json", maxRecord)
 	if err == nil && json.Unmarshal(raw, &record) == nil && config.Printable(record.Source) && !record.Updated.IsZero() {
 		text = record.Source + ", updated " + record.Updated.Local().Format("2006-01-02 15:04")
 	}
-	return text + "; homeskillet.exe wsl link updates it from Windows"
+	return text + "; homeskillet wsl link updates it from Windows"
 }
 
 // mirrorParent returns the directory runMirror keeps the copy in, creating it
@@ -400,12 +423,44 @@ func mirrorParent(inv invocation) (string, error) {
 	if inv.sub == "temporary" {
 		return os.MkdirTemp("", "homeskillet-mirror-")
 	}
+	return distributionData(inv, mirrorsDir)
+}
+
+// distributionData returns the directory dir in the data directory of the
+// home wsl acts on in the distribution, creating both private when missing.
+// Links lead into the copy there, and the record there names a program
+// homeskillet runs, so whoever could change them could run code as the user.
+func distributionData(inv invocation, dir string) (string, error) {
+	home, err := distributionHome(inv)
+	if err != nil {
+		return "", err
+	}
+	data, err := dataDir(inv, home)
+	if err != nil {
+		return "", err
+	}
+	if err := trust.CheckCreatable(data); err != nil {
+		return "", err
+	}
+	parent := filepath.Join(data, dir)
+	//nolint:gosec // G703: in the data directory, which dataDir and trust.CheckCreatable just checked
+	if err := os.MkdirAll(parent, 0o700); err != nil {
+		return "", err
+	}
+	return parent, trust.CheckDirectory(parent)
+}
+
+// distributionHome returns the home wsl acts on in the distribution: the
+// user's own, or --home, relative to the user's own, as the commands wsl runs
+// there take it, since they start there.
+func distributionHome(inv invocation) (string, error) {
 	homePath := inv.home
-	if homePath == "" {
-		var err error
-		if homePath, err = os.UserHomeDir(); err != nil {
+	if !filepath.IsAbs(homePath) {
+		own, err := os.UserHomeDir()
+		if err != nil {
 			return "", err
 		}
+		homePath = filepath.Join(own, homePath)
 	}
 	home, err := canonicalDirectory(homePath)
 	if err != nil {
@@ -414,19 +469,62 @@ func mirrorParent(inv invocation) (string, error) {
 	if err := trust.CheckLocation(home); err != nil {
 		return "", fmt.Errorf("home: %w", err)
 	}
-	data, err := dataDir(inv, home)
+	return home, nil
+}
+
+// parseWindowsBuild reads the arguments of windowsBuildCommand: the Windows
+// build as Windows names it, kept in inv.repo, and as the distribution does,
+// kept in inv.operand, and --home, --data-dir, and --allow-root, as wsl
+// install passes them on.
+func parseWindowsBuild(args []string) (invocation, error) {
+	inv := invocation{command: windowsBuildCommand}
+	flags := newFlags(&inv)
+	operands, err := parseFlags(flags, args)
 	if err != nil {
-		return "", err
+		return invocation{}, err
 	}
-	// Links lead into the copy, so whoever could change it could change what
-	// they lead to, as for the repository itself.
-	if err := trust.CheckCreatable(data); err != nil {
-		return "", err
+	var other error
+	flags.Visit(func(f *flag.Flag) {
+		if f.Name != "home" && f.Name != "data-dir" && f.Name != "allow-root" {
+			other = fmt.Errorf("%s takes no --%s", windowsBuildCommand, f.Name)
+		}
+	})
+	if other != nil {
+		return invocation{}, other
 	}
-	parent := filepath.Join(data, mirrorsDir)
-	//nolint:gosec // G703: in the data directory, which dataDir and trust.CheckCreatable just checked
-	if err := os.MkdirAll(parent, 0o700); err != nil {
-		return "", err
+	if len(operands) != 2 || !(windowsBuild{Windows: operands[0], Path: operands[1]}).valid() {
+		return invocation{}, fmt.Errorf("usage: homeskillet %s WINDOWS-PATH PATH", windowsBuildCommand)
 	}
-	return parent, trust.CheckDirectory(parent)
+	inv.repo, inv.operand = operands[0], operands[1]
+	return inv, nil
+}
+
+// runWindowsBuild records the Windows build, for windowsBuildCommand, in the
+// data directory of the home wsl install installed homeskillet in.
+func runWindowsBuild(inv invocation) error {
+	data, err := distributionData(inv, ".")
+	if err != nil {
+		return err
+	}
+	record := windowsBuild{Windows: inv.repo, Path: inv.operand}
+	return safefile.Write(filepath.Join(data, windowsBuildFile), 0o600, func(w io.Writer) error {
+		return json.NewEncoder(w).Encode(record)
+	})
+}
+
+// readWindowsBuild returns the Windows build recorded in data, the data
+// directory, or says how to record one.
+func readWindowsBuild(data string) (windowsBuild, error) {
+	var record windowsBuild
+	raw, err := safefile.Read(filepath.Join(data, windowsBuildFile), maxRecord)
+	if errors.Is(err, fs.ErrNotExist) {
+		return record, errors.New("no Windows build is recorded here; run homeskillet wsl install from Windows once, and then homeskillet wsl works here too")
+	}
+	if err != nil {
+		return record, err
+	}
+	if err := json.Unmarshal(raw, &record); err != nil || !record.valid() {
+		return windowsBuild{}, errors.New("the record of the Windows build is damaged; run homeskillet wsl install from Windows again")
+	}
+	return record, nil
 }

@@ -15,7 +15,7 @@ option.
 | `setup` | Show each setup step and run the ones you approve ([manifest.md](manifest.md#setup-steps)). |
 | `init` | Write a starter `bootstrap.json` where there is no manifest ([manifest.md](manifest.md#creating-one)). |
 | `check` | List every issue in a repository, for every platform, or say it is valid ([manifest.md](manifest.md#checking-one)). |
-| `wsl` | On Windows, act in a WSL distribution ([windows.md](windows.md#the-wsl-command)). |
+| `wsl` | On Windows, or from a WSL shell, act in a WSL distribution ([windows.md](windows.md#the-wsl-command)). |
 | `backups` | List the files `link --force` moved aside; `backups purge` deletes them once you approve ([Conflicts and Backups](#conflicts-and-backups)). |
 | `self` | Install, list, switch, or remove versions of homeskillet ([install.md](install.md#versions-and-updates)). |
 | `version`, `completion`, `help` | Show the version, print a shell completion script ([install.md](install.md#shell-completion)), or show the help. |

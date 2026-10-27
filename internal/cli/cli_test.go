@@ -1159,17 +1159,21 @@ func TestNextSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(repo)
-	if next := nextSetup(steps, repo, home); next != "Next: homeskillet setup offers 1 pending setup step, each shown before it runs." {
+	if next := nextSetup(steps, repo, home, false); next != "Next: homeskillet setup offers 1 pending setup step, each shown before it runs." {
 		t.Fatalf("from the repository: %q", next)
 	}
 	t.Chdir(home)
-	if next := nextSetup(steps, repo, home); !strings.Contains(next, "homeskillet setup "+setup.Quote([]string{repo})+" offers") {
+	if next := nextSetup(steps, repo, home, false); !strings.Contains(next, "homeskillet setup "+setup.Quote([]string{repo})+" offers") {
 		t.Fatalf("from elsewhere, the repository is not named: %q", next)
+	}
+	// setup falls back to the record as link did.
+	if next := nextSetup(steps, repo, home, true); !strings.HasPrefix(next, "Next: homeskillet setup offers") {
+		t.Fatalf("from the record, the repository is named: %q", next)
 	}
 	if err := os.WriteFile(filepath.Join(home, "profile"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if next := nextSetup(steps, repo, home); next != "" {
+	if next := nextSetup(steps, repo, home, false); next != "" {
 		t.Fatalf("with every step done: %q", next)
 	}
 	// The view prints it after the closing line, and not when linking is

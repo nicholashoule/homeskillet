@@ -127,6 +127,45 @@ func TestInstallNotes(t *testing.T) {
 	}
 }
 
+// TestWindowsBuildRecord runs the hidden command wsl install records the
+// Windows build through, as wsl install runs it in a distribution, and reads
+// the record back as homeskillet wsl does there.
+func TestWindowsBuildRecord(t *testing.T) {
+	_, home := repository(t)
+	data := filepath.Join(home, ".local", "share", "homeskillet")
+	if _, err := readWindowsBuild(data); err == nil || !strings.Contains(err.Error(), "run homeskillet wsl install from Windows") {
+		t.Fatalf("with no record: %v", err)
+	}
+	windows, seen := `C:\Users\you\.local\bin\homeskillet.exe`, "/mnt/c/Users/you/.local/bin/homeskillet.exe"
+	record := func(args ...string) error {
+		return Run(context.Background(), append([]string{windowsBuildCommand}, args...), nil, new(bytes.Buffer), new(bytes.Buffer))
+	}
+	if err := record(windows, seen, "--home", home); err != nil {
+		t.Fatal(err)
+	}
+	if build, err := readWindowsBuild(data); err != nil || build != (windowsBuild{Windows: windows, Path: seen}) {
+		t.Fatalf("read back: %+v, %v", build, err)
+	}
+	for _, args := range [][]string{
+		{windows},
+		{windows, "relative/homeskillet.exe", "--home", home},
+		{windows, "/mnt/c/Users/you/homeskillet", "--home", home},
+		{`C:\Users\you\homeskillet`, seen, "--home", home},
+		{windows, "/mnt/c/bad\x1b[2K.exe", "--home", home},
+		{windows, seen, "--home", home, "--force"},
+	} {
+		if err := record(args...); err == nil {
+			t.Errorf("%q accepted", args)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(data, windowsBuildFile), []byte(`{"windows":"x","path":"y"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := readWindowsBuild(data); err == nil || !strings.Contains(err.Error(), "damaged") {
+		t.Fatalf("with a damaged record: %v", err)
+	}
+}
+
 func TestExpandHome(t *testing.T) {
 	home, err := os.UserHomeDir()
 	if err != nil {
@@ -184,7 +223,7 @@ func TestReceiveMirror(t *testing.T) {
 	}
 	// The copy says whose it is, for the Linux build's header.
 	if note := describeCopy(invocation{}, home, copied); !strings.HasPrefix(note, source+", updated ") ||
-		!strings.HasSuffix(note, "homeskillet.exe wsl link updates it from Windows") {
+		!strings.HasSuffix(note, "homeskillet wsl link updates it from Windows") {
 		t.Fatalf("describeCopy: %q", note)
 	}
 	if note := describeCopy(invocation{}, home, repo); note != "" {
