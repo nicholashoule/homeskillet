@@ -182,7 +182,10 @@ homeskillet setup ~/dotfiles-windows --platform windows --dry-run
 
 `status` with `--platform windows` links into nothing: it shows that every
 file is found and every target is valid. Setup steps for another operating
-system can only be listed, with `--dry-run`.
+system can only be listed, with `--dry-run`. A repository's `home/wsl/`, and
+its Linux steps, are checked the same way with `--platform linux`, with no
+WSL needed, as in CI; on Linux, `link` with a scratch `--home` links them for
+real.
 
 ## Use
 
@@ -196,9 +199,9 @@ homeskillet setup $HOME\projects\dotfiles-windows
 
 In place of a command, and after `setup`, a repository must plainly be a path:
 `.`, `..`, or containing `/`, `\`, or a drive, such as `.\dotfiles` or
-`C:dotfiles`. A file named after the repository may start with `~\` as well as
-`~/`. Paths and file names are compared without regard to case, as Windows
-compares them.
+`C:dotfiles`. A path may start with `~\` as well as `~/`, in `cmd` too, where
+no shell expands it. Paths and file names are compared without regard to
+case, as Windows compares them. [usage.md](usage.md) covers the rest.
 
 ## How Windows Differs
 

@@ -1,4 +1,35 @@
-# The Manifest
+# Configuration Repositories
+
+What a configuration repository holds: a `home/` directory, a manifest, or
+both. [usage.md](usage.md) covers running homeskillet on one.
+
+## The home/ Directory
+
+The simplest repository needs no manifest. Put files under a `home/` directory
+at its root, laid out as they belong in your home directory:
+
+```text
+dotfiles/
+└── home/
+    ├── .bashrc                          -> ~/.bashrc
+    ├── .bashrc.d/aliases.sh             -> ~/.bashrc.d/aliases.sh
+    └── .config/git/config               -> ~/.config/git/config
+```
+
+Every file under `home/` is linked on its own. Directories are created as
+needed and never linked themselves, so other files in `~/.config` are left
+alone. homeskillet skips `.DS_Store`, which macOS Finder creates, `Thumbs.db`
+and `desktop.ini`, which Windows Explorer creates, and `.git`, which holds a
+nested repository's metadata, whatever their case. `home/` may be a symlink to
+another directory inside the repository, for example to choose between
+per-machine layouts. A Windows repository may keep a WSL distribution's home in
+`home/wsl/` ([A Home for WSL](#a-home-for-wsl)).
+
+Each shell reads only its own startup files, as zsh, the macOS default, reads
+`.zshrc` and `.zprofile` and not the bash files, so a repository for both keeps
+both.
+
+## The Manifest
 
 A manifest at the root of a configuration repository, `bootstrap.json`,
 `dotfiles.json`, or both, is optional. A repository with only a `home/`

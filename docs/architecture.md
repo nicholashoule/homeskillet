@@ -13,7 +13,8 @@ checks. The interface between the two is small and documented in the README
 and [manifest.md](manifest.md):
 
 - Files under the repository's `home/` directory mirror the home directory and
-  are linked when no manifest lists `files`.
+  are linked when no manifest lists `files`; `home/wsl/`, when present,
+  mirrors a WSL distribution's home.
 - A manifest's `files` list replaces that convention with explicit entries,
   and its `setup` list declares setup steps, which are never inferred. Two
   manifests merge into one.
@@ -242,7 +243,9 @@ and dry runs stop after the checks.
 - `unlink` removes only listed links pointing to their expected source paths,
   including dangling owned links. It skips conflicts and ownership checks so
   cleanup is always possible.
-- Dry runs do not create files or directories, and never run setup steps.
+- Dry runs create nothing in a home, repository, or data directory, and never
+  run setup steps. `wsl` may make a temporary copy of a repository in the
+  distribution's temporary directory for one, and removes it afterward.
 - Setup steps run only after the whole repository tree passes the ownership
   rules and every symlink in it stays inside the repository at every hop
   (`trust.CheckTree`), checked again before each step, and only once each
@@ -294,7 +297,8 @@ and dry runs stop after the checks.
 - Configuration must be unlinked before the configuration clone is moved.
 
 Files homeskillet parses are read with size limits: 1 MiB for each manifest and
-64 KiB for a `build.json`. Exported functions treat a nil output writer as
+64 KiB for a `build.json`; a copy sent to WSL is bounded in size and in files
+too (package mirror). Exported functions treat a nil output writer as
 discarding and a nil context as `context.Background`.
 
 Preflight is not a transaction or a concurrency guarantee, and two `self`

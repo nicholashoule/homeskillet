@@ -63,6 +63,18 @@ elevated, which allows symlinks. Lint the Linux build too
 (`$env:GOOS = 'linux'` before `golangci-lint run`), since files for one system
 are invisible to a lint of the other.
 
+`homeskillet wsl` needs a real WSL distribution, which CI does not have, so
+try it by hand. A development build has no release to download, so build the
+Linux one from the same tree, which `wsl install` requires, and keep
+everything in a scratch home in the distribution:
+
+```powershell
+make install; make cross-linux-amd64
+wsl.exe --exec mkdir -p -m 700 /tmp/scratch/home
+homeskillet wsl install --from bin\homeskillet-linux-amd64 --home /tmp/scratch/home
+homeskillet wsl link C:\path\to\repository --home /tmp/scratch/home
+```
+
 ## Git Hooks
 
 `make hooks` installs [tools/githooks/pre-commit](../tools/githooks/pre-commit)
@@ -120,7 +132,7 @@ later releases, which leaves the comment behind.
 
 ## Binary Size
 
-A build is about 2.8 MiB. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table
+A build is about 2.9 MiB. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table
 and DWARF data (about a third of the binary) while keeping function names and
 lines in panics, and set `CGO_ENABLED=0` for a static binary. Code avoids
 packages that cost more than they do here: `regexp` (about 260 KiB) gave way
@@ -164,12 +176,13 @@ from a command copied here.
 ## Cross Builds
 
 ```sh
-make cross                  # all of linux/darwin x amd64/arm64
+make cross                  # every release platform: linux, darwin, and windows, each amd64 and arm64
 make cross-darwin-arm64     # one platform
 ```
 
-Each target writes `bin/homeskillet-<os>-<arch>` with `CGO_ENABLED=0` and
-`-trimpath`, so binaries are static and contain no local filesystem paths.
+Each target writes `bin/homeskillet-<os>-<arch>`, with `.exe` for Windows, with
+`CGO_ENABLED=0` and `-trimpath`, so binaries are static and contain no local
+filesystem paths. A release builds the same way ([release.md](release.md#tagging)).
 
 Cross-compilation verifies builds, not native macOS execution. Native checks on
 a Mac are still required before claiming runtime verification there.

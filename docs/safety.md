@@ -244,13 +244,14 @@ themselves, or be inside `/etc`, `/usr` (including `/usr/local`), `/bin`,
 others. That turns mistakes such as `HOME=/` in a container or
 `--prefix /usr/local` into errors before anything is read or written. Temporary
 directories, `/root`, and homes anywhere else are fine. On Windows, drive
-roots, `C:\Users` itself, and the Windows and program directories are refused
-the same way ([windows.md](windows.md#system-locations)).
+roots, `C:\Users` itself, the Windows and program directories, and a WSL
+distribution's files are refused the same way
+([windows.md](windows.md#system-locations)).
 
 ## Limits
 
 Operations are idempotent but not transactional. An I/O failure can leave a
-partial installation; resolve it and rerun. Do not modify the manifest or
+partial installation; resolve it and rerun. Do not modify a manifest or
 directory structure concurrently with the CLI, and run one homeskillet at a
 time per data directory: two runs, as for a scratch home and the real one, can
 each save the record of links without the other's update. Cloning from git, templating, and

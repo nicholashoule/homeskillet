@@ -1,8 +1,28 @@
 # Installing and Updating
 
-How homeskillet records its version and keeps installed versions side by side.
-[README.md](../README.md#build-and-install) covers building and the first
-install.
+How to install homeskillet, how it records its version, and how it keeps
+installed versions side by side. [development.md](development.md) covers
+building it for development.
+
+## Building and Installing
+
+With Go 1.24 or newer, from a clone of this repository:
+
+```sh
+make install          # build bin/homeskillet, then install it as a new version
+homeskillet version
+```
+
+`make install` runs the build's `self install`, which copies it into a
+directory of its own version in the [data directory](#data-directory) and
+points the `homeskillet` command in `~/.local/bin` at it (see
+[Versions and Updates](#versions-and-updates)). homeskillet says so when that
+directory is not on your `PATH`, as on macOS it usually is not.
+`make install PREFIX=<dir>` installs under another prefix, and `make build`
+alone leaves the binary in `bin/`. On Windows, see
+[windows.md](windows.md#installing); for WSL, `homeskillet wsl install` on
+Windows installs the Linux build in a distribution
+([windows.md](windows.md#the-wsl-command)).
 
 ## Downloading a Release
 
@@ -91,7 +111,7 @@ build you later tag `v0.0.1`, and an installed version is never rewritten.
 ## Versions and Updates
 
 Each install keeps its own copy in the
-[data directory](../README.md#data-directory), and symlinks choose which one
+[data directory](#data-directory), and symlinks choose which one
 runs. With the default data directory, on Linux and macOS (Windows keeps
 `current` as a file instead; see [windows.md](windows.md#installing-homeskillet)):
 
