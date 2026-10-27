@@ -235,6 +235,41 @@ func versionOf(output string) string {
 	return v
 }
 
+// installNotes returns what self install wrote in distribution, run there by
+// wsl install, as wsl install shows it. wsl install goes on to choose which
+// version runs (see selectInstalled), so self install's line about that would
+// be out of date before anyone read it, and is left out. And self install
+// checks the PATH wsl.exe gives it, which no shell startup file has set, so
+// its note that a directory is missing from PATH says nothing about the
+// user's shells, and becomes advice that claims nothing.
+func installNotes(installed, distribution string) string {
+	var notes strings.Builder
+	for line := range strings.Lines(installed) {
+		text := strings.TrimSuffix(line, "\n")
+		bin, missing := missingFromPath(text)
+		switch {
+		case install.AboutRunning(text):
+		case missing:
+			_, _ = fmt.Fprintf(&notes, "note\tif a new shell in %s cannot run homeskillet, add %s to PATH in your shell startup file\n", distribution, bin) // a strings.Builder never fails to write
+		default:
+			notes.WriteString(line)
+		}
+	}
+	return notes.String()
+}
+
+// missingFromPath returns the directory a line, without its newline, says is
+// not on PATH, when it is the note notOnPathLine makes.
+func missingFromPath(line string) (string, bool) {
+	prefix, rest, _ := strings.Cut(notOnPathLine, "%s")
+	middle, _, _ := strings.Cut(rest, "%s")
+	dir, ok := strings.CutPrefix(line, prefix)
+	if dir, _, found := strings.Cut(dir, middle); ok && found && dir != "" {
+		return dir, true
+	}
+	return "", false
+}
+
 // parseMirror reads the arguments of mirrorCommand: a mode (see
 // mirrorModes), the copy's name, for update the Windows clone it is a copy
 // of, kept in inv.repo, and --home, --data-dir, and --allow-root, as wsl

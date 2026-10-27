@@ -361,7 +361,10 @@ a distribution, WSL's default unless `--distribution NAME` names another:
   `latest` when it is the newest, which also ends an earlier pin, and pinned,
   with a note saying so, when another build ranks above it, as a clean build
   ranks above a `+dirty` one of the same version
-  ([install.md](install.md#versions-and-updates)).
+  ([install.md](install.md#versions-and-updates)). What `wsl.exe` starts
+  reads no shell startup file, so install cannot tell whether your shells
+  there put `~/.local/bin` on `PATH`; its note says what to add if a new shell
+  cannot run `homeskillet`.
 - **status, link, unlink, and setup** run the Linux build in the distribution,
   which must be this version: the one in `--home`'s `.local/bin`, if a home is
   given and has one, as `wsl install --home` puts it there, or else the one in

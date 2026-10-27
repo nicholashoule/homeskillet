@@ -362,23 +362,11 @@ func installWSL(ctx context.Context, runner wsl.Runner, inv invocation, output, 
 	if have := versionOf(versionOutput); have != current {
 		return fmt.Errorf("the Linux build is %s, and this is %s; install a Linux build of the same version", have, current)
 	}
-	args := append([]string{file, "self", "install"}, inv.wsl.forward...)
-	if inv.dryRun {
-		return ranInWSL(runner.Run(ctx, nil, output, diagnostics, args...))
-	}
-	installed, err := runner.Output(ctx, nil, args...)
+	installed, err := runner.Output(ctx, nil, append([]string{file, "self", "install"}, inv.wsl.forward...)...)
 	if err != nil {
 		return err
 	}
-	// selectInstalled chooses which version runs, so what self install says
-	// about that would be out of date before anyone read it.
-	var kept strings.Builder
-	for line := range strings.Lines(installed) {
-		if !install.AboutRunning(strings.TrimSuffix(line, "\n")) {
-			kept.WriteString(line)
-		}
-	}
-	if _, err := io.WriteString(output, kept.String()); err != nil {
+	if _, err := io.WriteString(output, installNotes(installed, runner.Distribution())); err != nil || inv.dryRun {
 		return err
 	}
 	return selectInstalled(ctx, runner, file, current, inv, output, diagnostics)

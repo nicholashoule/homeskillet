@@ -916,7 +916,7 @@ func runSelf(inv invocation, home string, output io.Writer) error {
 		}
 		err = layout.Install(executable, version.Current(), inv.dryRun, output)
 		if err == nil && !onPath(layout.Bin) {
-			_, err = fmt.Fprintf(output, "note\t%s is not on PATH; %s\n", layout.Bin, pathAdvice)
+			_, err = fmt.Fprintf(output, notOnPathLine, layout.Bin, pathAdvice)
 		}
 	case "use":
 		err = layout.Use(inv.operand, inv.dryRun, output)
@@ -999,6 +999,11 @@ func listVersions(layout install.Layout, output io.Writer) error {
 	}
 	return nil
 }
+
+// notOnPathLine is the note self install writes when the directory it
+// installs into is not on PATH, with pathAdvice. wsl install rewrites it
+// (see installNotes).
+const notOnPathLine = "note\t%s is not on PATH; %s\n"
 
 // onPath reports whether dir is on PATH. Entries are compared after
 // resolving symlinks, so one that reaches dir through a symlink counts.

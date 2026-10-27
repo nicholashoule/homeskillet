@@ -8,6 +8,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -99,6 +100,29 @@ func TestWSLHelpers(t *testing.T) {
 	for v, want := range map[string]bool{"v0.2.0": true, "v0.2.0-rc.1": false, "v0.1.2-0.20261026184039-6b31e005a8b2+dirty": false, "devel": false} {
 		if release(v) != want {
 			t.Errorf("release(%q) = %v", v, !want)
+		}
+	}
+}
+
+// TestInstallNotes checks what wsl install shows of self install's output:
+// the line about which version runs is left out, as wsl install chooses that
+// itself, and the note about PATH no longer claims a directory is missing,
+// since wsl.exe's PATH is not a shell's.
+func TestInstallNotes(t *testing.T) {
+	bin := "/home/you/.local/bin"
+	installed := "installed\tv0.2.0\n" +
+		"note\tv0.2.0+dirty still runs because it is latest; homeskillet self use v0.2.0 runs v0.2.0\n" +
+		fmt.Sprintf(notOnPathLine, bin, "add it in your shell startup file") +
+		"note\tsomething else\n"
+	want := "installed\tv0.2.0\n" +
+		"note\tif a new shell in Ubuntu cannot run homeskillet, add " + bin + " to PATH in your shell startup file\n" +
+		"note\tsomething else\n"
+	if got := installNotes(installed, "Ubuntu"); got != want {
+		t.Errorf("installNotes:\n%s\nwant:\n%s", got, want)
+	}
+	for _, line := range []string{"note\t is not on PATH; x", "note\t/x is on PATH", "installed\t/x is not on PATH; x"} {
+		if dir, missing := missingFromPath(line); missing {
+			t.Errorf("missingFromPath(%q) = %q", line, dir)
 		}
 	}
 }
