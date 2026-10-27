@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -58,8 +59,8 @@ func runWSL(ctx context.Context, inv invocation, input io.Reader, output, diagno
 	if inv.sub == "install" {
 		return installWSL(ctx, runner, inv, output, diagnostics)
 	}
-	command := linuxCommand(inv.home)
-	if err := checkLinuxBuild(ctx, runner, command); err != nil {
+	command, err := findLinuxBuild(ctx, runner, inv.home)
+	if err != nil {
 		return err
 	}
 	repo := inDistribution(inv.repo)
@@ -86,17 +87,49 @@ func ranInWSL(err error) error {
 	return err
 }
 
-// checkLinuxBuild makes sure the distribution has homeskillet at command, and
-// that it is this version.
-func checkLinuxBuild(ctx context.Context, runner wsl.Runner, command string) error {
-	output, err := runner.Output(ctx, nil, command, "version")
-	if err != nil {
-		return fmt.Errorf("homeskillet does not run in %s (%w)\n  install it there with: homeskillet wsl install", runner.Distribution(), err)
+// findLinuxBuild returns the homeskillet command in the distribution that is
+// this version, so that the two read a copy alike: the one in home's
+// .local/bin, where wsl install --home puts it, when a home is given, or else
+// the one in the distribution user's own home, where wsl install puts it. A
+// home given is where to link, so a build installed only in the user's own
+// home serves it too. A build of another version is passed over, and named
+// when no build matches.
+func findLinuxBuild(ctx context.Context, runner wsl.Runner, home string) (string, error) {
+	candidates := []string{linuxCommand("")}
+	if own := linuxCommand(home); home != "" && own != candidates[0] {
+		candidates = append([]string{own}, candidates...)
 	}
-	if have, want := versionOf(output), version.Current().Version; have != want {
-		return fmt.Errorf("%s has homeskillet %s, and this is %s; run homeskillet wsl install so the two match", runner.Distribution(), have, want)
+	want := version.Current().Version
+	var others, places []string
+	for _, command := range candidates {
+		place := shownCommand(command)
+		places = append(places, place)
+		output, err := runner.Output(ctx, nil, command, "version")
+		if err != nil {
+			continue
+		}
+		if have := versionOf(output); have != want {
+			others = append(others, fmt.Sprintf("%s at %s", have, place))
+			continue
+		}
+		return command, nil
 	}
-	return nil
+	if len(others) > 0 {
+		return "", fmt.Errorf("%s has homeskillet %s, and this is %s; run homeskillet wsl install so the two match",
+			runner.Distribution(), strings.Join(others, " and "), want)
+	}
+	return "", fmt.Errorf("homeskillet is not installed in %s, at %s\n  install it there with: homeskillet wsl install",
+		runner.Distribution(), strings.Join(places, " or "))
+}
+
+// shownCommand returns command, relative to the user's home in the
+// distribution, as a person reads it: .local/bin/homeskillet as
+// ~/.local/bin/homeskillet.
+func shownCommand(command string) string {
+	if path.IsAbs(command) {
+		return command
+	}
+	return "~/" + command
 }
 
 // copyRepository copies the Windows clone inv names into the distribution,
@@ -109,18 +142,9 @@ func checkLinuxBuild(ctx context.Context, runner wsl.Runner, command string) err
 // temporary copy when there is none yet.
 func copyRepository(ctx context.Context, runner wsl.Runner, command string, inv invocation, diagnostics io.Writer) (string, func(), error) {
 	none := func() {}
-	repo, err := canonicalDirectory(inv.repo)
-	// PowerShell can turn ~/dotfiles into a Windows path before homeskillet
-	// sees it, so a clone meant to be in the distribution can arrive as one
-	// that is not on Windows.
-	if errors.Is(err, fs.ErrNotExist) {
-		return "", none, fmt.Errorf("repository: %w\n  to name a clone inside %s, write it in quotes as '~/dotfiles', or in full as /home/you/dotfiles", err, runner.Distribution())
-	}
+	repo, err := windowsRepository(inv, runner.Distribution())
 	if err != nil {
-		return "", none, fmt.Errorf("repository: %w", err)
-	}
-	if err := trust.CheckLocation(repo); err != nil {
-		return "", none, fmt.Errorf("repository: %w", err)
+		return "", none, err
 	}
 	if err := trust.CheckRepository(repo); err != nil {
 		return "", none, err
@@ -128,12 +152,16 @@ func copyRepository(ctx context.Context, runner wsl.Runner, command string, inv 
 	if _, err := config.Load(repo); err != nil {
 		return "", none, err
 	}
-	send := func(mode string) (string, error) {
-		args := append([]string{command, mirrorCommand, mode, mirrorName(repo)}, mirrorOptions(inv)...)
+	send := func(mode string, operands ...string) (string, error) {
+		args := append(append([]string{command, mirrorCommand, mode, mirrorName(repo)}, operands...), mirrorOptions(inv)...)
 		return sendCopy(ctx, runner, repo, args)
 	}
 	if inv.sub != "status" && !inv.dryRun {
-		copied, err := send("update")
+		updated, err := send("update", repo)
+		if err != nil {
+			return "", none, err
+		}
+		copied, err := reportUpdate(updated, repo, runner.Distribution(), diagnostics, inv.quiet)
 		return copied, none, err
 	}
 	compared, err := send("compare")
@@ -155,17 +183,64 @@ func copyRepository(ctx context.Context, runner wsl.Runner, command string, inv 
 	return copied, func() { _, _ = runner.Output(context.WithoutCancel(ctx), nil, "rm", "-rf", "--", dir) }, nil
 }
 
-// existingCopy reads what comparing the clone with its copy found, "added
-// changed removed path", says when the two differ, and returns the copy.
-func existingCopy(compared, repo, distribution string, diagnostics io.Writer) (string, func(), error) {
-	fields := strings.SplitN(compared, " ", 4)
-	counts := make([]int, 3)
-	for i := range counts {
-		n, err := strconv.Atoi(fields[min(i, len(fields)-1)])
-		if err != nil || len(fields) != 4 {
-			return "", nil, fmt.Errorf("comparing the copy in %s gave %q", distribution, compared)
+// windowsRepository returns the Windows clone wsl copies, canonical and in a
+// place homeskillet acts on: the one named, or with none named the current
+// directory, or else the one repository linked into the Windows home before,
+// as for the other commands (see openRepository). So homeskillet.exe wsl link
+// works from a WSL shell too, whose current directory is the distribution's.
+func windowsRepository(inv invocation, distribution string) (string, error) {
+	if !inv.repoGiven {
+		homePath, err := os.UserHomeDir()
+		if err != nil {
+			return "", err
 		}
-		counts[i] = n
+		home, err := canonicalDirectory(homePath)
+		if err != nil {
+			return "", fmt.Errorf("home: %w", err)
+		}
+		if err := trust.CheckLocation(home); err != nil {
+			return "", fmt.Errorf("home: %w", err)
+		}
+		repo, _, _, err := openRepository(invocation{command: "wsl " + inv.sub, repo: "."}, home)
+		return repo, err
+	}
+	repo, err := canonicalDirectory(inv.repo)
+	// PowerShell can turn ~/dotfiles into a Windows path before homeskillet
+	// sees it, so a clone meant to be in the distribution can arrive as one
+	// that is not on Windows.
+	if errors.Is(err, fs.ErrNotExist) {
+		return "", fmt.Errorf("repository: %w\n  to name a clone inside %s, write it in quotes as '~/dotfiles', or in full as /home/you/dotfiles", err, distribution)
+	}
+	if err != nil {
+		return "", fmt.Errorf("repository: %w", err)
+	}
+	if err := trust.CheckLocation(repo); err != nil {
+		return "", fmt.Errorf("repository: %w", err)
+	}
+	return repo, nil
+}
+
+// copyCounts reads "added changed removed path", as mirrorCommand writes
+// what a compare or an update found.
+func copyCounts(line, distribution string) (counts [3]int, copied string, err error) {
+	fields := strings.SplitN(line, " ", 4)
+	if len(fields) != 4 {
+		return counts, "", fmt.Errorf("the copy in %s gave %q", distribution, line)
+	}
+	for i := range counts {
+		if counts[i], err = strconv.Atoi(fields[i]); err != nil {
+			return counts, "", fmt.Errorf("the copy in %s gave %q", distribution, line)
+		}
+	}
+	return counts, fields[3], nil
+}
+
+// existingCopy reads what comparing the clone with its copy found, says when
+// the two differ, and returns the copy.
+func existingCopy(compared, repo, distribution string, diagnostics io.Writer) (string, func(), error) {
+	counts, copied, err := copyCounts(compared, distribution)
+	if err != nil {
+		return "", nil, err
 	}
 	if counts[0]+counts[1]+counts[2] > 0 {
 		if _, err := fmt.Fprintf(diagnostics, "homeskillet: the copy of %s in %s differs from it (%d added, %d changed, %d removed); homeskillet wsl link updates it\n",
@@ -173,7 +248,32 @@ func existingCopy(compared, repo, distribution string, diagnostics io.Writer) (s
 			return "", nil, err
 		}
 	}
-	return fields[3], func() {}, nil
+	return copied, func() {}, nil
+}
+
+// reportUpdate reads what updating the copy did, "new path" for a first copy
+// or the counts otherwise, says so, unless quiet, and returns the copy. A
+// line every time, even when nothing changed, shows the update happened.
+func reportUpdate(updated, repo, distribution string, diagnostics io.Writer, quiet bool) (string, error) {
+	copied, created := strings.CutPrefix(updated, "new ")
+	message := fmt.Sprintf("homeskillet: copied %s into %s\n", displayPath(repo), distribution)
+	if !created {
+		counts, path, err := copyCounts(updated, distribution)
+		if err != nil {
+			return "", err
+		}
+		copied = path
+		message = fmt.Sprintf("homeskillet: updated the copy of %s in %s (%d added, %d changed, %d removed)\n",
+			displayPath(repo), distribution, counts[0], counts[1], counts[2])
+		if counts[0]+counts[1]+counts[2] == 0 {
+			message = fmt.Sprintf("homeskillet: the copy of %s in %s is up to date\n", displayPath(repo), distribution)
+		}
+	}
+	if quiet {
+		return copied, nil
+	}
+	_, err := io.WriteString(diagnostics, message)
+	return copied, err
 }
 
 // mirrorOptions returns the options of inv that decide where the copy goes,
@@ -263,6 +363,60 @@ func installWSL(ctx context.Context, runner wsl.Runner, inv invocation, output, 
 		return fmt.Errorf("the Linux build is %s, and this is %s; install a Linux build of the same version", have, current)
 	}
 	args := append([]string{file, "self", "install"}, inv.wsl.forward...)
+	if inv.dryRun {
+		return ranInWSL(runner.Run(ctx, nil, output, diagnostics, args...))
+	}
+	installed, err := runner.Output(ctx, nil, args...)
+	if err != nil {
+		return err
+	}
+	// selectInstalled chooses which version runs, so what self install says
+	// about that would be out of date before anyone read it.
+	var kept strings.Builder
+	for line := range strings.Lines(installed) {
+		if !install.AboutRunning(strings.TrimSuffix(line, "\n")) {
+			kept.WriteString(line)
+		}
+	}
+	if _, err := io.WriteString(output, kept.String()); err != nil {
+		return err
+	}
+	return selectInstalled(ctx, runner, file, current, inv, output, diagnostics)
+}
+
+// selectInstalled makes the command in the distribution run current, the
+// version just installed there, which is what wsl install is for: the other
+// wsl commands need the two to match. self install leaves a pinned version
+// running, and otherwise follows latest, which may rank another build above
+// this one, as a clean build ranks above a +dirty build of the same version.
+// So it follows latest again when current is latest, which also undoes an
+// old pin, and pins current otherwise, saying why.
+func selectInstalled(ctx context.Context, runner wsl.Runner, file, current string, inv invocation, output, diagnostics io.Writer) error {
+	var location []string
+	for _, option := range inv.wsl.forward {
+		if strings.HasPrefix(option, "--home=") || strings.HasPrefix(option, "--prefix=") ||
+			strings.HasPrefix(option, "--data-dir=") || option == "--allow-root" {
+			location = append(location, option)
+		}
+	}
+	listing, err := runner.Output(ctx, nil, append([]string{file, "self", "list"}, location...)...)
+	if err != nil {
+		return err
+	}
+	target := current
+	for line := range strings.Lines(listing) {
+		fields := strings.Split(strings.TrimSuffix(line, "\n"), "\t")
+		if len(fields) >= 2 && fields[0] == current && slices.Contains(strings.Split(fields[1], ", "), install.Latest) {
+			target = install.Latest
+		}
+	}
+	if target != install.Latest && !inv.quiet {
+		if _, err := fmt.Fprintf(output, "note\twsl install pins %s in %s, since the wsl commands need it to run there; homeskillet self use latest there follows the newest again\n",
+			current, runner.Distribution()); err != nil {
+			return err
+		}
+	}
+	args := append([]string{file, "self", "use", target}, inv.wsl.forward...)
 	return ranInWSL(runner.Run(ctx, nil, output, diagnostics, args...))
 }
 

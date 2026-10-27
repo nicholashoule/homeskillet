@@ -41,6 +41,9 @@ type view struct {
 	// next, when set, follows the closing line of link and status with what
 	// to run next (see nextSetup).
 	next string
+	// copyOf, when set, says in the header that the repository is a copy
+	// homeskillet wsl keeps (see describeCopy).
+	copyOf string
 }
 
 // newView returns a view for output, or nil when output is not a terminal.
@@ -78,8 +81,11 @@ func (v *view) header(w io.Writer, command, repo string, remembered bool, home s
 	if remembered {
 		repository += "  (linked into this home before; none was named)"
 	}
-	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n  %-11s %s\n  %-11s %s\n",
-		command, "repository:", repository, "home:", v.path(home), "platform:", platform)
+	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n", command, "repository:", repository)
+	if v.copyOf != "" {
+		text += fmt.Sprintf("  %-11s %s\n", "copy of:", v.copyOf)
+	}
+	text += fmt.Sprintf("  %-11s %s\n  %-11s %s\n", "home:", v.path(home), "platform:", platform)
 	if dryRun {
 		text += fmt.Sprintf("  %-11s %s\n", "dry run:", "nothing will change")
 	}

@@ -331,6 +331,8 @@ func arguments(inv invocation, command string, rest []string, current string) (s
 		return ":dirs", nil
 	case command == "self" && len(rest) == 0:
 		return ":none", matching(selfCommands, current)
+	case command == "backups" && len(rest) == 0:
+		return ":none", matching(backupsCommands, current)
 	case command == "self" && len(rest) == 1 && rest[0] == "use":
 		return ":none", matching(append([]string{install.Latest, install.Previous}, installedVersions(inv)...), current)
 	case command == "self" && len(rest) == 1 && rest[0] == "remove":
@@ -392,10 +394,16 @@ func options(command, current string) []string {
 }
 
 // optionValues completes the value of option name: a platform for
-// --platform, and a directory for every other option that takes a value.
+// --platform, a file for --from, nothing for an age or a distribution's
+// name, and a directory for every other option that takes a value.
 func optionValues(name, current string) (string, []string) {
-	if name == "platform" {
+	switch name {
+	case "platform":
 		return ":none", matching(config.PlatformValues(), current)
+	case "older-than", "distribution":
+		return ":none", nil
+	case "from":
+		return ":files", nil
 	}
 	return ":dirs", nil
 }

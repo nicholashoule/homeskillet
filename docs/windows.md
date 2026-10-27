@@ -356,10 +356,20 @@ a distribution, WSL's default unless `--distribution NAME` names another:
   the one `make cross` built, given with
   `--from bin\homeskillet-linux-amd64`. The build is copied into a private
   temporary directory there, checked to have arrived whole and to run as this
-  version, and installs itself with `self install`, as on any Linux.
+  version, and installs itself with `self install`, as on any Linux. Then it
+  makes the command there run it, as the other `wsl` commands need: following
+  `latest` when it is the newest, which also ends an earlier pin, and pinned,
+  with a note saying so, when another build ranks above it, as a clean build
+  ranks above a `+dirty` one of the same version
+  ([install.md](install.md#versions-and-updates)).
 - **status, link, unlink, and setup** run the Linux build in the distribution,
-  which must be this version. A repository written `/` or `~` first is a clone
-  there and is used as it is. Any other is a Windows clone: after every check
+  which must be this version: the one in `--home`'s `.local/bin`, if a home is
+  given and has one, as `wsl install --home` puts it there, or else the one in
+  your own home there. A repository written `/` or `~` first is a clone
+  there and is used as it is. With none named, it is the current directory or,
+  as for the other commands, the Windows repository linked before, so
+  `homeskillet.exe wsl link` alone works from a WSL shell. Any other is a
+  Windows clone: after every check
   the other commands make, it is copied into a private directory in the
   distribution's data directory, `mirrors/`, and the command runs on the copy.
   WSL cannot link from the Windows clone itself, since Windows drives under
@@ -367,7 +377,9 @@ a distribution, WSL's default unless `--distribution NAME` names another:
 - **The copy** holds every file and folder of the clone but `.git`, each
   checked before it is sent, with the executable bit Git records. `link`,
   `unlink`, and `setup` update it first, building the new copy beside the old
-  and swapping it in only once all of it has arrived. `status` and
+  and swapping it in only once all of it has arrived, and say so on standard
+  error every time: copied, updated with how many files were added, changed,
+  and removed, or up to date, so a missing line means no update. `status` and
   `--dry-run` change nothing: they use the copy as it is and say when it
   differs from the clone, or a temporary copy when there is none yet. Links in
   WSL lead into the copy, so edit the Windows clone, and `homeskillet wsl link`
@@ -377,7 +389,9 @@ a distribution, WSL's default unless `--distribution NAME` names another:
 - **Options** other than `--distribution` and `--from` go to homeskillet in the
   distribution and mean what they mean there: `--home` and `--data-dir` name
   Linux directories, and files and step names after the repository are as for
-  the command itself.
+  the command itself. `--data-dir` also says where the copy is, so give the
+  same one to every `wsl` command; `setup`, which keeps nothing there, uses it
+  only to find the copy.
 
 `wsl` is built not to fail on WSL's own hiccups. It reads the distributions
 from the registry, where WSL records them, rather than from `wsl.exe`'s
@@ -394,6 +408,13 @@ home. Started in a WSL directory, which it will not act on, the Windows build
 uses the repository it linked before. WSL passes standard input on to Windows
 programs, so in a script give `homeskillet.exe` `</dev/null`, or it reads the
 script's own input.
+
+The Linux build acts on the copy as on any repository, but never updates it:
+`homeskillet link` in WSL, with the copy as the repository it linked before,
+relinks the copy as it is. At a terminal its header says so, with a
+`copy of:` line naming the Windows clone and when the copy was last updated.
+To bring over changes made since, run `homeskillet.exe wsl link`, from
+Windows or from that shell.
 
 ## Limits
 

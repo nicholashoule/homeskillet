@@ -39,6 +39,8 @@ func TestParseWSL(t *testing.T) {
 		{args: []string{"wsl", "setup", "./dotfiles", "fonts", "--yes"}, sub: "setup", repo: "./dotfiles", forward: []string{"--yes", "fonts"}},
 		{args: []string{"wsl", "link", ".", "--", "-odd"}, sub: "link", repo: ".", forward: []string{"--", "-odd"}},
 		{args: []string{"wsl", "link", "--data-dir", "/tmp/data"}, sub: "link", repo: ".", forward: []string{"--data-dir=/tmp/data"}},
+		// setup refuses --data-dir; wsl reads it only to find the copy.
+		{args: []string{"wsl", "setup", ".", "--data-dir", "/tmp/data", "--dry-run"}, sub: "setup", repo: ".", forward: []string{"--dry-run"}},
 		{args: []string{"wsl", "link", "--from", "x"}, err: "--from applies only to wsl install"},
 		{args: []string{"wsl", "link", "--prefix", "x"}, err: "--prefix applies only to wsl install"},
 		{args: []string{"wsl", "link", "--repo", "x"}, err: "name the repository after the command"},
@@ -62,6 +64,9 @@ func TestParseWSL(t *testing.T) {
 	inv, err := parse([]string{"wsl", "install", "--from", "bin/x", "--distribution", "Ubuntu", "--dry-run", "--allow-root"}, new(bytes.Buffer))
 	if err != nil || inv.wsl.from != "bin/x" || inv.wsl.distribution != "Ubuntu" || !inv.dryRun || !inv.root {
 		t.Fatalf("wsl's own options: %+v, %v", inv, err)
+	}
+	if inv, err = parse([]string{"wsl", "setup", ".", "--data-dir", "/tmp/data"}, new(bytes.Buffer)); err != nil || inv.data != "/tmp/data" {
+		t.Fatalf("setup's data directory, for the copy: %q, %v", inv.data, err)
 	}
 }
 
@@ -127,11 +132,11 @@ func TestReceiveMirror(t *testing.T) {
 		}
 		return &b
 	}
-	receive := func(mode string) string {
+	receive := func(mode string, operands ...string) string {
 		t.Helper()
 		var output bytes.Buffer
-		err := Run(context.Background(), []string{mirrorCommand, mode, "dotfiles-1", "--home", home}, send(), &output, new(bytes.Buffer))
-		if err != nil {
+		args := append(append([]string{mirrorCommand, mode, "dotfiles-1"}, operands...), "--home", home)
+		if err := Run(context.Background(), args, send(), &output, new(bytes.Buffer)); err != nil {
 			t.Fatalf("%s: %v", mode, err)
 		}
 		return strings.TrimSpace(output.String())
@@ -139,15 +144,27 @@ func TestReceiveMirror(t *testing.T) {
 	if got := receive("compare"); got != "none" {
 		t.Fatalf("compare with no copy: %q", got)
 	}
-	copied := receive("update")
-	if want := filepath.Join(home, ".local", "share", "homeskillet", mirrorsDir, "dotfiles-1"); copied != want {
-		t.Fatalf("copy at %q, want %q", copied, want)
+	copied := filepath.Join(home, ".local", "share", "homeskillet", mirrorsDir, "dotfiles-1")
+	source := `C:\Users\you\dotfiles`
+	if got := receive("update", source); got != "new "+copied {
+		t.Fatalf("first update: %q, want the new copy at %q", got, copied)
 	}
 	if data, err := os.ReadFile(filepath.Join(copied, "home", "wsl", ".bashrc")); err != nil || string(data) != "config\n" {
 		t.Fatalf("copied file: %q, %v", data, err)
 	}
 	if got := receive("compare"); got != "0 0 0 "+copied {
 		t.Fatalf("compare with the copy: %q", got)
+	}
+	if got := receive("update", source); got != "0 0 0 "+copied {
+		t.Fatalf("update with nothing new: %q", got)
+	}
+	// The copy says whose it is, for the Linux build's header.
+	if note := describeCopy(invocation{}, home, copied); !strings.HasPrefix(note, source+", updated ") ||
+		!strings.HasSuffix(note, "homeskillet.exe wsl link updates it from Windows") {
+		t.Fatalf("describeCopy: %q", note)
+	}
+	if note := describeCopy(invocation{}, home, repo); note != "" {
+		t.Fatalf("describeCopy of a repository that is no copy: %q", note)
 	}
 	temporary := receive("temporary")
 	defer os.RemoveAll(filepath.Dir(temporary)) //nolint:errcheck // a temporary directory the test made
@@ -158,6 +175,8 @@ func TestReceiveMirror(t *testing.T) {
 		{mirrorCommand, "update"},
 		{mirrorCommand, "erase", "x"},
 		{mirrorCommand, "update", "x", "--force"},
+		{mirrorCommand, "compare", "x", `C:\source`},
+		{mirrorCommand, "update", "x", "bad\x1b[2Ksource"},
 	} {
 		if err := Run(context.Background(), args, send(), new(bytes.Buffer), new(bytes.Buffer)); err == nil {
 			t.Errorf("%q accepted", args)

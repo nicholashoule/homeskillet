@@ -17,31 +17,56 @@ import (
 	"strings"
 )
 
+// Updated is what Update did: where the copy is, whether it is the first,
+// and otherwise how it differs from the one it replaced.
+type Updated struct {
+	Path    string
+	Created bool
+	Differences
+}
+
 // Update reads a stream from r into a new directory and puts it in place of
-// parent/name, returning that path. parent must exist and be private. The
-// new copy is built beside the old and swapped in only once the whole stream
-// has arrived, so a broken transfer leaves the old copy as it was, and links
-// into the copy never lead into a half-written one. Leftovers of an earlier
-// run that was stopped partway are removed first.
-func Update(r io.Reader, parent, name string) (string, error) {
+// parent/name. parent must exist and be private. The new copy is built
+// beside the old and swapped in only once the whole stream has arrived, so a
+// broken transfer leaves the old copy as it was, and links into the copy
+// never lead into a half-written one. Leftovers of an earlier run that was
+// stopped partway are removed first.
+func Update(r io.Reader, parent, name string) (Updated, error) {
 	if !ValidName(name) {
-		return "", fmt.Errorf("mirror: %q is not a name for a copy", name)
+		return Updated{}, fmt.Errorf("mirror: %q is not a name for a copy", name)
 	}
 	if err := removeLeftovers(parent, name); err != nil {
-		return "", err
+		return Updated{}, err
+	}
+	target := filepath.Join(parent, name)
+	var old *os.Root
+	if info, err := os.Lstat(target); err == nil && info.IsDir() {
+		if old, err = os.OpenRoot(target); err != nil {
+			return Updated{}, err
+		}
 	}
 	staging, err := os.MkdirTemp(parent, "."+name+".new-")
 	if err != nil {
-		return "", err
+		return Updated{}, errors.Join(err, closeRoot(old))
 	}
-	if err := receive(r, staging); err != nil {
-		return "", errors.Join(err, os.RemoveAll(staging))
+	diff, err := receive(r, staging, old)
+	// Closed before the swap: Windows will not rename a directory while it
+	// is open.
+	if err = errors.Join(err, closeRoot(old)); err != nil {
+		return Updated{}, errors.Join(err, os.RemoveAll(staging))
 	}
-	target := filepath.Join(parent, name)
 	if err := swap(staging, target, parent, name); err != nil {
-		return "", errors.Join(err, os.RemoveAll(staging))
+		return Updated{}, errors.Join(err, os.RemoveAll(staging))
 	}
-	return target, nil
+	return Updated{Path: target, Created: old == nil, Differences: diff}, nil
+}
+
+// closeRoot closes root, which may be nil.
+func closeRoot(root *os.Root) error {
+	if root == nil {
+		return nil
+	}
+	return root.Close()
 }
 
 // ValidName reports whether name can name a copy, a plain directory name:
@@ -73,43 +98,113 @@ func removeLeftovers(parent, name string) error {
 	return nil
 }
 
-// receive writes the stream from r into dir, which must be new and empty.
-// Every write goes through an os.Root and creates its file or directory
-// anew, so nothing in the stream can reach outside dir or through a link.
-func receive(r io.Reader, dir string) error {
+// receive writes the stream from r into dir, which must be new and empty,
+// and counts how it differs from old, the copy it replaces, or nil when there
+// is none. Every write goes through an os.Root and creates its file or
+// directory anew, so nothing in the stream can reach outside dir or through a
+// link.
+func receive(r io.Reader, dir string, old *os.Root) (Differences, error) {
 	rd, err := newReader(r)
 	if err != nil {
-		return err
+		return Differences{}, err
 	}
 	root, err := os.OpenRoot(dir)
 	if err != nil {
-		return err
+		return Differences{}, err
 	}
 	defer root.Close() //nolint:errcheck // every file written through it is closed and checked below
+	t := tally{old: old, sent: map[string]bool{}}
 	for {
 		e, ok, err := rd.next()
-		if err != nil || !ok {
-			return err
+		if err != nil {
+			return Differences{}, err
+		}
+		if !ok {
+			return t.finish()
 		}
 		name := filepath.FromSlash(e.path)
+		var data []byte
 		if e.dir {
-			if err := root.Mkdir(name, e.mode()); err != nil {
-				return err
-			}
-			continue
+			err = root.Mkdir(name, e.mode())
+		} else if data, err = rd.file(e); err == nil {
+			err = write(root, name, e.mode(), data)
 		}
-		file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, e.mode())
+		if err == nil {
+			err = t.note(e, data)
+		}
 		if err != nil {
-			return err
-		}
-		_, err = io.CopyN(file, rd.in, e.size)
-		if errors.Is(err, io.EOF) {
-			err = errors.New("mirror: the stream ended inside a file; nothing was changed")
-		}
-		if err := errors.Join(err, file.Sync(), file.Close()); err != nil {
-			return err
+			return Differences{}, err
 		}
 	}
+}
+
+// file reads the bytes of e, a file, from the stream. A stream that ends
+// early is an error, so a broken transfer never counts as a whole copy.
+func (rd *reader) file(e entry) ([]byte, error) {
+	data := make([]byte, e.size)
+	if _, err := io.ReadFull(rd.in, data); err != nil {
+		return nil, errors.New("mirror: the stream ended inside a file; nothing was changed")
+	}
+	return data, nil
+}
+
+// write creates the file name in root, which must not exist, with data.
+func write(root *os.Root, name string, mode os.FileMode, data []byte) error {
+	file, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_EXCL, mode)
+	if err != nil {
+		return err
+	}
+	_, err = file.Write(data)
+	return errors.Join(err, file.Sync(), file.Close())
+}
+
+// tally counts how a stream differs from a copy, old, as its entries arrive.
+// With no copy, every entry is added.
+type tally struct {
+	old  *os.Root
+	sent map[string]bool
+	diff Differences
+}
+
+// note counts e, with data its bytes when it is a file.
+func (t *tally) note(e entry, data []byte) error {
+	t.sent[e.path] = true
+	if t.old == nil {
+		t.diff.Added++
+		return nil
+	}
+	same, held, err := holds(t.old, e, data)
+	switch {
+	case err != nil:
+		return err
+	case same:
+	case held:
+		t.diff.Changed++
+	default:
+		t.diff.Added++
+	}
+	return nil
+}
+
+// finish counts what the copy has and the stream did not, a directory once
+// with all it holds, and returns the differences.
+func (t *tally) finish() (Differences, error) {
+	if t.old == nil {
+		return t.diff, nil
+	}
+	err := fs.WalkDir(t.old.FS(), ".", func(name string, d fs.DirEntry, err error) error {
+		if err != nil || name == "." {
+			return err
+		}
+		if !t.sent[name] {
+			t.diff.Removed++
+			if d.IsDir() {
+				return fs.SkipDir
+			}
+		}
+		return nil
+	})
+	return t.diff, err
 }
 
 // swap puts staging in place of target: the old copy, if any, moves into a
@@ -164,80 +259,52 @@ func Compare(r io.Reader, dir string) (Differences, error) {
 		return Differences{}, err
 	}
 	defer root.Close() //nolint:errcheck // opened only to read
-	var diff Differences
-	sent := make(map[string]bool)
+	t := tally{old: root, sent: map[string]bool{}}
 	for {
 		e, ok, err := rd.next()
 		if err != nil {
 			return Differences{}, err
 		}
 		if !ok {
-			break
+			return t.finish()
 		}
-		sent[e.path] = true
-		same, err := matches(root, e, rd)
-		if err != nil {
-			return Differences{}, err
-		}
-		switch {
-		case same:
-		case errors.Is(statError(root, e.path), fs.ErrNotExist):
-			diff.Added++
-		default:
-			diff.Changed++
-		}
-	}
-	err = fs.WalkDir(root.FS(), ".", func(name string, d fs.DirEntry, err error) error {
-		if err != nil || name == "." {
-			return err
-		}
-		if !sent[name] {
-			diff.Removed++
-			if d.IsDir() {
-				return fs.SkipDir
+		var data []byte
+		if !e.dir {
+			if data, err = rd.file(e); err != nil {
+				return Differences{}, err
 			}
 		}
-		return nil
-	})
-	return diff, err
+		if err := t.note(e, data); err != nil {
+			return Differences{}, err
+		}
+	}
 }
 
-// matches reports whether the copy holds e as the stream has it, reading the
-// file's bytes from the stream in either case.
-func matches(root *os.Root, e entry, rd *reader) (bool, error) {
+// holds reports whether the copy in root has e as the stream has it, with
+// data its bytes when it is a file, and whether it has anything at e's path.
+func holds(root *os.Root, e entry, data []byte) (same, held bool, err error) {
 	info, err := root.Lstat(filepath.FromSlash(e.path))
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return false, err
-	}
-	held := err == nil
-	if e.dir {
-		return held && info.IsDir(), nil
-	}
-	sent, err := io.ReadAll(io.LimitReader(rd.in, e.size))
-	if err == nil && int64(len(sent)) != e.size {
-		err = errors.New("mirror: the stream ended inside a file")
+	if errors.Is(err, fs.ErrNotExist) {
+		return false, false, nil
 	}
 	if err != nil {
-		return false, err
+		return false, false, err
+	}
+	if e.dir {
+		return info.IsDir(), true, nil
 	}
 	// Windows keeps no executable bit, so there only the bytes count.
-	if !held || !info.Mode().IsRegular() || info.Size() != e.size ||
+	if !info.Mode().IsRegular() || info.Size() != e.size ||
 		runtime.GOOS != "windows" && (info.Mode().Perm()&0o100 != 0) != e.executable {
-		return false, nil
+		return false, true, nil
 	}
 	file, err := root.Open(filepath.FromSlash(e.path))
 	if err != nil {
-		return false, err
+		return false, true, err
 	}
 	copied, err := io.ReadAll(io.LimitReader(file, e.size+1))
 	if err := errors.Join(err, file.Close()); err != nil {
-		return false, err
+		return false, true, err
 	}
-	return bytes.Equal(copied, sent), nil
-}
-
-// statError returns the error of an Lstat of p in root, or nil.
-func statError(root *os.Root, p string) error {
-	_, err := root.Lstat(filepath.FromSlash(p))
-	return err
+	return bytes.Equal(copied, data), true, nil
 }

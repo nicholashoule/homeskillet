@@ -48,6 +48,7 @@ homeskillet ~/dotfiles                        # status: what link would change
 homeskillet link ~/dotfiles --dry-run         # preview; nothing changes
 homeskillet link ~/dotfiles                   # link every file
 homeskillet link ~/dotfiles .bashrc --force   # replace ~/.bashrc, keeping a backup
+homeskillet backups purge --older-than 30d    # delete old backups, after asking
 homeskillet setup ~/dotfiles                  # offer each setup step
 homeskillet check ~/dotfiles                  # list every issue, or say it is valid
 homeskillet unlink ~/dotfiles
@@ -88,7 +89,8 @@ steps, and `home/wsl/` for WSL.
 
 ## Safety
 
-homeskillet never overwrites or deletes a file it did not create, and refuses
+homeskillet never overwrites or deletes a file it did not create, short of
+backups you ask it to purge after it lists them, and refuses
 to run as root, or elevated on Windows, without `--allow-root`. Linked files
 such as `.bashrc` and setup steps run as you, so it refuses a repository,
 source, or symlink another user could change, following OpenSSH's rules for

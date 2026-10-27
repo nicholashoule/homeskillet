@@ -25,6 +25,7 @@ const usageLines = `  homeskillet [status|link|unlink] [REPOSITORY [FILE...]] [o
   homeskillet check [REPOSITORY] [options]
   homeskillet wsl install [options]
   homeskillet wsl status|link|unlink|setup [REPOSITORY [FILE...|STEP...]] [options]
+  homeskillet backups [list|purge] [options]
   homeskillet self install|list [options]
   homeskillet self use latest|previous|VERSION [options]
   homeskillet self remove VERSION [options]
@@ -43,6 +44,7 @@ var commandHelp = map[string]string{
 	"check":  "Check the repository's manifests and files, for every platform, and list each issue, or say that it is valid",
 	"wsl": "On Windows, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
 		"there on a copy of a Windows clone, or on a clone in the distribution written / or ~ first",
+	"backups": "List the files link --force moved into a backup; backups purge deletes them after showing them and asking",
 	"self":    "Install, list, switch, or remove versions of homeskillet",
 	"version": "Show the version and build details",
 	"completion": "Print a shell completion script; load it with eval \"$(homeskillet completion bash)\" in ~/.bashrc, zsh in ~/.zshrc, " +
@@ -65,10 +67,10 @@ var optionGroups = []struct {
 	command string
 	names   []string
 }{
-	{"", []string{"dry-run", "home", "repo", "platform", "quiet", "data-dir", "allow-root"}},
+	{"", []string{"dry-run", "home", "repo", "platform", "quiet", "data-dir", "yes", "allow-root"}},
 	{"link", []string{"force"}},
-	{"setup", []string{"yes"}},
 	{"self", []string{"prefix"}},
+	{"backups", []string{"older-than"}},
 	{"wsl", []string{"distribution", "from"}},
 }
 

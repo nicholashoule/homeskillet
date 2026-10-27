@@ -57,6 +57,19 @@ at its path in home with the Unix time appended, then links:
   `homeskillet link ~/dotfiles .bashrc --force`. `--dry-run --force` shows
   what would move.
 
+`backups purge` is the one way homeskillet deletes a file it did not create,
+and only when you ask:
+
+- It deletes only a file or symlink in the data directory's `backups/` named
+  as `--force` names a backup, its path, a dot, and the Unix time; anything
+  else there stays. A symlink is deleted itself, never what it leads to.
+- It lists every backup it would delete, then asks, with no as the default,
+  and only `y` or `yes` deletes; `--yes` stands in for that answer and
+  `--dry-run` only lists. Each backup is looked at again just before it goes,
+  and only the folders the purge emptied are removed with it.
+- The data directory must pass the ownership rules first, as it decides what
+  counts as a backup.
+
 ## Ownership
 
 Linked files such as `.bashrc` run as you, so `status` and `link` refuse a

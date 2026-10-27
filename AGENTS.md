@@ -137,7 +137,8 @@ Supported Environments table or docs/windows.md.
   conflicts; resolve them only under `link --force`, which moves each file or
   symlink, never a directory, into the data directory's `backups/` (never
   deletes it, never overwrites a backup), undoes its moves if one fails, and
-  moves back what linking did not replace.
+  moves back what linking did not replace. Only `backups purge` deletes a
+  backup, after listing each and asking (default no) unless `--yes`.
 - Do not weaken ownership and permission checks, path containment, the
   system-directory refusals in `trust.CheckLocation`, the refusal of junctions
   on Windows, or control-character rejection to make a test or a particular

@@ -394,11 +394,45 @@ func (l Layout) createCommand(target string) error {
 func reportRunning(log io.Writer, state State, after []string, v string) error {
 	switch latest := (State{Versions: after}).Latest(); {
 	case state.Current != "" && !state.Following:
-		return say(log, "pinned\t%s\trun homeskillet self use latest to follow the newest version\n", state.Current)
+		return say(log, pinnedLine, state.Current)
 	case latest != v:
-		return say(log, "note\t%s still runs because it is latest; homeskillet self use %s runs %s\n", latest, v, v)
+		return say(log, latestLine, latest, v, v)
 	}
 	return nil
+}
+
+// The lines reportRunning writes, which AboutRunning recognizes.
+const (
+	pinnedLine = "pinned\t%s\trun homeskillet self use latest to follow the newest version\n"
+	latestLine = "note\t%s still runs because it is latest; homeskillet self use %s runs %s\n"
+)
+
+// AboutRunning reports whether line, one of the lines Install writes, without
+// its newline, is the one that says which version runs after the install
+// (see reportRunning). A caller that goes on to choose the version itself,
+// as wsl install does, leaves it out, as it would be out of date before it
+// is read.
+func AboutRunning(line string) bool {
+	return fits(line, pinnedLine) || fits(line, latestLine)
+}
+
+// fits reports whether line is what format, with %s verbs only and a final
+// newline, prints for some values.
+func fits(line, format string) bool {
+	parts := strings.Split(strings.TrimSuffix(format, "\n"), "%s")
+	first, last := parts[0], parts[len(parts)-1]
+	if len(parts) < 2 || len(line) < len(first)+len(last) || !strings.HasPrefix(line, first) || !strings.HasSuffix(line, last) {
+		return false
+	}
+	rest := line[len(first) : len(line)-len(last)]
+	for _, part := range parts[1 : len(parts)-1] {
+		i := strings.Index(rest, part)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(part):]
+	}
+	return true
 }
 
 // programAction decides what Install does with build's binary: "installed"

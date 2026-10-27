@@ -352,13 +352,19 @@ func executeCommand(ctx context.Context, command []string, opts Options) error {
 	return cmd.Run()
 }
 
-// confirm asks whether to run the step just described. Only "y" or "yes"
-// approves. Anything else, including end of input, declines, so a closed or
-// redirected stdin can never approve a step by accident. It reads one byte at
-// a time so it never consumes input that belongs to the step itself.
+// confirm asks whether to run the step just described (see Confirm).
 func confirm(input io.Reader, output io.Writer) (bool, error) {
+	return Confirm(input, output, "Run this step?")
+}
+
+// Confirm asks question, followed by [y/N], and reads the answer from input.
+// Only "y" or "yes" approves. Anything else, including end of input,
+// declines, so a closed or redirected stdin can never approve by accident.
+// It reads one byte at a time so it never consumes input that belongs to a
+// step run after it.
+func Confirm(input io.Reader, output io.Writer, question string) (bool, error) {
 	const maxAnswer = 64
-	if _, err := fmt.Fprint(output, "Run this step? [y/N] "); err != nil {
+	if _, err := fmt.Fprint(output, question+" [y/N] "); err != nil {
 		return false, err
 	}
 	if input == nil {

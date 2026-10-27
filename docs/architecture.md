@@ -61,7 +61,9 @@ A command runs in this order:
    `__mirror` command (see wsl.go and package mirror), which that build runs
    on the copy it receives. The rest refuse a
    home directory that fails `trust.CheckLocation`; `self` then continues as
-   described under [Installing homeskillet](#installing-homeskillet).
+   described under [Installing homeskillet](#installing-homeskillet), and
+   `backups` lists, or purges once approved, the data directory's backups
+   (see backups.go).
 2. `canonicalDirectory` resolves the repository and existing home directory,
    with a leading `~` as the user's home, which no shell expands in `cmd`.
    Packages link and trust compare path strings, which is only sound for
@@ -236,6 +238,8 @@ and dry runs stop after the checks.
   directories, into `backups/` in the data directory with the Unix time
   appended, never deleting one or overwriting a backup. It undoes its moves
   if one fails, and moves back what linking did not replace if linking fails.
+  Only `backups purge` deletes a backup (`link.Backups`, `link.Purge`): a
+  file or symlink named as one, shown first and approved, or under `--yes`.
 - Conflicts and absent sources block every change by `link`; under `--force`,
   only absent sources do.
 - New parent directories are created `0700`; on Windows they inherit the

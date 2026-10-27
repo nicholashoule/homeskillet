@@ -160,8 +160,9 @@ you to move it aside.
 homeskillet keeps its own files in one data directory: the installed versions
 (see [Versions and Updates](#versions-and-updates)), `links.json`, a record of
 the links it made, and `backups/`, the files `link --force` moved aside, each
-at its path in home with the Unix time appended. homeskillet never deletes a
-backup; remove one once you no longer need it. The default is
+at its path in home with the Unix time appended. homeskillet deletes a backup
+only when you purge it, after it shows each one and you approve
+([usage.md](usage.md#conflicts-and-backups)). The default is
 `~/.local/share/homeskillet`. Backups are moved there by renaming, so a data
 directory on another file system than home makes `--force` fail, changing
 nothing. To keep it

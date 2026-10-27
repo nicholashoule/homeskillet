@@ -32,8 +32,9 @@ import (
 )
 
 var (
-	commands     = []string{"status", "link", "unlink", "setup", "init", "check", "wsl", "self", "version", "completion", "help"}
-	selfCommands = []string{"install", "use", "list", "remove"}
+	commands        = []string{"status", "link", "unlink", "setup", "init", "check", "wsl", "backups", "self", "version", "completion", "help"}
+	selfCommands    = []string{"install", "use", "list", "remove"}
+	backupsCommands = []string{"list", "purge"}
 	// scoped lists the commands that accept each flag that only some
 	// commands use. Accepting such a flag silently elsewhere would suggest
 	// it changes something there, and --yes in particular approves running
@@ -41,17 +42,19 @@ var (
 	scoped = map[string][]string{
 		"repo": {"status", "link", "unlink", "setup", "init", "check"},
 		// init writes only into the repository.
-		"home": {"status", "link", "unlink", "setup", "self"},
-		"yes":  {"setup"},
+		"home": {"status", "link", "unlink", "setup", "self", "backups"},
+		// --yes approves running steps, or deleting backups, without asking.
+		"yes": {"setup", "backups"},
 		// self installs the running build and version prints its own
 		// details, so neither acts for another platform. init writes it
 		// into the starter manifest.
 		"platform": {"status", "link", "unlink", "setup", "init"},
 		"prefix":   {"self"},
 		// setup and version keep nothing in the data directory.
-		"data-dir": {"status", "link", "unlink", "self"},
+		"data-dir": {"status", "link", "unlink", "self", "backups"},
 		// Only link replaces anything, and only by moving it aside.
-		"force": {"link"},
+		"force":      {"link"},
+		"older-than": {"backups"},
 		// Only wsl reaches into a WSL distribution.
 		"distribution": {"wsl"},
 		"from":         {"wsl"},
@@ -93,6 +96,9 @@ type invocation struct {
 	// platform is --platform, the platform to act for instead of the
 	// detected one.
 	platform string
+	// olderThan is --older-than, which limits backups to those moved longer
+	// ago (see parseAge).
+	olderThan string
 	// wsl holds what only the wsl command reads (see parseWSL).
 	wsl *wslOptions
 }
@@ -169,8 +175,8 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if err := trust.CheckLocation(home); err != nil {
 		return fmt.Errorf("home: %w", err)
 	}
-	if inv.command == "self" {
-		return runSelf(inv, home, output)
+	if handled, err := runInHome(inv, home, input, output); handled {
+		return err
 	}
 	repo, manifest, remembered, err := openRepository(inv, home)
 	if err != nil {
@@ -188,6 +194,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	// get only the results (see terminal).
 	v := newView(output)
 	if v != nil {
+		v.copyOf = describeCopy(inv, home, repo)
 		if err := v.header(output, inv.command, repo, remembered, home, platform, inv.dryRun); err != nil {
 			return err
 		}
@@ -227,6 +234,19 @@ func runApart(ctx context.Context, inv invocation, input io.Reader, output, diag
 		return true, runWSL(ctx, inv, input, output, diagnostics)
 	case mirrorCommand:
 		return true, runMirror(inv, input, output)
+	}
+	return false, nil
+}
+
+// runInHome runs the commands that act on the home's own files rather than
+// a repository's, and reports whether inv was one of them: self, on installed
+// versions, and backups, on what link --force moved aside.
+func runInHome(inv invocation, home string, input io.Reader, output io.Writer) (bool, error) {
+	switch inv.command {
+	case "self":
+		return true, runSelf(inv, home, output)
+	case "backups":
+		return true, runBackups(inv, home, input, output)
 	}
 	return false, nil
 }
@@ -318,7 +338,7 @@ func parse(args []string, output io.Writer) (invocation, error) {
 	case "wsl":
 		return parseWSL(args, output)
 	}
-	if inv.command == "self" {
+	if _, ok := subcommands[inv.command]; ok {
 		inv.sub, args = word(args, "")
 	}
 	flags := newFlags(&inv)
@@ -360,12 +380,8 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		inv.repo, operands = operands[0], operands[1:]
 		inv.repoGiven = true
 	}
-	// self --dry-run list: the subcommand may follow options.
-	if inv.command == "self" && inv.sub == "" && len(operands) > 0 {
-		inv.sub, operands = operands[0], operands[1:]
-	}
-	if inv.command == "self" && inv.sub != "" && !slices.Contains(selfCommands, inv.sub) {
-		return invocation{}, fmt.Errorf("unknown command self %s; use self %s", inv.sub, strings.Join(selfCommands, ", self "))
+	if operands, err = takeSubcommand(&inv, operands); err != nil {
+		return invocation{}, err
 	}
 	switch {
 	case misplaced != nil:
@@ -392,6 +408,26 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		return invocation{}, fmt.Errorf("self %s needs a version", inv.sub)
 	}
 	return inv, nil
+}
+
+// subcommands lists, for each command that takes a command of its own after
+// it, the ones it takes.
+var subcommands = map[string][]string{"self": selfCommands, "backups": backupsCommands}
+
+// takeSubcommand takes the command after self or backups from operands when
+// options came first, as in self --dry-run list, and checks it.
+func takeSubcommand(inv *invocation, operands []string) ([]string, error) {
+	allowed, ok := subcommands[inv.command]
+	if !ok {
+		return operands, nil
+	}
+	if inv.sub == "" && len(operands) > 0 {
+		inv.sub, operands = operands[0], operands[1:]
+	}
+	if inv.sub != "" && !slices.Contains(allowed, inv.sub) {
+		return nil, fmt.Errorf("unknown command %s %s; use %s %s", inv.command, inv.sub, inv.command, strings.Join(allowed, ", "+inv.command+" "))
+	}
+	return operands, nil
 }
 
 // parseHidden parses the lines of the hidden commands, which are not
@@ -437,7 +473,8 @@ func newFlags(inv *invocation) *flag.FlagSet {
 		"(default: $"+dataDirVariable+", else .local/share/homeskillet)")
 	flags.BoolVar(&inv.root, "allow-root", false, "Allow running as root, or elevated on Windows, for root's own dotfiles; root must own everything homeskillet reads")
 	flags.BoolVar(&inv.force, "force", false, "Move conflicting files into a backup, then link")
-	flags.BoolVar(&inv.yes, "yes", false, "Run every pending step without asking")
+	flags.BoolVar(&inv.yes, "yes", false, "Run every pending step, or for backups purge delete every backup listed, without asking")
+	flags.StringVar(&inv.olderThan, "older-than", "", "Only backups moved more than `AGE` ago, in days or hours, such as 30d or 12h")
 	flags.StringVar(&inv.prefix, "prefix", "", "Install into `DIR`/bin (default: .local in the home directory)")
 	if inv.wsl == nil {
 		inv.wsl = new(wslOptions)

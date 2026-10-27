@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,9 +18,12 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/install"
 	"github.com/nicholashoule/homeskillet/internal/mirror"
+	"github.com/nicholashoule/homeskillet/internal/safefile"
 	"github.com/nicholashoule/homeskillet/internal/trust"
 	"github.com/nicholashoule/homeskillet/internal/version"
 	"github.com/nicholashoule/homeskillet/internal/wsl"
@@ -102,6 +106,9 @@ func parseWSL(args []string, output io.Writer) (invocation, error) {
 		}
 		switch {
 		case name == "distribution" || name == "from":
+		// setup keeps nothing in the data directory, and refuses the option;
+		// wsl reads it only to find the copy there.
+		case name == "data-dir" && inv.sub == "setup":
 		case boolean:
 			inv.wsl.forward = append(inv.wsl.forward, arg)
 		default:
@@ -229,8 +236,9 @@ func versionOf(output string) string {
 }
 
 // parseMirror reads the arguments of mirrorCommand: a mode (see
-// mirrorModes), the copy's name, and --home, --data-dir, and --allow-root,
-// as wsl passes them on.
+// mirrorModes), the copy's name, for update the Windows clone it is a copy
+// of, kept in inv.repo, and --home, --data-dir, and --allow-root, as wsl
+// passes them on.
 func parseMirror(args []string) (invocation, error) {
 	inv := invocation{command: mirrorCommand}
 	flags := newFlags(&inv)
@@ -247,12 +255,28 @@ func parseMirror(args []string) (invocation, error) {
 	if other != nil {
 		return invocation{}, other
 	}
-	if len(operands) != 2 || !slices.Contains(mirrorModes, operands[0]) || !mirror.ValidName(operands[1]) {
-		return invocation{}, fmt.Errorf("usage: homeskillet %s %s NAME", mirrorCommand, strings.Join(mirrorModes, "|"))
+	if len(operands) < 2 || len(operands) > 3 || !slices.Contains(mirrorModes, operands[0]) || !mirror.ValidName(operands[1]) ||
+		len(operands) == 3 && (operands[0] != "update" || !config.Printable(operands[2])) {
+		return invocation{}, fmt.Errorf("usage: homeskillet %s %s NAME [SOURCE]", mirrorCommand, strings.Join(mirrorModes, "|"))
 	}
 	inv.sub, inv.operand = operands[0], operands[1]
+	if len(operands) == 3 {
+		inv.repo = operands[2]
+	}
 	return inv, nil
 }
+
+// copyRecord is what mirrorCommand records beside a copy it updates, as
+// NAME.json in the data directory's mirrors: the Windows clone it is a copy
+// of, and when, so that the Linux build can say what it is acting on (see
+// describeCopy).
+type copyRecord struct {
+	Source  string    `json:"source"`
+	Updated time.Time `json:"updated"`
+}
+
+// maxCopyRecord bounds what describeCopy reads of a record.
+const maxCopyRecord = 64 << 10
 
 // runMirror receives a copy of a repository on input, for mirrorCommand, and
 // writes where it is, or for compare how it differs from the copy there is.
@@ -284,15 +308,55 @@ func runMirror(inv invocation, input io.Reader, output io.Writer) error {
 		_, err = fmt.Fprintf(output, "%d %d %d %s\n", diff.Added, diff.Changed, diff.Removed, copied)
 		return err
 	}
-	copied, err := mirror.Update(input, parent, inv.operand)
+	updated, err := mirror.Update(input, parent, inv.operand)
 	if err != nil {
 		if inv.sub == "temporary" {
 			err = errors.Join(err, os.RemoveAll(parent)) //nolint:gosec // G703: the temporary directory mirrorParent just made
 		}
 		return err
 	}
-	_, err = fmt.Fprintln(output, copied)
+	if inv.sub == "temporary" {
+		_, err = fmt.Fprintln(output, updated.Path)
+		return err
+	}
+	if inv.repo != "" {
+		record := copyRecord{Source: inv.repo, Updated: time.Now().UTC().Truncate(time.Second)}
+		err := safefile.Write(filepath.Join(parent, inv.operand+".json"), 0o600, func(w io.Writer) error {
+			return json.NewEncoder(w).Encode(record)
+		})
+		if err != nil {
+			return err
+		}
+	}
+	if updated.Created {
+		_, err = fmt.Fprintf(output, "new %s\n", updated.Path)
+		return err
+	}
+	_, err = fmt.Fprintf(output, "%d %d %d %s\n", updated.Added, updated.Changed, updated.Removed, updated.Path)
 	return err
+}
+
+// describeCopy returns, for the header of a command acting on repo, what to
+// say when repo is a copy homeskillet wsl keeps of a Windows clone: whose
+// copy it is, when it was last updated, and how to update it, so that a
+// command run inside WSL never acts on an old copy unawares. It is empty for
+// any other repository, or when the data directory cannot be found.
+func describeCopy(inv invocation, home, repo string) string {
+	data, err := dataDir(inv, home)
+	if err != nil {
+		return ""
+	}
+	mirrors := filepath.Join(data, mirrorsDir)
+	if filepath.Dir(repo) != mirrors {
+		return ""
+	}
+	text := "a Windows clone, kept by homeskillet wsl"
+	var record copyRecord
+	raw, err := safefile.Read(repo+".json", maxCopyRecord)
+	if err == nil && json.Unmarshal(raw, &record) == nil && config.Printable(record.Source) && !record.Updated.IsZero() {
+		text = record.Source + ", updated " + record.Updated.Local().Format("2006-01-02 15:04")
+	}
+	return text + "; homeskillet.exe wsl link updates it from Windows"
 }
 
 // mirrorParent returns the directory runMirror keeps the copy in, creating it

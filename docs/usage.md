@@ -16,6 +16,7 @@ option.
 | `init` | Write a starter `bootstrap.json` where there is no manifest ([manifest.md](manifest.md#creating-one)). |
 | `check` | List every issue in a repository, for every platform, or say it is valid ([manifest.md](manifest.md#checking-one)). |
 | `wsl` | On Windows, act in a WSL distribution ([windows.md](windows.md#the-wsl-command)). |
+| `backups` | List the files `link --force` moved aside; `backups purge` deletes them once you approve ([Conflicts and Backups](#conflicts-and-backups)). |
 | `self` | Install, list, switch, or remove versions of homeskillet ([install.md](install.md#versions-and-updates)). |
 | `version`, `completion`, `help` | Show the version, print a shell completion script ([install.md](install.md#shell-completion)), or show the help. |
 
@@ -67,7 +68,8 @@ an error rather than ignored. An empty value, as from an unset variable in
 | `--platform OS[/ARCH]` | Act for another platform, such as `darwin` or `linux/arm64` ([manifest.md](manifest.md#platforms)). |
 | `--quiet` | Print nothing but errors; the exit status reports the result. Not for `setup`, whose steps must be shown. |
 | `--force` | For `link`: move conflicting files into a backup, then link (see below). |
-| `--yes` | For `setup`: run every pending step without asking, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). |
+| `--yes` | For `setup`: run every pending step without asking, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). For `backups purge`: delete every backup listed without asking. |
+| `--older-than AGE` | For `backups`: only backups moved more than `AGE` ago, such as `30d`. |
 | `--data-dir DIR` | Keep the record of links, backups, and installed versions elsewhere ([install.md](install.md#data-directory)). |
 | `--prefix DIR` | For `self`: install under another prefix. |
 | `--allow-root` | Run as root, or elevated on Windows, for root's own dotfiles ([safety.md](safety.md#ownership)). |
@@ -94,3 +96,19 @@ conflicting file, never a directory, into the data directory's `backups/`, at
 its path with the Unix time appended (`backups/.bashrc.1761393600`), then
 links; move a backup back to restore it. `--dry-run --force` shows what would
 move. [safety.md](safety.md#links-and-conflicts) has every rule.
+
+Backups stay until you purge them:
+
+```sh
+homeskillet backups                           # list each backup, when it was moved, and its size
+homeskillet backups purge                     # show them, then delete them if you answer y
+homeskillet backups purge --older-than 30d    # only those moved more than 30 days ago
+homeskillet backups purge --dry-run           # show what would be deleted
+```
+
+A purge shows every backup it would delete and deletes nothing until you
+answer `y` or `yes`; anything else, including end of input, declines.
+`--yes` skips the question, for scripts. `--older-than` takes days (`30d`),
+weeks (`2w`), or hours (`12h`). In a script, `backups` prints one
+tab-separated line per backup: `backup`, its path, the path it came from in
+the home, the Unix time it was moved, and its size in bytes.

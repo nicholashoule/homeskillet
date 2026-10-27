@@ -39,6 +39,9 @@ Windows, on x64 and Arm64, join those for Linux and macOS
 - `homeskillet check` lists every issue in a repository's manifests and files,
   for every platform, or says it is valid, without touching a home; in a
   script it prints one line per issue and exits nonzero.
+- `homeskillet backups` lists the files `link --force` moved aside, and
+  `backups purge` deletes them, all or those older than `--older-than 30d`,
+  after showing each one and asking ([docs/usage.md](docs/usage.md#conflicts-and-backups)).
 - Write a manifest's targets and `creates` as `~/.bashrc` or `$HOME/.bashrc`
   as well as `.bashrc`, on every system.
 - A path given to homeskillet that starts with `~` means your home from any

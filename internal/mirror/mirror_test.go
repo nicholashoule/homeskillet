@@ -84,9 +84,13 @@ func parent(t *testing.T) string {
 func TestUpdate(t *testing.T) {
 	repo := repository(t, map[string]string{"bootstrap.json": "{}", "home/wsl/.bashrc": "one", "home/empty/.keep": ""})
 	dir := parent(t)
-	copied, err := Update(bytes.NewReader(stream(t, repo)), dir, "dotfiles")
+	updated, err := Update(bytes.NewReader(stream(t, repo)), dir, "dotfiles")
 	if err != nil {
 		t.Fatal(err)
+	}
+	copied := updated.Path
+	if !updated.Created {
+		t.Error("the first copy is not reported as created")
 	}
 	want := []string{"bootstrap.json={}", "home/empty/.keep=", "home/wsl/.bashrc=one"}
 	if got := contents(t, copied); !slices.Equal(got, want) {
@@ -105,8 +109,12 @@ func TestUpdate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(repo, "home", "wsl", ".bashrc"), []byte("two"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Update(bytes.NewReader(stream(t, repo)), dir, "dotfiles"); err != nil {
+	updated, err = Update(bytes.NewReader(stream(t, repo)), dir, "dotfiles")
+	if err != nil {
 		t.Fatal(err)
+	}
+	if updated.Created || updated.Differences != (Differences{Changed: 1, Removed: 1}) {
+		t.Errorf("second copy: %+v", updated)
 	}
 	want = []string{"bootstrap.json={}", "home/wsl/.bashrc=two"}
 	if got := contents(t, copied); !slices.Equal(got, want) {
@@ -114,6 +122,10 @@ func TestUpdate(t *testing.T) {
 	}
 	if entries, err := os.ReadDir(dir); err != nil || len(entries) != 1 {
 		t.Fatalf("left beside the copy: %v, %v", entries, err)
+	}
+	// An update with nothing new says so.
+	if updated, err = Update(bytes.NewReader(stream(t, repo)), dir, "dotfiles"); err != nil || !updated.None() {
+		t.Fatalf("third copy: %+v, %v", updated, err)
 	}
 }
 
@@ -123,10 +135,11 @@ func TestUpdateKeepsCopyOnBrokenStream(t *testing.T) {
 	repo := repository(t, map[string]string{"home/.profile": "kept"})
 	dir := parent(t)
 	whole := stream(t, repo)
-	copied, err := Update(bytes.NewReader(whole), dir, "dotfiles")
+	updated, err := Update(bytes.NewReader(whole), dir, "dotfiles")
 	if err != nil {
 		t.Fatal(err)
 	}
+	copied := updated.Path
 	outside := filepath.Join(filepath.Dir(dir), "escaped")
 	for name, data := range map[string]string{
 		"cut short":       string(whole[:len(whole)-10]),
@@ -168,10 +181,11 @@ func TestUpdateKeepsCopyOnBrokenStream(t *testing.T) {
 func TestCompare(t *testing.T) {
 	repo := repository(t, map[string]string{"a": "one", "dir/b": "two"})
 	dir := parent(t)
-	copied, err := Update(bytes.NewReader(stream(t, repo)), dir, "dotfiles")
+	updated, err := Update(bytes.NewReader(stream(t, repo)), dir, "dotfiles")
 	if err != nil {
 		t.Fatal(err)
 	}
+	copied := updated.Path
 	if diff, err := Compare(bytes.NewReader(stream(t, repo)), copied); err != nil || !diff.None() {
 		t.Fatalf("unchanged: %+v, %v", diff, err)
 	}
