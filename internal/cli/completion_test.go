@@ -290,7 +290,14 @@ func TestPowerShellCompletion(t *testing.T) {
 		t.Skip("pwsh is not installed")
 	}
 	repo, home := completionFixture(t)
-	dirs := t.TempDir()
+	// PowerShell completes a path with each folder's long name, so the
+	// temporary directory must have them too: on Windows it can be a short
+	// name such as RUNNER~1, as on GitHub's runners, which EvalSymlinks
+	// expands.
+	dirs, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := os.Mkdir(filepath.Join(dirs, "alpha"), 0o700); err != nil {
 		t.Fatal(err)
 	}
