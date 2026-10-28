@@ -44,6 +44,7 @@ describe the project, so keep them current instead.
 | `Makefile` | Portable build, test, lint, and cross-build targets |
 | `tools/xplat` | Cross-platform shim for Makefile recipes, vendored from `go-webapp` |
 | `tools/buildtime` | Prints the build time the Makefile stamps into binaries |
+| `tools/smoke` | The smoke test: the built binary links and unlinks this system's example in a scratch home, `make smoke` and CI |
 | `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
 | `tools/release` | The release build both the release workflow and CI's dry run run (docs/release.md) |
 | `examples/` | Starter configuration repositories, one per system; `TestExamples` runs `check` on each |
@@ -69,7 +70,7 @@ back. `make` alone lists every target.
 
 ```sh
 make fmt          # golangci-lint fmt ./...
-make check        # go vet, golangci-lint run, go test -race
+make check        # go vet, golangci-lint run, go test -race, make smoke
 make build        # bin/homeskillet for this machine (VERSION=v0.0.1 to stamp)
 make install      # build, then install it as a new version under ~/.local
 make cross        # bin/homeskillet-<os>-<arch> for Linux, macOS, and Windows

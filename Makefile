@@ -90,7 +90,12 @@ lint: ## Run golangci-lint with .golangci.yml
 test: ## Run tests, with the race detector when cgo is available
 	go test $(RACE) ./...
 
-check: vet lint test ## Run vet, lint, and tests; required before handing off work
+# tools/smoke builds homeskillet and uses it as a person would, in a scratch
+# home, as CI does on Linux, macOS, and Windows; see docs/development.md.
+smoke: ## Build homeskillet, then link and unlink this system's example in a scratch home
+	go run ./tools/smoke
+
+check: vet lint test smoke ## Run vet, lint, tests, and the smoke test; required before handing off work
 
 # tools/githooks resolves the hooks directory through Git and never replaces a
 # hook it did not install. Run it again after changing tools/githooks/pre-commit.
