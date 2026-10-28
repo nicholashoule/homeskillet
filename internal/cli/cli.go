@@ -32,8 +32,11 @@ import (
 )
 
 var (
-	commands        = []string{"status", "link", "unlink", "setup", "init", "check", "wsl", "backups", "self", "version", "completion", "help"}
-	selfCommands    = []string{"install", "use", "list", "remove"}
+	commands = []string{"status", "link", "unlink", "setup", "init", "check", "wsl", "backups", "update", "install", "use", "self", "version", "completion", "help"}
+	// selfAliases are the self commands that are also commands of their
+	// own: homeskillet update is homeskillet self update.
+	selfAliases     = []string{"update", "install", "use"}
+	selfCommands    = []string{"install", "update", "releases", "use", "list", "remove"}
 	backupsCommands = []string{"list", "purge"}
 	// scoped lists the commands that accept each flag that only some
 	// commands use. Accepting such a flag silently elsewhere would suggest
@@ -72,7 +75,7 @@ var (
 type invocation struct {
 	command string // one of commands
 	sub     string // for self, one of selfCommands
-	operand string // for self use and self remove, the version
+	operand string // for self use, self update, and self remove, the version
 	repo    string
 	// repoGiven says the repository was named rather than defaulted (see
 	// openRepository).
@@ -176,7 +179,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if err := trust.CheckLocation(home); err != nil {
 		return fmt.Errorf("home: %w", err)
 	}
-	if handled, err := runInHome(inv, home, input, output); handled {
+	if handled, err := runInHome(ctx, inv, home, input, output, diagnostics); handled {
 		return err
 	}
 	repo, manifest, remembered, err := openRepository(inv, home)
@@ -244,10 +247,10 @@ func runApart(ctx context.Context, inv invocation, input io.Reader, output, diag
 // runInHome runs the commands that act on the home's own files rather than
 // a repository's, and reports whether inv was one of them: self, on installed
 // versions, and backups, on what link --force moved aside.
-func runInHome(inv invocation, home string, input io.Reader, output io.Writer) (bool, error) {
+func runInHome(ctx context.Context, inv invocation, home string, input io.Reader, output, diagnostics io.Writer) (bool, error) {
 	switch inv.command {
 	case "self":
-		return true, runSelf(inv, home, output)
+		return true, runSelf(ctx, inv, home, output, diagnostics)
 	case "backups":
 		return true, runBackups(inv, home, input, output)
 	}
@@ -321,19 +324,10 @@ func parse(args []string, output io.Writer) (invocation, error) {
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-version") {
 		args = []string{"version"}
 	}
-	inv := invocation{command: "status"}
-	inv.command, args = word(args, inv.command)
-	if !slices.Contains(commands, inv.command) {
-		// A path in place of a command means status for that repository.
-		// Only a word that is plainly a path counts, so a mistyped command
-		// is reported rather than read as a directory, and status never
-		// changes anything either way.
-		if !isPath(inv.command) {
-			return invocation{}, fmt.Errorf("unknown command %q; use %s, or a repository path such as ./%s",
-				inv.command, strings.Join(commands, ", "), inv.command)
-		}
-		args = append([]string{inv.command}, args...)
-		inv.command = "status"
+	inv := invocation{}
+	var err error
+	if inv.command, args, err = takeCommand(args); err != nil {
+		return invocation{}, err
 	}
 	switch inv.command {
 	case "help":
@@ -391,8 +385,11 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		return invocation{}, misplaced
 	case empty != nil:
 		return invocation{}, empty
-	case (inv.sub == "use" || inv.sub == "remove" || inv.command == "completion") && len(operands) == 1:
+	case (inv.sub == "use" || inv.sub == "remove" || inv.sub == "update" || inv.command == "completion") && len(operands) == 1:
 		inv.operand = operands[0]
+		if inv.command == "self" {
+			inv.operand = withV(inv.operand)
+		}
 	case slices.Contains(selecting, inv.command):
 		inv.files = operands
 	case inv.command == "setup":
@@ -411,6 +408,35 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		return invocation{}, fmt.Errorf("self %s needs a version", inv.sub)
 	}
 	return inv, nil
+}
+
+// withV returns a version written without its leading v, as 0.2.0, with it,
+// as self use, self update, and self remove name versions, and anything else
+// as it is.
+func withV(v string) string {
+	if !version.Valid(v) && version.Valid("v"+v) {
+		return "v" + v
+	}
+	return v
+}
+
+// takeCommand takes the command from args, status when there is none, and
+// returns it with the arguments left. A path in place of a command means
+// status for that repository: only a word that is plainly a path counts (see
+// isPath), so a mistyped command is reported rather than read as a
+// directory, and status never changes anything either way. A self alias,
+// such as update, becomes self with the alias as its command.
+func takeCommand(args []string) (string, []string, error) {
+	command, rest := word(args, "status")
+	switch {
+	case slices.Contains(selfAliases, command):
+		return "self", append([]string{command}, rest...), nil
+	case slices.Contains(commands, command):
+		return command, rest, nil
+	case isPath(command):
+		return "status", args, nil
+	}
+	return "", nil, fmt.Errorf("unknown command %q; use %s, or a repository path such as ./%s", command, strings.Join(commands, ", "), command)
 }
 
 // subcommands lists, for each command that takes a command of its own after
@@ -904,7 +930,7 @@ func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRu
 
 // runSelf manages installed versions of homeskillet under the prefix,
 // .local in the home directory unless --prefix says otherwise.
-func runSelf(inv invocation, home string, output io.Writer) error {
+func runSelf(ctx context.Context, inv invocation, home string, output, diagnostics io.Writer) error {
 	layout, err := selfLayout(inv, home)
 	if err != nil {
 		return err
@@ -930,6 +956,10 @@ func runSelf(inv invocation, home string, output io.Writer) error {
 		if err == nil && !onPath(layout.Bin) {
 			_, err = fmt.Fprintf(output, notOnPathLine, layout.Bin, pathAdvice)
 		}
+	case "update":
+		err = runUpdate(ctx, inv, layout, home, output, diagnostics)
+	case "releases":
+		err = runReleases(ctx, layout, output)
 	case "use":
 		err = layout.Use(inv.operand, inv.dryRun, output)
 	case "remove":

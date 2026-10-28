@@ -279,6 +279,9 @@ func completions(words []string) (string, []string) {
 			}
 			command, rest = "status", line.positional
 		}
+		if slices.Contains(selfAliases, command) {
+			command, rest = "self", line.positional
+		}
 	}
 	if !line.terminated && strings.HasPrefix(line.current, "-") {
 		name, value, hasValue := strings.Cut(strings.TrimLeft(line.current, "-"), "=")

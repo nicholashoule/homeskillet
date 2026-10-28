@@ -166,6 +166,17 @@ binaries are static and contain no local filesystem paths. A release builds the 
 Cross-compilation verifies builds, not native macOS execution. Native checks on a Mac are still required before claiming
 runtime verification there.
 
+## Website
+
+[site/index.html](../site/index.html) is the project's website, one hand-written page with no build step or framework,
+and only a few lines of script that mark the menu item for the section in view, kept in step with the README. The Go
+gopher in `site/images/` is the Go project's own file, Renee French's design under Creative Commons Attribution 4.0,
+which the page credits. Pushing a change to `site/` to `main` runs
+[.github/workflows/pages.yml](../.github/workflows/pages.yml), which uploads the directory and deploys it to GitHub
+Pages at `https://<owner>.github.io/homeskillet/`. The workflow needs Pages enabled once in the repository settings
+with "GitHub Actions" as the source. The page links to the documents in `docs/` on GitHub rather than copying them, so
+each fact stays in one place.
+
 ## Working With Both Repositories
 
 Inspect both worktrees before editing. Configuration and manager changes have separate Git histories. Do not revert

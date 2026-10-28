@@ -188,6 +188,23 @@ copies and where it copies it:
 - Each file is written under a temporary name and renamed into place only once it is complete and flushed to disk, so a
   crash or a full disk never leaves a partial binary.
 
+## Updating
+
+`homeskillet update` runs a program it just downloaded, so everything on the way to running it is checked:
+
+- It downloads only from this project's releases on GitHub, at URLs fixed in the binary, over HTTPS with TLS 1.2 or
+  later, and never follows a redirect to plain HTTP. There is no option to download from elsewhere.
+- It uses the system's own `curl` and hashing tool (`sha256sum` or `shasum`; `certutil` on Windows) at their fixed
+  paths, never ones found on `PATH`, and each must pass the rules for a program homeskillet copies: a regular file,
+  owned by you or root, writable by nobody else.
+- The binary goes into a private temporary directory, is bounded in size, must match the SHA-256 the release's
+  `SHA256SUMS` lists for it, and must report the version asked for, before anything runs it.
+- It then installs itself with `self install`, under the rules above, so the version that was running stays installed
+  and `homeskillet use previous` returns to it. A version already installed is never downloaded again or rewritten.
+
+`SHA256SUMS` comes from the same release as the binary, so the check proves the download arrived intact, not who
+published it; the release workflow is what stands behind that ([release.md](release.md#tagging)).
+
 ## System Directories
 
 homeskillet also refuses to work in system directories. The home directory, the repository, and the install prefix may

@@ -79,7 +79,7 @@ func displayPath(p string) string {
 func (v *view) header(w io.Writer, command, repo string, remembered bool, home string, platform config.Platform, dryRun bool) error {
 	repository := v.path(repo)
 	if remembered {
-		repository += "  (linked into this home before; none was named)"
+		repository += "  (found from existing links)"
 	}
 	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n", command, "repository:", repository)
 	if v.copyOf != "" {
@@ -231,7 +231,10 @@ func nextSetup(steps []config.Step, repo, home, data string, remembered bool) st
 	if cwd, err := os.Getwd(); !remembered && (err != nil || !samePlace(cwd, repo)) {
 		command += " " + setup.Quote([]string{repo})
 	}
-	return fmt.Sprintf("Next: %s offers %s, each shown before it runs.", command, files(pending, "pending setup step"))
+	if pending == 1 {
+		return fmt.Sprintf("1 setup step is pending. Run %s to review and approve it.", command)
+	}
+	return fmt.Sprintf("%d setup steps are pending. Run %s to review and approve each one.", pending, command)
 }
 
 // samePlace reports whether the directory dir, as given, is repo, which is

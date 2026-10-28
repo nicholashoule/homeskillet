@@ -45,7 +45,9 @@ From a clone of this repository, with Go: `go build -o bin\homeskillet.exe .`, t
 or `make install` where GNU Make is installed ([development.md](development.md#on-windows)). Either way the command
 lands in `%USERPROFILE%\.local\bin\homeskillet.exe`, where uv and other installers put programs too. homeskillet says so
 if that directory is not on your Path; add it to your user Path in Settings (search for environment variables), and open
-a new terminal. [install.md](install.md) covers versions, pinning, and removal, which work as on Linux and macOS.
+a new terminal. After that, `homeskillet update` installs the newest release, with Windows's own `curl.exe` and
+`certutil.exe` to download and check it. [install.md](install.md) covers updating, versions, pinning, and removal, which
+work as on Linux and macOS.
 
 For tab completion in PowerShell 7.3 or later, add this to your profile:
 
