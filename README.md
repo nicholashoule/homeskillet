@@ -6,17 +6,15 @@
 [![License](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 [![Zero Dependencies](https://img.shields.io/badge/dependencies-none-brightgreen)](go.mod)
 
-A small, dependency-free Go CLI for bootstrapping anyone's dotfiles on Linux,
-macOS, or Windows, natively and in WSL. homeskillet links the files a
-configuration repository keeps under `home/` into your home directory, and
-runs the setup steps its optional manifest declares, such as installing a
-prompt or language tools, each only after you approve it. Configuration lives
-in your own repository; homeskillet ships and assumes none.
+A small, dependency-free Go CLI for bootstrapping anyone's dotfiles on Linux, macOS, or Windows, natively and in WSL.
+homeskillet links the files a configuration repository keeps under `home/` into your home directory, and runs the setup
+steps its optional manifest declares, such as installing a prompt or language tools, each only after you approve it.
+Configuration lives in your own repository; homeskillet ships and assumes none.
 
 ## Supported Environments
 
-homeskillet makes links and runs steps directly, never through your shell, so
-it works the same whatever your login shell is.
+homeskillet makes links and runs steps directly, never through your shell, so it works the same whatever your login
+shell is.
 
 | Environment | Notes |
 |---|---|
@@ -35,11 +33,9 @@ make install          # build, then install as a new version under ~/.local
 homeskillet version
 ```
 
-Without Go, download a release and run its `self install`
-([docs/install.md](docs/install.md#downloading-a-release); on Windows,
-[docs/windows.md](docs/windows.md#installing)). Updating is `git pull` then
-`make install`, and rolling back is `homeskillet self use previous`
-([docs/install.md](docs/install.md)).
+Without Go, download a release and run its `self install` ([docs/install.md](docs/install.md#downloading-a-release); on
+Windows, [docs/windows.md](docs/windows.md#installing)). Updating is `git pull` then `make install`, and rolling back is
+`homeskillet self use previous` ([docs/install.md](docs/install.md)).
 
 ## Use
 
@@ -54,9 +50,8 @@ homeskillet check ~/dotfiles                  # list every issue, or say it is v
 homeskillet unlink ~/dotfiles
 ```
 
-After the first `link`, the repository may be left out anywhere. At a terminal
-the output is grouped for reading; in a script it is one tab-separated line
-per file. [docs/usage.md](docs/usage.md) covers every command and option, and
+After the first `link`, the repository may be left out anywhere. At a terminal the output is grouped for reading; in a
+script it is one tab-separated line per file. [docs/usage.md](docs/usage.md) covers every command and option, and
 `homeskillet help` lists them.
 
 ## Configuring a Repository
@@ -70,10 +65,8 @@ dotfiles/
     └── .config/git/config     -> ~/.config/git/config
 ```
 
-An optional manifest at the root, `bootstrap.json` or `dotfiles.json`, or both
-merged, adds what `home/` cannot say: the `platforms` the repository is for,
-`setup` steps, and an explicit list of `files`. `homeskillet init` writes a
-starter:
+An optional manifest at the root, `bootstrap.json` or `dotfiles.json`, or both merged, adds what `home/` cannot say: the
+`platforms` the repository is for, `setup` steps, and an explicit list of `files`. `homeskillet init` writes a starter:
 
 ```json
 {
@@ -84,22 +77,17 @@ starter:
 }
 ```
 
-To start from a working one, copy the example for
-[Linux](examples/linux), [macOS](examples/macos), or
-[Windows](examples/windows): a few dotfiles, a setup step, and the commands
-to link them. [docs/manifest.md](docs/manifest.md) describes every field,
-platforms, setup steps, and `home/wsl/` for WSL.
+To start from a working one, copy the example for [Linux](examples/linux), [macOS](examples/macos), or
+[Windows](examples/windows): a few dotfiles, a setup step, and the commands to link them.
+[docs/manifest.md](docs/manifest.md) describes every field, platforms, setup steps, and `home/wsl/` for WSL.
 
 ## Safety
 
-homeskillet never overwrites or deletes a file it did not create, short of
-backups you ask it to purge after it lists them, and refuses
-to run as root, or elevated on Windows, without `--allow-root`. Linked files
-such as `.bashrc` and setup steps run as you, so it refuses a repository,
-source, or symlink another user could change, following OpenSSH's rules for
-`~/.ssh`, and shows each setup step exactly before you approve it. Review
-someone else's dotfiles before linking them, and especially before
-`setup --yes`. [docs/safety.md](docs/safety.md) has every rule.
+homeskillet never overwrites or deletes a file it did not create, short of backups you ask it to purge after it lists
+them, and refuses to run as root, or elevated on Windows, without `--allow-root`. Linked files such as `.bashrc` and
+setup steps run as you, so it refuses a repository, source, or symlink another user could change, following OpenSSH's
+rules for `~/.ssh`, and shows each setup step exactly before you approve it. Review someone else's dotfiles before
+linking them, and especially before `setup --yes`. [docs/safety.md](docs/safety.md) has every rule.
 
 ## Development
 
@@ -107,14 +95,14 @@ someone else's dotfiles before linking them, and especially before
 make check            # go vet, golangci-lint, go test -race, and the smoke test
 ```
 
-Tests build their own repositories and never touch your home.
-[docs/development.md](docs/development.md) covers the Makefile, CI, and
-cross builds, and [docs/release.md](docs/release.md) releasing.
+Tests build their own repositories and never touch your home. [docs/development.md](docs/development.md) covers the
+Makefile, CI, and cross builds, and [docs/release.md](docs/release.md) releasing.
 
 ## Documentation
 
 - [Usage](docs/usage.md): commands, options, choosing the repository and files, and output.
-- [Configuration Repositories](docs/manifest.md): `home/`, `bootstrap.json` and `dotfiles.json`, platforms, setup steps, and `check`.
+- [Configuration Repositories](docs/manifest.md): `home/`, `bootstrap.json` and `dotfiles.json`, platforms, setup steps,
+  and `check`.
 - [Windows](docs/windows.md): what is supported, setting up Windows, laying out a repository for it, and WSL.
 - [Installing and Updating](docs/install.md): installing, versions, rollback, completion, and the data directory.
 - [Safety](docs/safety.md): every refusal, and the reasoning behind it.

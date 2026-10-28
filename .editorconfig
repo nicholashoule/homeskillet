@@ -1,0 +1,34 @@
+# Editor settings, so every editor on Linux, macOS, and Windows writes files the way this repository keeps them
+# (https://editorconfig.org). Line endings match .gitattributes, which normalizes them in Git; keep the two in step.
+root = true
+
+# Wrap prose, in Markdown and in comments, at 120 columns. Tables, code blocks, and long URLs keep their lines.
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+max_line_length = 120
+indent_style = space
+indent_size = 2
+
+# gofmt indents Go with tabs.
+[{*.go,go.mod,go.sum}]
+indent_style = tab
+indent_size = 4
+
+# Make requires tabs before recipe lines.
+[Makefile]
+indent_style = tab
+indent_size = 4
+
+[tools/githooks/pre-commit]
+indent_style = tab
+indent_size = 4
+
+[*.ps1]
+indent_size = 4
+
+# Windows batch files need CRLF, as .gitattributes says.
+[*.{bat,cmd}]
+end_of_line = crlf
