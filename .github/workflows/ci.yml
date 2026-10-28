@@ -1,8 +1,8 @@
 # CI: the checks `make check` runs, on every Go release from the go.mod floor to
 # the latest, on Linux, macOS, and Windows, where a built homeskillet also links
-# and unlinks a repository; release cross builds; and golangci-lint for the
-# Linux and Windows builds, repogov, and demojify. See Continuous Integration
-# in docs/development.md.
+# and unlinks a repository; a rehearsal of the release build; and golangci-lint
+# for the Linux and Windows builds, repogov, and demojify. See Continuous
+# Integration in docs/development.md.
 name: CI
 
 on:
@@ -78,9 +78,33 @@ jobs:
           ./homeskillet.exe unlink --allow-root --home $scratch $repo
           if (Test-Path -LiteralPath $target) { throw 'unlink left the symlink' }
 
-      - name: Release builds
-        if: matrix.go-version == 'stable' && runner.os == 'Linux'
-        run: make cross
+  # The release workflow's build, run on a tag made here and never pushed, so
+  # a change that would break a release fails here rather than when a version
+  # is tagged. It uses the newest version in CHANGELOG.md, whose section the
+  # notes need, and publishes nothing.
+  release:
+    name: Release (dry run)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Build as a release
+        run: |
+          version=$(awk '/^## \[[0-9]/ { sub(/^## \[/, ""); sub(/\].*/, ""); print; exit }' CHANGELOG.md)
+          if [[ -z $version ]]; then
+            echo "::error::CHANGELOG.md has no version section to rehearse a release with"
+            exit 1
+          fi
+          git tag --force "v$version"
+          bash tools/release/build.sh "v$version" "$RUNNER_TEMP/notes.md"
 
   lint:
     name: Lint
