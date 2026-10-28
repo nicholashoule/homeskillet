@@ -274,10 +274,37 @@ uv and then the Homebrew tools.
 | `platforms` | Optional. Replaces the manifest's default `platforms` for this step (see [Platforms](#platforms)). |
 | `creates` | Optional path in the home ([Paths in the Home](#paths-in-the-home)), or starting with `{documents}/`, relative to your Documents folder, where PowerShell keeps its profile ([windows.md](windows.md#the-documents-folder)). If it exists, the step is done and not offered. |
 | `provides` | Optional command name, without `/`, `\`, or `:`. If it is on `PATH`, in the home's `.local/bin`, or in one of Homebrew's standard `bin` directories (see below), the step is done and not offered. |
+| `inputs` | Optional list of files in the repository the step works from, such as a list of packages. The step is done once it has run and succeeded with them as they are, and is offered again when one changes ([Steps That Install From a List](#steps-that-install-from-a-list)). |
 
 A list of commands groups work that belongs together into one step: they are
 shown together, approved once, and run in order, and the first that fails
 stops the step and setup.
+
+### Steps That Install From a List
+
+A step that installs whatever a file lists, such as apt packages, a Brewfile,
+or winget's tools, has nothing for `creates` or `provides` to find: a marker
+file it left would stay when a package is added to the list, and the new
+package would never be installed. List the files it works from as `inputs`:
+
+```json
+{
+  "name": "apt-packages",
+  "run": ["bash", "setup/install-apt-packages.sh", "lists/apt-packages"],
+  "platforms": ["linux"],
+  "inputs": ["lists/apt-packages", "setup/install-apt-packages.sh"]
+}
+```
+
+When the step runs and succeeds, homeskillet records a fingerprint of its
+commands and of each input's contents in its data directory, as `setup.json`,
+for that home and repository. The step is then done until a command or an
+input changes, and the listing says `inputs unchanged since it ran` and when.
+Contents decide, not times, so a fresh clone, or the copy `homeskillet wsl`
+keeps, is unchanged. With `creates` or `provides` as well, both must say the
+step is done. Each input must be a file in the repository, as `check` makes
+sure; a step that fails is not recorded, so it is offered again. Deciding still
+runs nothing, and a recorded step can only go unoffered, never run.
 
 ### Running Steps
 
@@ -289,8 +316,9 @@ homeskillet setup ~/dotfiles --dry-run        # list every step and its state
 ```
 
 Names after `setup` select steps, which still run in manifest order, since a
-later step may rely on an earlier one. A name matching no step for this
-platform fails before anything runs. A repository given before them must
+later step may rely on an earlier one, and are offered even when done, so
+naming a step runs it again, as after uninstalling a package by hand. A name
+matching no step for this platform fails before anything runs. A repository given before them must
 plainly be a path (`.`, `..`, or containing `/`, or on Windows `\`), as a step
 name never is, so write `./dotfiles` rather than `dotfiles`.
 
@@ -323,8 +351,8 @@ Run this step? [y/N]
 Steps run from the repository root, so repository scripts such as
 `setup/uv.sh` work. `HOME` and `HOMESKILLET_HOME` are set to the selected
 home, and on Windows `USERPROFILE` too, and `HOMESKILLET_REPO` to the
-repository. A step without `creates` or
-`provides` is offered on every run, so make it safe to repeat. A failing step
+repository. A step without `creates`, `provides`, or `inputs` is offered on
+every run, so make it safe to repeat. A failing step
 stops setup; declined steps are skipped and the rest are still offered.
 `setup --yes` runs every pending step without asking, for unattended builds
 such as a Dockerfile; [safety.md](safety.md#setup-steps) explains what that

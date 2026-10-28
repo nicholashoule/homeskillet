@@ -40,8 +40,7 @@ func TestParseWSL(t *testing.T) {
 		{args: []string{"wsl", "setup", "./dotfiles", "fonts", "--yes"}, sub: "setup", repo: "./dotfiles", forward: []string{"--yes", "fonts"}},
 		{args: []string{"wsl", "link", ".", "--", "-odd"}, sub: "link", repo: ".", forward: []string{"--", "-odd"}},
 		{args: []string{"wsl", "link", "--data-dir", "/tmp/data"}, sub: "link", repo: ".", forward: []string{"--data-dir=/tmp/data"}},
-		// setup refuses --data-dir; wsl reads it only to find the copy.
-		{args: []string{"wsl", "setup", ".", "--data-dir", "/tmp/data", "--dry-run"}, sub: "setup", repo: ".", forward: []string{"--dry-run"}},
+		{args: []string{"wsl", "setup", ".", "--data-dir", "/tmp/data", "--dry-run"}, sub: "setup", repo: ".", forward: []string{"--data-dir=/tmp/data", "--dry-run"}},
 		{args: []string{"wsl", "link", "--from", "x"}, err: "--from applies only to wsl install"},
 		{args: []string{"wsl", "link", "--prefix", "x"}, err: "--prefix applies only to wsl install"},
 		{args: []string{"wsl", "link", "--repo", "x"}, err: "name the repository after the command"},
@@ -67,7 +66,7 @@ func TestParseWSL(t *testing.T) {
 		t.Fatalf("wsl's own options: %+v, %v", inv, err)
 	}
 	if inv, err = parse([]string{"wsl", "setup", ".", "--data-dir", "/tmp/data"}, new(bytes.Buffer)); err != nil || inv.data != "/tmp/data" {
-		t.Fatalf("setup's data directory, for the copy: %q, %v", inv.data, err)
+		t.Fatalf("setup's data directory, for the copy and the record: %q, %v", inv.data, err)
 	}
 }
 

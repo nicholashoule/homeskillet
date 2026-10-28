@@ -50,8 +50,9 @@ var (
 		// into the starter manifest.
 		"platform": {"status", "link", "unlink", "setup", "init"},
 		"prefix":   {"self"},
-		// setup and version keep nothing in the data directory.
-		"data-dir": {"status", "link", "unlink", "self", "backups"},
+		// version keeps nothing in the data directory; setup keeps the record
+		// of steps with inputs there.
+		"data-dir": {"status", "link", "unlink", "setup", "self", "backups"},
 		// Only link replaces anything, and only by moving it aside.
 		"force":      {"link"},
 		"older-than": {"backups"},
@@ -199,23 +200,23 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 			return err
 		}
 	}
+	data, err := dataDir(inv, home)
+	if err != nil {
+		return err
+	}
 	if inv.command == "setup" {
 		if steps, err = selectSteps(inv.steps, steps, manifest.Setup, repo, platform); err != nil {
 			return err
 		}
 		return runSetup(ctx, steps, repo, home, inv.dryRun, setup.Options{
-			Repo: repo, Home: home, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
+			Repo: repo, Home: home, Data: data, Again: len(inv.steps) > 0, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
 		}, v)
 	}
 	// A person who has just linked a repository may not know it has setup
 	// steps waiting, such as the one that makes their shell load what was
 	// linked, so the view says what to run next.
 	if v != nil && (inv.command == "link" || inv.command == "status") && len(steps) > 0 {
-		v.next = nextSetup(steps, repo, home, remembered)
-	}
-	data, err := dataDir(inv, home)
-	if err != nil {
-		return err
+		v.next = nextSetup(steps, repo, home, data, remembered)
 	}
 	return runLinks(inv, files, repo, home, data, output, diagnostics, v)
 }
@@ -856,8 +857,8 @@ func selectSteps(names []string, applicable, all []config.Step, repo string, pla
 			return nil, fmt.Errorf("setup step %s is not for %s", name, platform)
 		default:
 			var known []string
-			for _, step := range applicable {
-				known = append(known, step.Name)
+			for i := range applicable {
+				known = append(known, applicable[i].Name)
 			}
 			return nil, fmt.Errorf("%s has no setup step %s; its steps for %s are %s\n  to name a repository, write it as a path, such as ./%s",
 				repo, name, platform, cmp.Or(strings.Join(known, ", "), "none"), name)
@@ -867,11 +868,17 @@ func selectSteps(names []string, applicable, all []config.Step, repo string, pla
 }
 
 // runSetup lists the steps for a dry run, grouped for a person at a terminal
-// (v) or one line each for scripts, or runs them.
+// (v) or one line each for scripts, or runs them. Steps a person named are
+// offered even when done (see setup.Options.Again), and listed so.
 func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRun bool, opts setup.Options, v *view) error {
-	plans, err := setup.Prepare(steps, repo, home)
+	plans, err := setup.Prepare(steps, repo, home, opts.Data)
 	if err != nil {
 		return err
+	}
+	if opts.Again {
+		for i := range plans {
+			plans[i].State = setup.Pending
+		}
 	}
 	if !dryRun {
 		if v != nil {

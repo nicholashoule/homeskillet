@@ -122,6 +122,12 @@ type Step struct {
 	// Provides is a command name. If it is found on PATH, the step is already
 	// done and is not offered.
 	Provides string `json:"provides,omitempty"`
+	// Inputs are files in the repository the step works from, such as the
+	// list of packages it installs. A step with inputs is done only once it
+	// has run and succeeded with them and its commands as they are now, as
+	// well as by Creates and Provides when set; changing either offers it
+	// again (see package setup).
+	Inputs []string `json:"inputs,omitempty"`
 	// from names the manifest that lists the step, for errors.
 	from string
 }
@@ -295,12 +301,13 @@ func (m *Manifest) merge(next Manifest) []error {
 		}
 	}
 	earlier := m.Setup
-	for _, step := range next.Setup {
+	for j := range next.Setup {
+		step := &next.Setup[j]
 		i := slices.IndexFunc(earlier, func(other Step) bool { return other.Name == step.Name })
 		switch {
 		case i < 0:
-			m.Setup = append(m.Setup, step)
-		case !earlier[i].same(step):
+			m.Setup = append(m.Setup, *step)
+		case !earlier[i].same(*step):
 			issues = append(issues, fmt.Errorf("%ssetup step %s is listed twice, differently; keep one", origin(earlier[i].from, step.from), step.Name))
 		}
 	}
@@ -315,7 +322,8 @@ func (e Entry) same(other Entry) bool {
 // same reports whether s and other are the same step, field for field.
 func (s Step) same(other Step) bool {
 	return s.Name == other.Name && s.Creates == other.Creates && s.Provides == other.Provides &&
-		slices.Equal(s.Platforms, other.Platforms) && slices.EqualFunc(s.Run, other.Run, slices.Equal)
+		slices.Equal(s.Platforms, other.Platforms) && slices.EqualFunc(s.Run, other.Run, slices.Equal) &&
+		slices.Equal(s.Inputs, other.Inputs)
 }
 
 // origin starts an error about entries or steps with the manifests that list
@@ -385,7 +393,8 @@ func decode(r io.Reader, name string) (Manifest, error) {
 	manifest.Files = files
 	var steps []Step
 	names := make(map[string]bool)
-	for i, step := range manifest.Setup {
+	for i := range manifest.Setup {
+		step := &manifest.Setup[i]
 		step.from = name
 		step.Creates = fromHome(step.Creates)
 		switch err := step.validate(); {
@@ -395,7 +404,7 @@ func decode(r io.Reader, name string) (Manifest, error) {
 		case names[step.Name]:
 			issues = append(issues, fmt.Errorf("%s setup step %d: duplicate name %s", name, i+1, step.Name))
 		default:
-			steps = append(steps, step)
+			steps = append(steps, *step)
 		}
 		names[step.Name] = true
 	}
@@ -599,9 +608,9 @@ func (m Manifest) FilesFor(p Platform) []Entry {
 // chosen as in FilesFor.
 func (m Manifest) SetupFor(p Platform) []Step {
 	var selected []Step
-	for _, step := range m.Setup {
-		if m.appliesTo(step.Platforms, p) {
-			selected = append(selected, step)
+	for i := range m.Setup {
+		if m.appliesTo(m.Setup[i].Platforms, p) {
+			selected = append(selected, m.Setup[i])
 		}
 	}
 	return selected
@@ -753,10 +762,17 @@ func (m Manifest) checkWindowsNames() error {
 		}
 		targets[key] = entry
 	}
-	for _, step := range m.Setup {
+	for i := range m.Setup {
+		step := &m.Setup[i]
 		if step.Creates != "" && m.targets(step.Platforms, "windows") {
 			if err := windowsPath(strings.TrimPrefix(step.Creates, DocumentsPrefix)); err != nil {
 				issues = append(issues, fmt.Errorf("%ssetup step %s: creates %q cannot exist on Windows: %w", origin(step.from), step.Name, step.Creates, err))
+			}
+		}
+		// Inputs are files in the repository, cloned with the rest of it.
+		for _, input := range step.Inputs {
+			if err := windowsPath(input); cloned && err != nil {
+				issues = append(issues, fmt.Errorf("%ssetup step %s: input %q cannot exist on Windows: %w", origin(step.from), step.Name, input, err))
 			}
 		}
 	}
@@ -927,6 +943,16 @@ func (s Step) validate() error {
 	// command lookup returns as it is, found or not.
 	if s.Provides != "" && (strings.ContainsAny(s.Provides, `/\:`) || !Printable(s.Provides)) {
 		return errors.New(`provides must be a printable command name without '/', '\', or ':'`)
+	}
+	// An empty list would make a step done after one run whatever changes,
+	// which is what creates is for.
+	if s.Inputs != nil && len(s.Inputs) == 0 {
+		return errors.New("inputs must list at least one file, or be left out")
+	}
+	for _, input := range s.Inputs {
+		if !localFile(input) || !Printable(input) || unexpanded(input) {
+			return errors.New(`inputs must be printable paths of files in the repository, as "packages.txt"; homeskillet expands no variables`)
+		}
 	}
 	return validatePlatforms(s.Platforms)
 }

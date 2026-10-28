@@ -36,8 +36,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/trust"
@@ -48,7 +50,8 @@ type State string
 
 const (
 	// Done means the step's Creates path exists or its Provides command is on
-	// PATH, so it is not offered again.
+	// PATH, and for a step with inputs, that it last ran with them as they
+	// are (see fingerprint), so it is not offered again.
 	Done State = "done"
 	// Pending means the step will be offered when setup runs.
 	Pending State = "pending"
@@ -62,17 +65,25 @@ type Plan struct {
 	// path, or the program its Provides names. Output shows it, so a step
 	// that is not offered still says why.
 	Found string
+	// Ran is, for a Done step with inputs, when it last ran with them as they
+	// are now, which output shows when there is nothing to show as Found.
+	Ran time.Time
+	// fingerprint is, for a step with inputs, its fingerprint as prepared,
+	// recorded once the step succeeds.
+	fingerprint string
 }
 
 // Prepare checks that the repository is private and reports each step's
-// state. repo and home must be absolute with symlinks resolved. Deciding a
-// step's state never runs anything: it only looks for files and searches
-// PATH.
+// state. repo and home must be absolute with symlinks resolved, and data is
+// the data directory holding the record of steps with inputs (see
+// fingerprint), which may be empty only when no step has inputs. Deciding a
+// step's state never runs anything: it only looks for files, searches PATH,
+// and reads inputs and the record.
 //
 // With no steps, Prepare returns nothing and skips the checks. They protect
 // what a step runs, so a repository without setup steps for this platform,
 // or without a manifest at all, must not fail setup over files it never uses.
-func Prepare(steps []config.Step, repo, home string) ([]Plan, error) {
+func Prepare(steps []config.Step, repo, home, data string) ([]Plan, error) {
 	if len(steps) == 0 {
 		return nil, nil
 	}
@@ -94,39 +105,74 @@ func Prepare(steps []config.Step, repo, home string) ([]Plan, error) {
 	if err := trust.CheckDirectory(home); err != nil {
 		return nil, err
 	}
+	rec, err := recordFor(data, slices.ContainsFunc(steps, hasInputs))
+	if err != nil {
+		return nil, err
+	}
 	plans := make([]Plan, 0, len(steps))
-	for _, step := range steps {
-		state, found, err := stepState(step, home)
+	for i := range steps {
+		plan, err := stepState(steps[i], repo, home, rec)
 		if err != nil {
 			return nil, err
 		}
-		plans = append(plans, Plan{Step: step, State: state, Found: found})
+		plans = append(plans, plan)
 	}
 	return plans, nil
 }
 
-// stepState reports whether step is done, and if so the file that shows it
-// (see Plan.Found).
-func stepState(step config.Step, home string) (State, string, error) {
+// hasInputs reports whether step has inputs, which the record decides.
+func hasInputs(step config.Step) bool {
+	return step.Inputs != nil
+}
+
+// stepState returns step's plan: whether it is done, and if so what shows
+// it. A step with inputs is done only when the record, rec, says it last ran
+// with the fingerprint it has now, and its Creates or Provides, when it has
+// them, also say so.
+func stepState(step config.Step, repo, home string, rec record) (Plan, error) {
+	plan := Plan{Step: step, State: Pending}
+	done, found, err := present(step, home)
+	if err != nil {
+		return Plan{}, err
+	}
+	if !hasInputs(step) {
+		if done {
+			plan.State, plan.Found = Done, found
+		}
+		return plan, nil
+	}
+	if plan.fingerprint, err = fingerprint(step, repo); err != nil {
+		return Plan{}, fmt.Errorf("setup step %s: %w", step.Name, err)
+	}
+	last, ok := rec.last(home, repo, step.Name)
+	if ok && last.Fingerprint == plan.fingerprint && (done || step.Creates == "" && step.Provides == "") {
+		plan.State, plan.Found, plan.Ran = Done, found, last.Time
+	}
+	return plan, nil
+}
+
+// present reports whether step's Creates path exists or its Provides command
+// is found, and which.
+func present(step config.Step, home string) (bool, string, error) {
 	if step.Creates != "" {
 		path, err := createsPath(step.Creates, home)
 		if err != nil {
-			return "", "", fmt.Errorf("setup step %s: %w", step.Name, err)
+			return false, "", fmt.Errorf("setup step %s: %w", step.Name, err)
 		}
 		_, err = os.Lstat(path)
 		if err == nil {
-			return Done, path, nil
+			return true, path, nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			return "", "", err
+			return false, "", err
 		}
 	}
 	if step.Provides != "" {
 		if program := provided(step.Provides, home); program != "" {
-			return Done, program, nil
+			return true, program, nil
 		}
 	}
-	return Pending, "", nil
+	return false, "", nil
 }
 
 // createsPath returns the file a step's creates names: a path in home, or,
@@ -150,6 +196,13 @@ func createsPath(creates, home string) (string, error) {
 type Options struct {
 	Repo string // working directory for every step
 	Home string // HOME for every step
+	// Data is the data directory, as Prepare received it, where a step with
+	// inputs is recorded once it succeeds.
+	Data string
+	// Again offers every step, even one found done, as for steps a person
+	// named: a package uninstalled by hand leaves its list unchanged, and
+	// naming the step is how to install it again.
+	Again bool
 	// Yes approves every pending step without asking. It is for unattended
 	// bootstrap, such as a Dockerfile, where whoever wrote the build already
 	// chose the repository and its revision. Steps then get no input and no
@@ -202,11 +255,15 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 	if opts.Report == nil {
 		opts.Report = func(outcome string, plan Plan) error { return report(opts.Output, outcome, plan) }
 	}
+	rec, err := recordFor(opts.Data, slices.ContainsFunc(plans, func(plan Plan) bool { return hasInputs(plan.Step) }))
+	if err != nil {
+		return err
+	}
 	for i := range plans {
 		plan := &plans[i]
 		// Every step is accounted for, so one that is not offered still
 		// says why rather than vanishing from the output.
-		if plan.State == Done {
+		if plan.State == Done && !opts.Again {
 			if err := opts.Report(string(Done), *plan); err != nil {
 				return err
 			}
@@ -216,12 +273,12 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		// that also brings the program a later step provides, or changed
 		// the repository, whose rules every step relies on. Both are checked
 		// again before each step rather than once for the whole run.
-		state, found, err := stepState(plan.Step, opts.Home)
+		current, err := stepState(plan.Step, opts.Repo, opts.Home, rec)
 		if err != nil {
 			return err
 		}
-		if state == Done {
-			if err := opts.Report(string(Done), Plan{Step: plan.Step, State: Done, Found: found}); err != nil {
+		if current.State == Done && !opts.Again {
+			if err := opts.Report(string(Done), current); err != nil {
 				return err
 			}
 			continue
@@ -249,6 +306,13 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		}
 		if err := execute(ctx, plan.Step, opts); err != nil {
 			return fmt.Errorf("setup step %s: %w", plan.Step.Name, err)
+		}
+		// The fingerprint taken before the step ran, of what was approved:
+		// inputs changed meanwhile offer it again next time.
+		if hasInputs(plan.Step) {
+			if rec, err = recordRan(opts.Data, opts.Home, opts.Repo, plan.Step.Name, current.fingerprint); err != nil {
+				return fmt.Errorf("setup step %s ran, but recording it failed, so it will be offered again: %w", plan.Step.Name, err)
+			}
 		}
 		if err := opts.Report("ran", *plan); err != nil {
 			return err
@@ -286,10 +350,14 @@ func List(w io.Writer, plan Plan) error {
 }
 
 // Detail returns what to show beside a step in a listing: for a Done step the
-// file or program that makes it done, and for a Pending step its commands,
-// in shell quoting, separated by "; " when there are several. The prompt
-// before a step runs shows them one per line instead (see Describe).
+// file or program that makes it done, or for a step with inputs alone when it
+// last ran with them as they are, and for a Pending step its commands, in
+// shell quoting, separated by "; " when there are several. The prompt before
+// a step runs shows them one per line instead (see Describe).
 func Detail(plan Plan) string {
+	if plan.State == Done && plan.Found == "" && !plan.Ran.IsZero() {
+		return "inputs unchanged since it ran " + plan.Ran.Local().Format("2006-01-02 15:04")
+	}
 	if plan.State == Done {
 		return printable(plan.Found)
 	}

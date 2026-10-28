@@ -109,10 +109,6 @@ func handOffArgs(inv invocation, distribution string, windows func(string) (stri
 		}
 		args = append(args, "--from="+named)
 	}
-	// setup takes no --data-dir, so parseWSL kept it apart, to find the copy.
-	if inv.sub == "setup" && inv.data != "" {
-		args = append(args, "--data-dir="+inv.data)
-	}
 	if inv.repoGiven {
 		repo, err := fullPath(inv.repo)
 		if err != nil {

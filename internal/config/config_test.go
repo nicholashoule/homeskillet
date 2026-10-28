@@ -547,6 +547,42 @@ func TestLoadWSLHome(t *testing.T) {
 // Windows, which is cloned there, holds every source to Windows' naming
 // rules, even one for another system's home, and that one for Linux alone
 // does not.
+// TestStepInputs checks a step's inputs: files in the repository, listed at
+// least once, held to Windows's names in a repository cloned there, and part
+// of what makes two steps with one name the same.
+func TestStepInputs(t *testing.T) {
+	loaded, err := Load(write(t, `{"setup": [{"name": "apt", "run": ["true"], "inputs": ["lists/apt", "scripts/apt.sh"]}]}`))
+	if err != nil || !slices.Equal(loaded.Setup[0].Inputs, []string{"lists/apt", "scripts/apt.sh"}) {
+		t.Fatalf("inputs: %v, %v", loaded.Setup, err)
+	}
+	for name, inputs := range map[string]string{
+		"empty":     `[]`,
+		"absolute":  `["/etc/apt/sources.list"]`,
+		"escaping":  `["../list"]`,
+		"home":      `["~/list"]`,
+		"variable":  `["$HOME/list"]`,
+		"blank":     `[""]`,
+		"directory": `["."]`,
+		"control":   `["list\u001b[2K"]`,
+	} {
+		data := `{"setup": [{"name": "apt", "run": ["true"], "inputs": ` + inputs + `}]}`
+		if _, err := Load(write(t, data)); err == nil || !strings.Contains(err.Error(), "inputs must") {
+			t.Errorf("%s inputs: %v", name, err)
+		}
+	}
+	repo := write(t, `{"setup": [{"name": "apt", "run": ["true"], "inputs": ["lists/apt"]}]}`)
+	writeManifest(t, repo, DotfilesFileName, `{"setup": [{"name": "apt", "run": ["true"], "inputs": ["lists/other"]}]}`)
+	if _, err := Load(repo); err == nil || !strings.Contains(err.Error(), "listed twice, differently") {
+		t.Errorf("steps differing only in inputs: %v", err)
+	}
+	if runtime.GOOS != "windows" {
+		data := `{"platforms": ["windows"], "setup": [{"name": "apt", "run": ["true"], "inputs": ["lists/aux"]}]}`
+		if _, err := Load(write(t, data)); err == nil || !strings.Contains(err.Error(), `input "lists/aux" cannot exist on Windows`) {
+			t.Errorf("a device name as an input in a Windows repository: %v", err)
+		}
+	}
+}
+
 func TestWindowsNamesOfClonedFiles(t *testing.T) {
 	files := []Entry{
 		{Source: "home/wsl/con", Target: "con", Platforms: []string{"linux"}},

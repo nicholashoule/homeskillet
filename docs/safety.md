@@ -214,6 +214,12 @@ A setup step is code from the repository, which may be someone else's, so
 - A Homebrew directory counts for `provides` only when you or root own it, so
   another account, such as a user named `linuxbrew`, cannot make a step look
   done.
+- A step with `inputs` is done while `setup.json` in the data directory
+  records that it succeeded with them as they are. That record can only keep
+  a step from being offered, never run one, so its fingerprint needs no
+  cryptographic hash; it is read only from a data directory that passes the
+  ownership rules, and validated on every read all the same. Inputs are read
+  through the same rules as linked files, inside the repository only.
 
 Review a step before approving it. homeskillet cannot tell what an installer
 will do once it runs.

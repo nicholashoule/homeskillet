@@ -43,6 +43,7 @@ func TestHandOffArgs(t *testing.T) {
 		{args: []string{"wsl", "status", "~/dotfiles-wsl"}, want: []string{"wsl", "status", "--distribution=Ubuntu", filepath.Join(home, "dotfiles-wsl")}},
 		{args: []string{"wsl", "link", "."}, want: []string{"wsl", "link", "--distribution=Ubuntu", cwd}},
 		{args: []string{"wsl", "setup", "--data-dir", "/tmp/data", "fonts"}, want: []string{"wsl", "setup", "--distribution=Ubuntu", "--data-dir=/tmp/data", "fonts"}},
+		{args: []string{"wsl", "setup", "--dry-run", "--data-dir", "/tmp/data"}, want: []string{"wsl", "setup", "--distribution=Ubuntu", "--dry-run", "--data-dir=/tmp/data"}},
 		{args: []string{"wsl", "install", "--from", "/mnt/c/src/bin/homeskillet-linux-amd64"},
 			want: []string{"wsl", "install", "--distribution=Ubuntu", `--from=C:\src\bin\homeskillet-linux-amd64`}},
 		{args: []string{"wsl", "install", "--from", "/home/you/homeskillet"}, err: "not on a Windows drive"},

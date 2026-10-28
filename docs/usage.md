@@ -70,7 +70,7 @@ an error rather than ignored. An empty value, as from an unset variable in
 | `--force` | For `link`: move conflicting files into a backup, then link (see below). |
 | `--yes` | For `setup`: run every pending step without asking, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). For `backups purge`: delete every backup listed without asking. |
 | `--older-than AGE` | For `backups`: only backups moved more than `AGE` ago, such as `30d`. |
-| `--data-dir DIR` | Keep the record of links, backups, and installed versions elsewhere ([install.md](install.md#data-directory)). |
+| `--data-dir DIR` | Keep the records of links and setup steps, backups, and installed versions elsewhere ([install.md](install.md#data-directory)). |
 | `--prefix DIR` | For `self`: install under another prefix. |
 | `--allow-root` | Run as root, or elevated on Windows, for root's own dotfiles ([safety.md](safety.md#ownership)). |
 | `--distribution NAME`, `--from FILE` | For `wsl` ([windows.md](windows.md#the-wsl-command)). |

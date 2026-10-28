@@ -129,9 +129,6 @@ func parseWSL(args []string, output io.Writer) (invocation, error) {
 		}
 		switch {
 		case name == "distribution" || name == "from":
-		// setup keeps nothing in the data directory, and refuses the option;
-		// wsl reads it only to find the copy there.
-		case name == "data-dir" && inv.sub == "setup":
 		case boolean:
 			inv.wsl.forward = append(inv.wsl.forward, arg)
 		default:

@@ -114,10 +114,15 @@ A command runs in this order:
    line, the format scripts parse.
 5. For setup, the CLI keeps only the steps named after `setup`, if any, in
    manifest order, failing first on a name that matches no step for this
-   platform (`selectSteps`). `setup.Prepare` returns at once when there are no
+   platform (`selectSteps`), and offers those even when done
+   (`setup.Options.Again`). `setup.Prepare` returns at once when there are no
    steps. Otherwise it requires the whole repository tree to be private and
    marks steps done when their `creates` path exists or their `provides`
-   command is found, recording what it found, without running anything. Dry
+   command is found, recording what it found, without running anything. A
+   step with `inputs` is done only when, as well, `setup.json` in the data
+   directory records that it last succeeded with the fingerprint it has now,
+   of its commands and its inputs' contents (inputs.go); `setup.Run` records
+   it after it succeeds. Dry
    runs list the steps. Otherwise `setup.Run` lists each done step with what
    was found, shows each pending step with every command in its `run`, asks
    for approval (default no) unless `--yes` was given, and runs approved
@@ -296,6 +301,10 @@ and dry runs stop after the checks.
   lives in a repository. It is written after every `link` and `unlink`, even
   one that failed partway, from the targets as they are. Homes that do not
   exist now are kept, since an unmounted volume looks like a deleted home.
+- The record of setup steps with inputs (`setup.json` in the data directory)
+  keeps, per home and per repository, each such step's fingerprint when it
+  last succeeded. It can only keep a step from being offered, never run one,
+  and is validated on every read all the same.
 - The data directory, from `--data-dir`, `self --prefix`,
   `HOMESKILLET_DATA_DIR`, or `~/.local/share/homeskillet` in that order, must
   pass `trust.CheckLocation` and the ownership rules and may not be inside the

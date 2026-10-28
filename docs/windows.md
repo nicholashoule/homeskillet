@@ -165,7 +165,10 @@ the two manifests merge). Steps on Windows follow a few rules of their own:
 ```
 
 A step without `creates` or `provides`, like `tools` here, is offered on every
-run, so its script must be safe to repeat: install only what is missing.
+run, so its script must be safe to repeat: install only what is missing. Give
+it `"inputs": ["home/.config/winget/tools.psd1"]`, the list it installs from,
+and it is offered only until it succeeds, then again when the list changes
+([manifest.md](manifest.md#steps-that-install-from-a-list)).
 
 ### Checking a Repository
 

@@ -326,6 +326,50 @@ func TestSetup(t *testing.T) {
 	}
 }
 
+// TestSetupInputs checks that setup records a step with inputs that ran, in
+// the data directory --data-dir names, so it is done until an input changes,
+// and that naming the step runs it again even so.
+func TestSetupInputs(t *testing.T) {
+	repo, home := fixture(t, "packages.txt")
+	manifest := config.Manifest{Setup: []config.Step{{Name: "packages", Run: config.Commands{touchCommand("ran")}, Inputs: []string{"packages.txt"}}}}
+	data, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(repo, config.FileName), data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	dataDir := filepath.Join(home, "data")
+	ran := filepath.Join(home, "ran")
+	run := func(args ...string) string {
+		t.Helper()
+		var output bytes.Buffer
+		err := Run(context.Background(), append([]string{"setup", "--repo", repo, "--home", home, "--data-dir", dataDir, "--yes"}, args...), nil, &output, &output)
+		if err != nil {
+			t.Fatalf("setup %q: %s, %v", args, output.String(), err)
+		}
+		return output.String()
+	}
+	if output := run(); !strings.Contains(output, "ran\tpackages") {
+		t.Fatalf("first run: %s", output)
+	}
+	if err := os.Remove(ran); err != nil {
+		t.Fatal(err)
+	}
+	if output := run(); !strings.Contains(output, "done\tpackages\tinputs unchanged since it ran ") {
+		t.Fatalf("second run: %s", output)
+	}
+	if output := run("packages"); !strings.Contains(output, "ran\tpackages") {
+		t.Fatalf("named: %s", output)
+	}
+	if err := os.WriteFile(filepath.Join(repo, "packages.txt"), []byte("jq\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if output := run("--dry-run"); !strings.Contains(output, "pending\tpackages") {
+		t.Fatalf("after the list changed: %s", output)
+	}
+}
+
 // TestSetupSteps checks that names after setup select steps, in the
 // manifest's order, with the repository before them written as a path, and
 // that a name matching no step for this platform fails before anything runs.
@@ -622,7 +666,8 @@ func TestDataDirOption(t *testing.T) {
 	for _, args := range [][]string{
 		{"link", "--repo", repo, "--home", home, "--data-dir", system},
 		{"link", "--repo", repo, "--home", home, "--data-dir", filepath.Join(repo, "data")},
-		{"setup", "--repo", repo, "--home", home, "--data-dir", "~/x"},
+		// setup keeps the record of steps with inputs there, under the same rules.
+		{"setup", "--repo", repo, "--home", home, "--data-dir", system},
 	} {
 		if err := Run(context.Background(), args, nil, nil, nil); err == nil {
 			t.Errorf("%v accepted", args)
@@ -1064,7 +1109,7 @@ func TestSetupView(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(home, ".gitconfig"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	plans, err := setup.Prepare(manifest.Setup, repo, home)
+	plans, err := setup.Prepare(manifest.Setup, repo, home, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1159,21 +1204,21 @@ func TestNextSetup(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Chdir(repo)
-	if next := nextSetup(steps, repo, home, false); next != "Next: homeskillet setup offers 1 pending setup step, each shown before it runs." {
+	if next := nextSetup(steps, repo, home, "", false); next != "Next: homeskillet setup offers 1 pending setup step, each shown before it runs." {
 		t.Fatalf("from the repository: %q", next)
 	}
 	t.Chdir(home)
-	if next := nextSetup(steps, repo, home, false); !strings.Contains(next, "homeskillet setup "+setup.Quote([]string{repo})+" offers") {
+	if next := nextSetup(steps, repo, home, "", false); !strings.Contains(next, "homeskillet setup "+setup.Quote([]string{repo})+" offers") {
 		t.Fatalf("from elsewhere, the repository is not named: %q", next)
 	}
 	// setup falls back to the record as link did.
-	if next := nextSetup(steps, repo, home, true); !strings.HasPrefix(next, "Next: homeskillet setup offers") {
+	if next := nextSetup(steps, repo, home, "", true); !strings.HasPrefix(next, "Next: homeskillet setup offers") {
 		t.Fatalf("from the record, the repository is named: %q", next)
 	}
 	if err := os.WriteFile(filepath.Join(home, "profile"), nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if next := nextSetup(steps, repo, home, false); next != "" {
+	if next := nextSetup(steps, repo, home, "", false); next != "" {
 		t.Fatalf("with every step done: %q", next)
 	}
 	// The view prints it after the closing line, and not when linking is

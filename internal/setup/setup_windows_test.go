@@ -176,7 +176,7 @@ func TestCreatesInDocuments(t *testing.T) {
 
 func prepare(t *testing.T, steps []config.Step, repo, home string) []Plan {
 	t.Helper()
-	plans, err := Prepare(steps, repo, home)
+	plans, err := Prepare(steps, repo, home, "")
 	if err != nil {
 		t.Fatal(err)
 	}

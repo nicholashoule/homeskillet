@@ -210,8 +210,9 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 // their shell load what was linked has not run. It is "" when no step is
 // pending, or when the steps cannot be checked, which setup itself reports.
 // remembered marks a repository taken from the record, as setup takes it too.
-func nextSetup(steps []config.Step, repo, home string, remembered bool) string {
-	plans, err := setup.Prepare(steps, repo, home)
+// data is the data directory, with the record of steps with inputs.
+func nextSetup(steps []config.Step, repo, home, data string, remembered bool) string {
+	plans, err := setup.Prepare(steps, repo, home, data)
 	if err != nil {
 		return ""
 	}

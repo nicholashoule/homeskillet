@@ -92,6 +92,19 @@ func TestCheck(t *testing.T) {
 	}
 }
 
+// TestCheckInputs checks that a setup step's input the repository lacks is
+// an issue, as setup could not read it.
+func TestCheckInputs(t *testing.T) {
+	repo, _ := repository(t, "home/.bashrc", "lists/apt")
+	writeManifests(t, repo, map[string]string{
+		config.FileName: `{"setup": [{"name": "apt", "run": ["true"], "inputs": ["lists/apt", "lists/gone"]}]}`,
+	})
+	output, err := runCheckCommand(repo)
+	if err == nil || output != "issue\tsetup step apt: input lists/gone is listed, but the repository has no such file\n" {
+		t.Fatalf("absent input: %q, %v", output, err)
+	}
+}
+
 // TestCheckSharedRepository checks that a repository others can change is
 // one issue, not one for every file in it.
 func TestCheckSharedRepository(t *testing.T) {

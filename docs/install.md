@@ -159,7 +159,9 @@ you to move it aside.
 
 homeskillet keeps its own files in one data directory: the installed versions
 (see [Versions and Updates](#versions-and-updates)), `links.json`, a record of
-the links it made, and `backups/`, the files `link --force` moved aside, each
+the links it made, `setup.json`, a record of the setup steps with `inputs` that
+ran ([manifest.md](manifest.md#steps-that-install-from-a-list)), and
+`backups/`, the files `link --force` moved aside, each
 at its path in home with the Unix time appended. homeskillet deletes a backup
 only when you purge it, after it shows each one and you approve
 ([usage.md](usage.md#conflicts-and-backups)). The default is

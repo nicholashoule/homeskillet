@@ -54,6 +54,10 @@ Windows, on x64 and Arm64, join those for Linux and macOS
 - A step's `creates` can start with `{documents}/`, for files in your
   Documents folder such as PowerShell's profile, wherever OneDrive has moved
   it.
+- A step that installs from a list, such as apt packages, a Brewfile, or
+  winget's tools, can name the list in `inputs`: it is done once it succeeds,
+  and offered again only when the list or its command changes, instead of on
+  every run ([docs/manifest.md](docs/manifest.md#steps-that-install-from-a-list)).
 - `homeskillet completion pwsh` completes commands, options, step names, and
   paths in PowerShell 7.3 and later.
 - At a terminal, `link` and `status` end by saying how many setup steps are
@@ -65,6 +69,9 @@ Windows, on x64 and Arm64, join those for Linux and macOS
 - An error in a manifest lists every issue found in it, not only the first.
 - `provides` may not contain `\` or `:`, as it already may not contain `/`.
 - `self remove` also refuses the version that is running at the moment.
+- A step named after `setup` is offered even when it is done, so naming it
+  runs it again; `setup` takes `--data-dir`, where steps with `inputs` are
+  recorded.
 
 ### Security
 

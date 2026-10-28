@@ -447,8 +447,9 @@ func stepNames(inv invocation) []string {
 		}
 	}
 	var names []string
-	for _, step := range manifest.SetupFor(platform) {
-		names = append(names, step.Name)
+	steps := manifest.SetupFor(platform)
+	for i := range steps {
+		names = append(names, steps[i].Name)
 	}
 	return names
 }

@@ -16,6 +16,7 @@ import (
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/link"
+	"github.com/nicholashoule/homeskillet/internal/setup"
 	"github.com/nicholashoule/homeskillet/internal/trust"
 )
 
@@ -93,8 +94,9 @@ func (v *view) check(output io.Writer, repo string, manifest config.Manifest, is
 // checkRepository returns the repository's merged manifest and every issue
 // that would make the other commands refuse it, for every platform rather
 // than only this one: where it is and who may change it (see
-// trust.CheckRepository), its manifests (see config.Load), and each file
-// they list or home/ holds (see link.CheckSource).
+// trust.CheckRepository), its manifests (see config.Load), each file they
+// list or home/ holds (see link.CheckSource), and each setup step's inputs
+// (see setup.CheckInput).
 func checkRepository(repo string) (config.Manifest, []error) {
 	var issues []error
 	owned := trust.CheckRepository(repo)
@@ -121,6 +123,17 @@ func checkRepository(repo string) (config.Manifest, []error) {
 			issues = append(issues, fmt.Errorf("%s is listed, but the repository has no such file", displayPath(entry.Source)))
 		} else if err != nil {
 			issues = append(issues, err)
+		}
+	}
+	// A step's input that cannot be read would stop setup before any step runs.
+	for i := range manifest.Setup {
+		step := &manifest.Setup[i]
+		for _, input := range step.Inputs {
+			if err := setup.CheckInput(repo, input); errors.Is(err, fs.ErrNotExist) {
+				issues = append(issues, fmt.Errorf("setup step %s: input %s is listed, but the repository has no such file", step.Name, input))
+			} else if err != nil {
+				issues = append(issues, fmt.Errorf("setup step %s: %w", step.Name, err))
+			}
 		}
 	}
 	return manifest, issues

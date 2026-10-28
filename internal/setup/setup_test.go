@@ -60,7 +60,7 @@ func fixture(t *testing.T, steps ...config.Step) (repo, home string) {
 
 func prepare(t *testing.T, steps []config.Step, repo, home string) []Plan {
 	t.Helper()
-	plans, err := Prepare(steps, repo, home)
+	plans, err := Prepare(steps, repo, home, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -119,7 +119,7 @@ func TestPrepareRejectsSharedRepositoryFiles(t *testing.T) {
 	if err := os.Chmod(script, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(steps, repo, home); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+	if _, err := Prepare(steps, repo, home, ""); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
 		t.Fatalf("shared script accepted: %v", err)
 	}
 }
@@ -220,7 +220,7 @@ func TestPrepareRejectsSymlinksLeavingRepository(t *testing.T) {
 	if err := os.Symlink(filepath.Join("..", "..", "shared", "run.sh"), link); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(steps, repo, home); err == nil || !strings.Contains(err.Error(), "outside the repository") {
+	if _, err := Prepare(steps, repo, home, ""); err == nil || !strings.Contains(err.Error(), "outside the repository") {
 		t.Fatalf("symlink to a shared script accepted: %v", err)
 	}
 	// The same link pointing at a private file in the repository is fine.
@@ -316,10 +316,10 @@ func TestRunRequiresDirectories(t *testing.T) {
 		t.Fatal("a refused run executed a step")
 	}
 	for _, dir := range []string{"/", "/usr"} {
-		if _, err := Prepare(steps, repo, dir); err == nil {
+		if _, err := Prepare(steps, repo, dir, ""); err == nil {
 			t.Errorf("Prepare accepted home %s", dir)
 		}
-		if _, err := Prepare(steps, dir, home); err == nil {
+		if _, err := Prepare(steps, dir, home, ""); err == nil {
 			t.Errorf("Prepare accepted repository %s", dir)
 		}
 	}
@@ -541,7 +541,7 @@ func TestPrepareRejectsSharedHome(t *testing.T) {
 	if err := os.Chmod(home, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(steps, repo, home); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+	if _, err := Prepare(steps, repo, home, ""); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
 		t.Fatalf("shared home accepted: %v", err)
 	}
 }
