@@ -126,6 +126,11 @@ jobs:
         with:
           version: v2.15.0
 
+      # Known vulnerabilities in the standard library and the toolchain, for
+      # the Go release this job uses; homeskillet has no module dependencies.
+      - name: govulncheck
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
       # Markdown line limits and the agent-instruction layout, configured in
       # .github/repogov-config.json. Pinned to a release;
       # .github/copilot-instructions.md lists every file to bump with it.

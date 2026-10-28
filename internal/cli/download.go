@@ -6,6 +6,7 @@
 package cli
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/install"
@@ -71,13 +73,29 @@ var newDownloader = func() (downloader, error) {
 // them choose the program.
 type curl struct{ path string }
 
-// options are passed on every request: HTTPS and TLS 1.2 or later only, so
-// no redirect can lead to plain HTTP, an error status fails the request, and
-// a stalled transfer stops instead of hanging a terminal.
-var curlOptions = []string{"--fail", "--silent", "--show-error", "--location", "--proto", "=https", "--proto-redir", "=https", "--tlsv1.2", "--max-time", "600"}
+// curlOptions are passed on every request: HTTPS and TLS 1.2 or later only,
+// an error status fails the request, and a stalled transfer stops instead of
+// hanging a terminal.
+var curlOptions = []string{"--fail", "--silent", "--show-error", "--proto", "=https", "--tlsv1.2", "--max-time", "600"}
+
+// getOptions returns the arguments of a download: the redirects GitHub's
+// download URLs lead through are followed, but only to HTTPS, and the
+// transfer stops at the bound on a build rather than fill the disk first.
+func getOptions(file, url string) []string {
+	return append(append([]string{}, curlOptions...),
+		"--location", "--proto-redir", "=https", "--max-filesize", strconv.FormatInt(maxProgram, 10), "--output", file, url)
+}
+
+// headOptions returns the arguments that read where url redirects to:
+// --head asks for headers only, and %{redirect_url} is where the response
+// points. The redirect must not be followed, or curl reports where it ended
+// up and the redirect itself as empty.
+func headOptions(url string) []string {
+	return append(append([]string{}, curlOptions...), "--head", "--output", os.DevNull, "--write-out", "%{redirect_url}", url)
+}
 
 func (c curl) get(ctx context.Context, url, file string) error {
-	args := append(append([]string{}, curlOptions...), "--output", file, url)
+	args := getOptions(file, url)
 	var stderr strings.Builder
 	cmd := exec.CommandContext(ctx, c.path, args...) //nolint:gosec // G204: the system's curl, checked by curlPath, fetching a fixed URL over HTTPS
 	cmd.Stderr = &stderr
@@ -88,10 +106,7 @@ func (c curl) get(ctx context.Context, url, file string) error {
 }
 
 func (c curl) redirect(ctx context.Context, url string) (string, error) {
-	// --head asks for headers only, and %{redirect_url} is where the
-	// response points without following it, so the version is read from
-	// one small response.
-	args := append(append([]string{}, curlOptions...), "--head", "--output", os.DevNull, "--write-out", "%{redirect_url}", url)
+	args := headOptions(url)
 	var stderr strings.Builder
 	cmd := exec.CommandContext(ctx, c.path, args...) //nolint:gosec // G204: the system's curl, checked by curlPath, fetching a fixed URL over HTTPS
 	cmd.Stderr = &stderr
@@ -125,13 +140,14 @@ func describeFailure(doing string, err error, stderr string) error {
 		case 35, 51, 58, 60, 77:
 			what, advice = "a secure connection could not be made ("+stderr+")", "The download could not be trusted, so it was not used."
 		case 22:
-			status := strings.TrimSpace(stderr[strings.LastIndex(stderr, ":")+1:])
-			what = "GitHub answered " + status
+			// curl 8 ends its message with the status code alone; older
+			// releases add the reason phrase, as in "404 Not Found".
+			status, _, _ := strings.Cut(strings.TrimSpace(stderr[strings.LastIndex(stderr, ":")+1:]), " ")
+			what = "GitHub answered " + cmp.Or(status, "an error")
 			switch status {
 			case "404":
 				what = "GitHub has nothing there (404)"
-				advice = "Either no such release is published, or the repository is private and its releases need a sign-in homeskillet does not have. " +
-					"Download the release and run its self install instead (docs/install.md)."
+				advice = "Either no such release is published, or the repository is private and its releases need a sign-in homeskillet does not have."
 			case "403", "429":
 				advice = "That is usually GitHub's rate limit for anonymous requests; try again in a few minutes."
 			}
@@ -165,8 +181,13 @@ func systemProgram(what string, candidates ...string) (string, error) {
 		}
 		return candidate, nil
 	}
-	return "", fmt.Errorf("%s is not installed at %s, and self update needs it; install it, or download the release yourself (docs/install.md)", what, strings.Join(candidates, " or "))
+	return "", fmt.Errorf("%s is not installed at %s, and homeskillet needs it to download a release; install it, or download the release yourself (docs/install.md): %w",
+		what, strings.Join(candidates, " or "), errNotInstalled)
 }
+
+// errNotInstalled marks a system tool that systemProgram found absent, as
+// opposed to present and refused, which hashCommand tells apart.
+var errNotInstalled = errors.New("not installed")
 
 // releaseFile is the name of version v's binary for platform os/arch in its
 // release, as make cross and the release workflow name it.
@@ -194,19 +215,22 @@ func latestVersion(ctx context.Context, from downloader) (string, error) {
 
 // downloadRelease downloads version v's release file name into dir, with the
 // SHA256SUMS the release publishes, and returns the SHA-256 that lists for
-// it. Only a release has files to download (see release).
+// it. SHA256SUMS, a few hundred bytes, comes first, so a release with no
+// build for this platform is reported before the build is fetched. Only a
+// release has files to download (see release).
 func downloadRelease(ctx context.Context, from downloader, v, name, dir string) (sum string, err error) {
-	for _, file := range []string{name, "SHA256SUMS"} {
-		if err := from.get(ctx, releases+v+"/"+file, filepath.Join(dir, file)); err != nil {
-			return "", err
-		}
+	if err := from.get(ctx, releases+v+"/SHA256SUMS", filepath.Join(dir, "SHA256SUMS")); err != nil {
+		return "", err
 	}
-	sums, err := readFile(filepath.Join(dir, "SHA256SUMS"), maxSums)
+	sums, err := safefile.Read(filepath.Join(dir, "SHA256SUMS"), maxSums)
 	if err != nil {
 		return "", err
 	}
 	if sum = checksum(string(sums), name); sum == "" {
 		return "", fmt.Errorf("the SHA256SUMS of %s lists no %s", v, name)
+	}
+	if err := from.get(ctx, releases+v+"/"+name, filepath.Join(dir, name)); err != nil {
+		return "", err
 	}
 	return sum, nil
 }
@@ -217,7 +241,7 @@ func downloadRelease(ctx context.Context, from downloader, v, name, dir string) 
 // computed by a system tool rather than crypto/sha256, which would add about
 // 150 KiB to the binary (docs/development.md).
 func verifyDownload(ctx context.Context, name, sum string) error {
-	info, err := os.Stat(name)
+	info, err := os.Stat(name) //nolint:gosec // G703: a file in the staging directory stagingDir just made under the checked data directory
 	if err != nil {
 		return err
 	}
@@ -264,16 +288,6 @@ func isHex(s string) bool {
 	return s != "" && !strings.ContainsFunc(s, func(r rune) bool { return !strings.ContainsRune("0123456789abcdefABCDEF", r) })
 }
 
-// readFile reads at most limit bytes of the file at name.
-func readFile(name string, limit int64) ([]byte, error) {
-	file, err := os.Open(name) //nolint:gosec // G304: a file just downloaded into a private temporary directory
-	if err != nil {
-		return nil, err
-	}
-	data, err := safefile.ReadAll(file, limit)
-	return data, errors.Join(err, file.Close())
-}
-
 // checksum returns the SHA-256 that sums, in the format sha256sum writes,
 // lists for the file name, or "" when it lists none.
 func checksum(sums, name string) string {
@@ -306,7 +320,7 @@ func listReleases(ctx context.Context, from downloader) ([]releaseInfo, error) {
 	if err := from.get(ctx, releasesAPI, file); err != nil {
 		return nil, err
 	}
-	data, err := readFile(file, maxReleases)
+	data, err := safefile.Read(file, maxReleases)
 	if err != nil {
 		return nil, err
 	}

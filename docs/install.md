@@ -29,6 +29,7 @@ against. In the commands below, `OWNER` is the GitHub account that hosts homeski
 ```sh
 gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS   # the latest release
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
+gh attestation verify homeskillet-linux-amd64 --repo OWNER/homeskillet   # optional: that the release workflow built it
 chmod +x homeskillet-linux-amd64
 ./homeskillet-linux-amd64 self install
 ```
@@ -45,16 +46,22 @@ homeskillet update                    # install the newest release, if it is not
 homeskillet update --dry-run          # download and check it, but change nothing
 homeskillet update 0.2.0              # install that release instead
 homeskillet self releases             # the published releases, and which are installed
-homeskillet use previous              # go back
+homeskillet use v0.2.0                # go back; update's closing note names the version
 ```
 
-`update` asks GitHub which release is newest, downloads the binary for this machine and the release's `SHA256SUMS`
-into a private temporary directory, checks the binary against the listed SHA-256, checks that it reports that version,
-and then runs its `self install` with the same `--home`, `--prefix`, and `--data-dir`, so the new version records its
-own build details and the old one stays installed as `previous` (see [Versions and Updates](#versions-and-updates)).
-The download comes only from this project's releases on GitHub, over HTTPS, with the system's own `curl` and hashing
-tool at their fixed paths ([safety.md](safety.md#updating)). A version that is already installed is left as it is, so
-`update` is safe to run as often as you like, and a `--dry-run` downloads and checks without installing.
+`update` asks GitHub which release is newest, downloads the release's `SHA256SUMS` and the binary for this machine into
+a private directory under the [data directory](#data-directory), checks the binary against the listed SHA-256, checks
+that it reports that version, and then runs its `self install` with the same `--home`, `--prefix`, and `--data-dir`,
+so the new version records its own build details and the version you had stays installed (see [Versions and
+Updates](#versions-and-updates)). When what runs has changed, `update` ends by naming the command that runs the old
+version again; `use previous` does the same whenever the old version was the latest. The download comes only from this
+project's releases on GitHub, over HTTPS, with the system's own `curl` and hashing tool at their fixed paths
+([safety.md](safety.md#updating)). A version that is already installed is left as it is, so `update` is safe to run as
+often as you like, and a `--dry-run` downloads and checks without running or installing anything.
+
+The check against `SHA256SUMS` proves the download arrived intact, not who published it. Releases from the public
+repository also carry signed build provenance, which `gh attestation verify` checks (see [Downloading a
+Release](#downloading-a-release)); `update` does not check it yet.
 
 `update`, `install`, and `use` are the same as `self update`, `self install`, and `self use`; versions may be written
 with or without their leading `v`. A development build, whose version is a pseudo-version or `+dirty`, can update to a

@@ -33,6 +33,7 @@ Thumbs.db
 !.env.example
 
 # Logs and temporary files
+logs/
 *.log
 tmp/
 *.tmp

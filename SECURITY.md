@@ -15,8 +15,8 @@ Security in [CHANGELOG.md](CHANGELOG.md), and credited to you if you want.
 
 ## Supported Versions
 
-Only the latest release receives fixes. `homeskillet self install` with the new binary updates and keeps the old version
-for rollback ([docs/install.md](docs/install.md#versions-and-updates)).
+Only the latest release receives fixes. `homeskillet update` installs the newest release and keeps the old version for
+rollback ([docs/install.md](docs/install.md#updating)).
 
 ## What Counts
 
@@ -32,12 +32,16 @@ homeskillet promises the rules in [docs/safety.md](docs/safety.md) and the contr
 - Output that lets a file name or path from a repository control the terminal.
 - `self install` replacing a `homeskillet` command it did not create, or leaving the command pointing at an incomplete
   binary.
+- `update` running a download that does not match the release's `SHA256SUMS`, or fetching from anywhere but this
+  project's releases over HTTPS.
 
 Out of scope: what a setup step does once you approve it, since steps are code from a repository you chose to use, and
 anything that already requires root or write access to your home directory, which the checks assume is yours alone.
 
 ## Release Binaries
 
-The release workflow builds each release's binaries from its tag and publishes them with a `SHA256SUMS` file. Check a
-download against it before installing ([docs/install.md](docs/install.md#downloading-a-release)). Builds are
-reproducible, so you can also build the tag yourself and compare ([docs/release.md](docs/release.md)).
+The release workflow builds each release's binaries from its tag and publishes them with a `SHA256SUMS` file, and, from
+the public repository, a signed provenance attestation for each binary. Check a download against `SHA256SUMS` before
+installing, and with `gh attestation verify` that the release workflow built it
+([docs/install.md](docs/install.md#downloading-a-release)); `homeskillet update` checks the first but not yet the
+second. Builds are reproducible, so you can also build the tag yourself and compare ([docs/release.md](docs/release.md)).

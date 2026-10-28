@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -143,16 +144,19 @@ func TestSelfArguments(t *testing.T) {
 func TestSelfReleases(t *testing.T) {
 	_, home := repository(t)
 	useDownloader(t, fakeDownloader{files: map[string][]byte{
-		releasesAPI: []byte(`[{"tag_name":"v0.3.0-rc.1","draft":false,"prerelease":true},{"tag_name":"v0.2.0","draft":false,"prerelease":false},` +
+		releasesAPI: []byte(`[{"tag_name":"v0.4.0","draft":false,"prerelease":true},{"tag_name":"v0.3.0-rc.1","draft":false,"prerelease":true},` +
+			`{"tag_name":"v0.2.0","draft":false,"prerelease":false},` +
 			`{"tag_name":"v0.9.0","draft":true,"prerelease":false},{"tag_name":"nightly","draft":false,"prerelease":false},{"tag_name":"v0.1.1","draft":false,"prerelease":false}]`),
 	}})
 	output, err := invoke("self", "", home, "releases")
 	if err != nil {
 		t.Fatal(err)
 	}
-	// Pre-releases are not versions with files to download (see release), so
-	// they are left out; drafts and other tags too.
-	if want := "v0.2.0\tnewest\nv0.1.1\t-\n"; output != want {
+	// A version with a pre-release part has no files to download (see
+	// release), so it is left out, as are drafts and other tags. A release
+	// GitHub flags as a pre-release is listed, but is not the newest, since
+	// the latest release page skips it and so does update.
+	if want := "v0.4.0\tpre-release\nv0.2.0\tnewest\nv0.1.1\t-\n"; output != want {
 		t.Errorf("releases = %q, want %q", output, want)
 	}
 	useDownloader(t, fakeDownloader{files: map[string][]byte{releasesAPI: []byte(`[]`)}})
@@ -190,30 +194,51 @@ func stubRelease(t *testing.T, v, log string) fakeDownloader {
 func TestSelfUpdate(t *testing.T) {
 	requireUnix(t)
 	_, home := repository(t)
+	// The stub runs as a command, so it must see only test directories.
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", t.TempDir())
 	log := filepath.Join(t.TempDir(), "install.log")
 	useDownloader(t, stubRelease(t, "v9.9.9", log))
 
+	// A dry run downloads and checks, and runs nothing it downloaded.
 	output, err := invoke("self", "", home, "update", "--dry-run")
 	if err != nil {
 		t.Fatalf("dry run: %q, %v", output, err)
 	}
-	for _, want := range []string{"downloaded\tv9.9.9\t", "checked against its SHA256SUMS", "installed\tv9.9.9", "dry run: nothing changed"} {
+	for _, want := range []string{"downloaded\tv9.9.9\t", "checked against its SHA256SUMS", "install\tv9.9.9\twould be installed", "dry run: nothing changed"} {
 		if !strings.Contains(output, want) {
 			t.Errorf("dry run output %q lacks %q", output, want)
 		}
 	}
-	if strings.Contains(output, "to go back") {
-		t.Errorf("dry run output %q says how to go back from a change it did not make", output)
+	if strings.Count(output, "dry run: nothing changed") != 1 || strings.Contains(output, "to go back") {
+		t.Errorf("dry run output %q: the closing line must appear once, and nothing says how to go back", output)
+	}
+	if _, err := os.Lstat(log); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the dry run ran the download: %v", err)
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".local")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the dry run wrote %s: %v", filepath.Join(home, ".local"), err)
+	}
+
+	// A real run installs through the download's own self install, with the
+	// same home, staged under the data directory, which is cleaned up.
+	output, err = invoke("self", "", home, "update")
+	if err != nil {
+		t.Fatalf("update: %q, %v", output, err)
 	}
 	recorded, err := os.ReadFile(log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if want := "self install --home=" + home + " --dry-run\n"; string(recorded) != want {
+	if want := "self install --home=" + home + "\n"; string(recorded) != want {
 		t.Errorf("the download's self install ran with %q, want %q", recorded, want)
 	}
-	if _, err := os.Lstat(filepath.Join(home, ".local")); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the dry run wrote %s: %v", filepath.Join(home, ".local"), err)
+	if strings.Contains(output, "to go back") {
+		t.Errorf("update output %q says how to go back when nothing ran before", output)
+	}
+	data := filepath.Join(home, ".local", "share", "homeskillet")
+	if entries, err := os.ReadDir(data); err != nil || len(entries) != 0 {
+		t.Errorf("staging left %v in %s (%v)", entries, data, err)
 	}
 
 	// Naming a version downloads that one; one whose SHA256SUMS does not
@@ -244,6 +269,7 @@ func TestSelfUpdate(t *testing.T) {
 func TestSelfUpdateVersionMismatch(t *testing.T) {
 	requireUnix(t)
 	_, home := repository(t)
+	t.Setenv("HOME", home)
 	from := stubRelease(t, "v9.9.9", filepath.Join(t.TempDir(), "install.log"))
 	// The release page says v9.9.9, but its files are published under
 	// v9.9.8 and report that.
@@ -274,8 +300,10 @@ func TestDescribeFailure(t *testing.T) {
 		{28, "curl: (28) Operation timed out", "timed out"},
 		{60, "curl: (60) SSL certificate problem", "secure connection could not be made"},
 		{22, "curl: (22) The requested URL returned error: 404", "repository is private"},
+		{22, "curl: (22) The requested URL returned error: 404 Not Found", "repository is private"},
 		{22, "curl: (22) The requested URL returned error: 403", "rate limit"},
 		{22, "curl: (22) The requested URL returned error: 502", "GitHub answered 502"},
+		{22, "", "GitHub answered an error"},
 		{2, "curl: (2) Failed initialization", "Failed initialization"},
 	} {
 		err := describeFailure("downloading x", exitWith(test.code), test.stderr)
@@ -285,5 +313,28 @@ func TestDescribeFailure(t *testing.T) {
 	}
 	if err := describeFailure("downloading x", errors.New("fork failed"), ""); err == nil || !strings.Contains(err.Error(), "fork failed") {
 		t.Errorf("a failure to run curl: %v", err)
+	}
+}
+
+func TestCurlOptions(t *testing.T) {
+	// Reading a redirect must not follow it, or curl reports the redirect
+	// as empty; a download follows redirects, to HTTPS only, and stops at
+	// the bound on a build.
+	head := strings.Join(headOptions(latestRelease), " ")
+	if strings.Contains(head, "--location") || !strings.Contains(head, "--head") || !strings.Contains(head, "%{redirect_url}") {
+		t.Errorf("head options: %s", head)
+	}
+	get := strings.Join(getOptions("out", releases+"v1.0.0/SHA256SUMS"), " ")
+	for _, want := range []string{"--location", "--proto-redir =https", "--max-filesize " + strconv.FormatInt(maxProgram, 10), "--output out"} {
+		if !strings.Contains(get, want) {
+			t.Errorf("get options %s lack %q", get, want)
+		}
+	}
+	for _, options := range [][]string{headOptions("x"), getOptions("out", "x")} {
+		for _, want := range []string{"--fail", "--proto", "=https", "--tlsv1.2"} {
+			if !slices.Contains(options, want) {
+				t.Errorf("options %q lack %q", options, want)
+			}
+		}
 	}
 }

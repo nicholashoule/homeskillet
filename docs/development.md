@@ -101,10 +101,11 @@ commit then runs `make check`, repogov, and demojify, the checks CI runs, and st
   where it runs.
 - A dry run of the release build on Linux with the latest Go: the release workflow's own script, on a tag made for the
   run and never pushed, with the newest version in `CHANGELOG.md` ([release.md](release.md#tagging)).
-- golangci-lint for the Linux and Windows builds, which also checks formatting; repogov, which checks the Markdown line
-  limits in [.github/repogov-config.json](../.github/repogov-config.json); and demojify, which fails on emoji in Go,
-  Markdown, YAML, and JSON files. demojify only reports, and skips `_test.go` files, which may hold emoji as test input.
-  Each is pinned; use the same versions locally so results match:
+- golangci-lint for the Linux and Windows builds, which also checks formatting; govulncheck, which fails on a known
+  vulnerability in the standard library or toolchain the build uses; repogov, which checks the Markdown line limits in
+  [.github/repogov-config.json](../.github/repogov-config.json); and demojify, which fails on emoji in Go, Markdown,
+  YAML, and JSON files. demojify only reports, and skips `_test.go` files, which may hold emoji as test input. Each is
+  pinned; use the same versions locally so results match:
 
 ```sh
 go run github.com/nicholashoule/repogov/cmd/repogov@v0.9.0 -agent copilot all
@@ -119,7 +120,7 @@ releases, which leaves the comment behind.
 
 ## Binary Size
 
-A build is about 2.9 MiB. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table and DWARF data
+A build is about three MiB; `make build && ls -l bin/homeskillet` measures it. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table and DWARF data
 (about a third of the binary) while keeping function names and lines in panics, and set `CGO_ENABLED=0` for a static
 binary. Code avoids packages that cost more than they do here: `regexp` (about 260 KiB) gave way to small validators,
 SHA-256 (about 150 KiB, with Go's FIPS module) to a byte comparison, and `debug/buildinfo` (about 370 KiB, with its

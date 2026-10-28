@@ -12,6 +12,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -20,18 +21,24 @@ import (
 
 	"github.com/nicholashoule/homeskillet/internal/host"
 	"github.com/nicholashoule/homeskillet/internal/install"
+	"github.com/nicholashoule/homeskillet/internal/trust"
 )
 
 // runUpdate installs the release inv.operand names, or the newest published
-// one, as self install would install a build: the binary for this machine's
-// platform and the release's SHA256SUMS are downloaded (see downloadRelease)
-// into a private temporary directory, the binary is checked against the
-// listed SHA-256 and to report that version, and then it installs itself
-// with self install, with the same --home, --prefix, --data-dir, and
+// one, as self install would install a build. The release's SHA256SUMS and
+// the binary for this machine's platform are downloaded (see
+// downloadRelease) into a private directory under the data directory (see
+// stagingDir), the binary is checked against the listed SHA-256, and, unless
+// this is a dry run, checked to report that version and then run to install
+// itself with self install, with the same --home, --prefix, --data-dir, and
 // --allow-root, so the version it records is its own. The version that was
-// running stays installed, as previous unless an older one was, and self
-// use previous or self use VERSION returns to it. A version already
-// installed is left as it is: installed versions are never rewritten.
+// running stays installed, and the closing note says how to run it again
+// when what runs has changed. A version already installed is left as it
+// is: installed versions are never rewritten.
+//
+// A dry run stops after the download and the check: it runs nothing it
+// downloaded, so what it changes does not depend on the download honoring
+// --dry-run.
 func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home string, output, diagnostics io.Writer) error {
 	from, err := newDownloader()
 	if err != nil {
@@ -57,7 +64,7 @@ func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home 
 	// running build may be under (see host.Detect).
 	platform, _ := host.Detect()
 	name := releaseFile(platform.OS, platform.Arch)
-	dir, err := os.MkdirTemp("", "homeskillet-update-")
+	dir, err := stagingDir(layout, inv.dryRun)
 	if err != nil {
 		return err
 	}
@@ -70,10 +77,14 @@ func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home 
 	if err := verifyDownload(ctx, file, sum); err != nil {
 		return err
 	}
-	if err := os.Chmod(file, 0o700); err != nil { //nolint:gosec // G302: a program must be executable, and only by its owner
+	if _, err := fmt.Fprintf(output, "downloaded\t%s\t%s, checked against its SHA256SUMS\n", target, name); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(output, "downloaded\t%s\t%s, checked against its SHA256SUMS\n", target, name); err != nil {
+	if inv.dryRun {
+		_, err := fmt.Fprintf(output, "install\t%s\twould be installed as a version of its own\n", target)
+		return err
+	}
+	if err := os.Chmod(file, 0o700); err != nil { //nolint:gosec // G302: a program must be executable, and only by its owner
 		return err
 	}
 	reported, err := exec.CommandContext(ctx, file, "version").Output() //nolint:gosec // G204: the release binary just downloaded and checked
@@ -94,11 +105,42 @@ func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home 
 		}
 		return err
 	}
-	if inv.dryRun {
-		return nil
+	return goBackNote(layout, state.Current, output)
+}
+
+// stagingDir returns a new private directory to download into: under the
+// data directory, which passes the ownership rules and whose ancestors
+// nobody else can rename, so the file checked is the file run, and which is
+// on the filesystem versions are installed to, where /tmp mounted noexec is
+// no obstacle. The data directory is created if needed, as self install
+// would. A dry run runs nothing it downloads, so when the data directory
+// does not exist it uses the system's temporary directory rather than
+// create one.
+func stagingDir(layout install.Layout, dryRun bool) (string, error) {
+	if err := trust.CheckCreatable(layout.Data); err != nil {
+		return "", err
 	}
-	if state, err = layout.Inspect(); err == nil && state.Previous() != "" {
-		_, err = fmt.Fprintf(output, "note\tto go back, run homeskillet self use %s\n", state.Previous())
+	if _, err := os.Lstat(layout.Data); dryRun && errors.Is(err, fs.ErrNotExist) {
+		return os.MkdirTemp("", "homeskillet-update-")
+	}
+	if err := os.MkdirAll(layout.Data, 0o700); err != nil {
+		return "", err
+	}
+	return os.MkdirTemp(layout.Data, ".update-")
+}
+
+// goBackNote writes, after an update, how to run the version that ran
+// before it, before, when the update changed what runs; a pinned version
+// keeps running, and so does a higher one, and then there is nothing to go
+// back to. An installation that cannot be inspected afterward is reported as
+// a note, since the install itself succeeded.
+func goBackNote(layout install.Layout, before string, output io.Writer) error {
+	state, err := layout.Inspect()
+	switch {
+	case err != nil:
+		_, err = fmt.Fprintf(output, "note\tinstalled, but the installation could not be read back: %v\n", err)
+	case before != "" && state.Current != before:
+		_, err = fmt.Fprintf(output, "note\tto go back, run homeskillet use %s\n", before)
 	}
 	return err
 }
@@ -156,10 +198,15 @@ func runReleases(ctx context.Context, layout install.Layout, output io.Writer) e
 		_, err := fmt.Fprintln(output, "no releases published")
 		return err
 	}
-	for i, r := range published {
+	newest := true
+	for _, r := range published {
 		var roles []string
-		if i == 0 {
+		// The newest release is the first that GitHub does not flag as a
+		// pre-release, which is the one the latest release page leads to,
+		// and so the one update installs when no version is named.
+		if newest && !r.Prerelease {
 			roles = append(roles, "newest")
+			newest = false
 		}
 		if r.Prerelease {
 			roles = append(roles, "pre-release")

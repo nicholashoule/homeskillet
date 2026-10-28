@@ -515,7 +515,7 @@ func downloadLinuxBuild(ctx context.Context, current, arch string) ([]byte, stri
 	if err != nil {
 		return nil, "", err
 	}
-	program, err := readFile(filepath.Join(dir, name), maxProgram)
+	program, err := safefile.Read(filepath.Join(dir, name), maxProgram)
 	if err != nil {
 		return nil, "", err
 	}

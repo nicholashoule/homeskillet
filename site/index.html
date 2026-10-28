@@ -238,7 +238,7 @@ curl -fsSLO --proto '=https' "$base/SHA256SUMS"
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
 chmod +x homeskillet-linux-amd64
 ./homeskillet-linux-amd64 self install</code></pre>
-      <p>From then on, <code>homeskillet update</code> fetches the newest release and checks it against its <code>SHA256SUMS</code> before installing it. Each version keeps its own copy, so <code>homeskillet use previous</code> rolls back, and <code>homeskillet self releases</code> shows what is published and installed. Windows needs Developer Mode for symlinks; see the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md">Windows guide</a>.</p>
+      <p>From then on, <code>homeskillet update</code> fetches the newest release and checks it against its <code>SHA256SUMS</code> before installing it. Each version keeps its own copy, so going back is one <code>homeskillet use</code> command, and <code>homeskillet self releases</code> shows what is published and installed. Windows needs Developer Mode for symlinks; see the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md">Windows guide</a>.</p>
 
       <div class="from-source">
         <img class="gopher" src="images/gopher.svg" width="52" height="71" alt="The Go gopher">
@@ -272,7 +272,7 @@ homeskillet setup ~/dotfiles                  # offer each setup step
 homeskillet check ~/dotfiles                  # list every issue, or say it is valid
 homeskillet backups purge --older-than 30d    # delete old backups, after asking
 homeskillet unlink ~/dotfiles
-homeskillet update                            # install the newest release; use previous goes back</code></pre>
+homeskillet update                            # install the newest release; use VERSION goes back</code></pre>
       <p>After the first <code>link</code>, the repository may be left out anywhere. At a terminal the output is grouped for reading; in a script it is one tab-separated line per file, and the exit status reports the result.</p>
     </div>
   </section>

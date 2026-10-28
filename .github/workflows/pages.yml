@@ -24,7 +24,10 @@ jobs:
     name: Deploy
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    # A job's permissions replace the workflow's rather than add to them, so
+    # the checkout's read access is repeated here.
     permissions:
+      contents: read
       pages: write # publish the deployment
       id-token: write # prove to Pages that this workflow made it
     environment:

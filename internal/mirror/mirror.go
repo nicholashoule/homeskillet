@@ -162,6 +162,7 @@ func executables(ctx context.Context, repo string) map[string]bool {
 		return nil
 	}
 	cmd := exec.CommandContext(ctx, git, "-C", repo, "ls-files", "--stage", "-z") //nolint:gosec // G204: Git found on PATH, reading the index of the repository just checked
+	cmd.Env = gitEnvironment(os.Environ())
 	output, err := cmd.Output()
 	if err != nil {
 		return nil
@@ -274,4 +275,22 @@ func (e entry) mode() os.FileMode {
 		return 0o700
 	}
 	return 0o600
+}
+
+// gitEnvironment returns environ without the variables that would make Git
+// read a repository other than the one named with -C: GIT_DIR and the others
+// that relocate the repository, its index, or its work tree. The index read
+// here decides which files are copied as executable, so it must be the
+// checked repository's own.
+func gitEnvironment(environ []string) []string {
+	kept := make([]string, 0, len(environ))
+	for _, entry := range environ {
+		name, _, _ := strings.Cut(entry, "=")
+		switch name {
+		case "GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR", "GIT_OBJECT_DIRECTORY", "GIT_ALTERNATE_OBJECT_DIRECTORIES":
+			continue
+		}
+		kept = append(kept, entry)
+	}
+	return kept
 }

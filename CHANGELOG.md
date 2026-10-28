@@ -18,8 +18,8 @@ are commands of their own, and `self releases` shows what is published ([docs/in
 
 - `homeskillet update` installs the newest release from GitHub, or `update 0.2.0` the one named: the binary for your
   machine and the release's `SHA256SUMS` are downloaded with the system's `curl`, checked, and then it installs itself,
-  so the version you had stays installed and `homeskillet use previous` goes back to it. `--dry-run` downloads and
-  checks without installing ([docs/install.md](docs/install.md#updating)).
+  so the version you had stays installed and the closing note says how to run it again. `--dry-run` downloads and
+  checks without running or installing anything ([docs/install.md](docs/install.md#updating)).
 - `homeskillet self releases` lists the published releases, newest first, and which of them are installed.
 - `update`, `install`, and `use` work as commands of their own, the same as `self update`, `self install`, and
   `self use`, and a version may be written without its leading `v`, as `homeskillet use 0.2.0`.
@@ -28,6 +28,11 @@ are commands of their own, and `self releases` shows what is published ([docs/in
 
 - After `link` and `status`, the closing note about setup steps says how many are pending and to run `setup` to review
   and approve them, in place of the earlier "Next:" line.
+
+### Security
+
+- Releases built from the public repository carry signed build provenance, so `gh attestation verify` can confirm
+  that the release workflow built a downloaded binary from its tag ([docs/install.md](docs/install.md#downloading-a-release)).
 
 ## Earlier Releases
 

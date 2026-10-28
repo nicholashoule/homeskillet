@@ -217,3 +217,10 @@ func TestSendRefusesSymlinks(t *testing.T) {
 		t.Fatalf("got %v", err)
 	}
 }
+
+func TestGitEnvironment(t *testing.T) {
+	got := gitEnvironment([]string{"HOME=/home/me", "GIT_DIR=/elsewhere/.git", "PATH=/usr/bin", "GIT_WORK_TREE=/elsewhere", "GIT_INDEX_FILE=/tmp/index", "GITHUB_TOKEN=x"})
+	if want := []string{"HOME=/home/me", "PATH=/usr/bin", "GITHUB_TOKEN=x"}; !slices.Equal(got, want) {
+		t.Errorf("gitEnvironment = %q, want %q", got, want)
+	}
+}

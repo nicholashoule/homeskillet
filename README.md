@@ -35,7 +35,7 @@ homeskillet version
 
 Without Go, download a release and run its `self install` ([docs/install.md](docs/install.md#downloading-a-release); on
 Windows, [docs/windows.md](docs/windows.md#installing)). After that, `homeskillet update` installs the newest release
-from GitHub, checked against its `SHA256SUMS`, and `homeskillet use previous` rolls back
+from GitHub, checked against its `SHA256SUMS`, and `homeskillet use` with the old version rolls back
 ([docs/install.md](docs/install.md#updating)).
 
 ## Use
