@@ -104,7 +104,7 @@ someone else's dotfiles before linking them, and especially before
 ## Development
 
 ```sh
-make check            # go vet, golangci-lint, and go test -race
+make check            # go vet, golangci-lint, go test -race, and the smoke test
 ```
 
 Tests build their own repositories and never touch your home.

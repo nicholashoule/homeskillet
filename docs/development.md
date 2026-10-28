@@ -6,7 +6,8 @@ Run from the homeskillet repository root. `make` alone lists every target.
 
 ```sh
 make fmt              # golangci-lint fmt ./...
-make check            # go vet ./..., golangci-lint run ./..., go test -race ./...
+make check            # go vet ./..., golangci-lint run ./..., go test -race ./..., make smoke
+make smoke            # build homeskillet, then link and unlink this system's example in a scratch home
 make build            # static, stripped bin/homeskillet (see Binary Size)
 bin/homeskillet --help
 make install          # build, then bin/homeskillet self install
@@ -39,6 +40,16 @@ system forbids them, as on Windows.
 Fixtures canonicalize temporary paths because macOS can expose its temporary
 directory through a symlink.
 
+The tests run homeskillet's code in-process. The smoke test,
+[tools/smoke](../tools/smoke/main.go), runs the built binary as a person
+would: it copies this system's repository from `examples/` and, in a scratch
+home and data directory that it removes afterward, runs `check`,
+`link --dry-run` (which must change nothing), `link`, `status`, `link` again,
+`unlink`, a `link` over a conflicting file (refused, changing nothing),
+`link --force`, `setup --dry-run`, and `backups purge --yes`, checking the
+links on disk after each. It passes `--allow-root` when it runs as root; on
+Windows, pass `-allow-root` in an elevated terminal.
+
 `TestRefusesRoot` covers the refusal of root, and of an elevated process on
 Windows, by replacing the check that detects it; to see the real one by hand,
 `unshare -r bin/homeskillet status` runs the binary as root inside a user
@@ -55,6 +66,7 @@ directly, from PowerShell:
 go vet ./...; $env:GOOS = 'linux'; go vet ./...; Remove-Item Env:GOOS
 golangci-lint run ./...
 go test ./...
+go run ./tools/smoke
 ```
 
 Tests that make symlinks skip, saying why, unless Developer Mode is on
@@ -101,8 +113,10 @@ and demojify, the checks CI runs, and stops when any fails:
   `go.mod` floor to the latest. The macOS runner also proves the Makefile works
   with its GNU Make 3.81.
 - On Windows, `go vet` and `go test`, which run elevated there, so the tests
-  that make symlinks run too, and a built homeskillet linking, reporting, and
-  unlinking a repository in a scratch home.
+  that make symlinks run too.
+- On every system and Go release, the smoke test: the built homeskillet
+  linking and unlinking that system's example repository in a scratch home
+  (see [Local Checks](#local-checks)).
 - The shell completion tests load the bash script into every bash they find,
   under `set -u`, including macOS's `/bin/bash`, which is bash 3.2, load
   the zsh script where zsh is installed, and complete through the PowerShell

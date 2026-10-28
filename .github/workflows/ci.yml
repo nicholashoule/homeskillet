@@ -56,27 +56,14 @@ jobs:
           go vet ./...
           go test ./...
 
-      # A built homeskillet links a repository into a scratch home, reports it,
-      # and unlinks it, as a user would. The runner is elevated, which every
-      # command refuses without --allow-root.
-      - name: Link and unlink (Windows)
-        if: runner.os == 'Windows'
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $PSNativeCommandUseErrorActionPreference = $true
-          go build -o homeskillet.exe .
-          $root = Join-Path ([IO.Path]::GetTempPath()) homeskillet-smoke
-          $repo, $scratch = (Join-Path $root repo), (Join-Path $root home)
-          $file = '.config/powershell/profile.ps1'
-          $source, $target = (Join-Path $repo "home/$file"), (Join-Path $scratch $file)
-          New-Item -ItemType Directory -Force (Split-Path $source), $scratch | Out-Null
-          Set-Content -LiteralPath $source -Value '# profile'
-          ./homeskillet.exe link --allow-root --home $scratch $repo
-          if ((Get-Item -LiteralPath $target).LinkType -ne 'SymbolicLink') { throw 'link made no symlink' }
-          ./homeskillet.exe status --allow-root --home $scratch $repo
-          ./homeskillet.exe unlink --allow-root --home $scratch $repo
-          if (Test-Path -LiteralPath $target) { throw 'unlink left the symlink' }
+      # The built homeskillet, used as a person would on each system: it links
+      # this system's example repository into a scratch home, checks the links
+      # on disk, forces one past a conflict, and unlinks them (tools/smoke).
+      # GitHub's Windows runners run elevated, which every command refuses
+      # without --allow-root.
+      - name: Link and unlink
+        shell: bash
+        run: go run ./tools/smoke ${{ runner.os == 'Windows' && '-allow-root' || '' }}
 
   # The release workflow's build, run on a tag made here and never pushed, so
   # a change that would break a release fails here rather than when a version
