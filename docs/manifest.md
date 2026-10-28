@@ -115,6 +115,11 @@ homeskillet init ~/dotfiles --platform darwin     # a starter for a macOS reposi
 ([safety.md](safety.md#starter-manifests-checks-and-completion)). Remove `platforms`
 to apply everywhere.
 
+Or copy a whole starter repository from homeskillet's
+[examples/](../examples/): one each for Linux, macOS, and Windows, with
+dotfiles, a setup step, and a README of the commands that link them. A test
+runs `check` on each, so they stay valid.
+
 ## Checking One
 
 `homeskillet check` reads a repository as the other commands do, for every

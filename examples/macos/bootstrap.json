@@ -1,0 +1,10 @@
+{
+  "platforms": ["darwin"],
+  "setup": [
+    {
+      "name": "brew-bundle",
+      "run": ["brew", "bundle", "--file=Brewfile"],
+      "inputs": ["Brewfile"]
+    }
+  ]
+}

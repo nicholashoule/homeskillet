@@ -8,6 +8,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"slices"
@@ -102,6 +104,67 @@ func TestCheckInputs(t *testing.T) {
 	output, err := runCheckCommand(repo)
 	if err == nil || output != "issue\tsetup step apt: input lists/gone is listed, but the repository has no such file\n" {
 		t.Fatalf("absent input: %q, %v", output, err)
+	}
+}
+
+// TestExamples checks each starter repository in examples/, so one that stops
+// being valid fails here rather than for the person who copies it. Each is
+// copied first, as a clone's permissions depend on how it was checked out.
+func TestExamples(t *testing.T) {
+	root := filepath.Join("..", "..", "examples")
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		t.Run(entry.Name(), func(t *testing.T) {
+			repo, _ := repository(t)
+			copyTree(t, filepath.Join(root, entry.Name()), repo)
+			output, err := runCheckCommand(repo)
+			if err != nil || output != "valid\t"+repo+"\n" {
+				t.Fatalf("%q, %v", output, err)
+			}
+		})
+	}
+}
+
+// copyTree copies the files under from into to, which exists, with modes the
+// ownership rules accept whatever the umask.
+func copyTree(t *testing.T, from, to string) {
+	t.Helper()
+	root, err := os.OpenRoot(to)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := root.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	source := os.DirFS(from)
+	err = fs.WalkDir(source, ".", func(path string, entry fs.DirEntry, err error) error {
+		if err != nil || path == "." {
+			return err
+		}
+		if entry.IsDir() {
+			return root.Mkdir(filepath.FromSlash(path), 0o755)
+		}
+		data, err := fs.ReadFile(source, path)
+		if err != nil {
+			return err
+		}
+		file, err := root.OpenFile(filepath.FromSlash(path), os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
+		if err != nil {
+			return err
+		}
+		_, err = file.Write(data)
+		return errors.Join(err, file.Close())
+	})
+	if err != nil {
+		t.Fatal(err)
 	}
 }
 

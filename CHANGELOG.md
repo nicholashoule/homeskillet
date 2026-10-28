@@ -58,6 +58,8 @@ Windows, on x64 and Arm64, join those for Linux and macOS
   winget's tools, can name the list in `inputs`: it is done once it succeeds,
   and offered again only when the list or its command changes, instead of on
   every run ([docs/manifest.md](docs/manifest.md#steps-that-install-from-a-list)).
+- Start from an example repository for Linux, macOS, or Windows, in
+  `examples/`: a few dotfiles, a setup step, and the commands that link them.
 - `homeskillet completion pwsh` completes commands, options, step names, and
   paths in PowerShell 7.3 and later.
 - At a terminal, `link` and `status` end by saying how many setup steps are

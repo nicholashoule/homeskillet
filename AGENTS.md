@@ -45,6 +45,7 @@ describe the project, so keep them current instead.
 | `tools/xplat` | Cross-platform shim for Makefile recipes, vendored from `go-webapp` |
 | `tools/buildtime` | Prints the build time the Makefile stamps into binaries |
 | `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
+| `examples/` | Starter configuration repositories, one per system; `TestExamples` runs `check` on each |
 | `.github/` | CI and release workflows, Dependabot, repogov line limits, and Copilot instructions |
 | `CHANGELOG.md`, `SECURITY.md` | What changed for users, by release (the release notes come from it); how to report a vulnerability |
 
@@ -165,8 +166,9 @@ Supported Environments table or docs/windows.md.
 
 ## Working Rules
 
-- The configuration repository is separate. Do not move configuration here or
-  add runtime dependencies on a sibling checkout.
+- The configuration repository is separate. Do not move configuration here,
+  beyond the small generic starters in `examples/`, or add runtime
+  dependencies on a sibling checkout.
 - Keep everything generic to any user's machine. Never commit absolute
   personal paths, user names, or host-specific settings; use paths relative
   to the repository and variables that can be overridden, such as

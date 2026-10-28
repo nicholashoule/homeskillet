@@ -84,8 +84,11 @@ starter:
 }
 ```
 
-[docs/manifest.md](docs/manifest.md) describes every field, platforms, setup
-steps, and `home/wsl/` for WSL.
+To start from a working one, copy the example for
+[Linux](examples/linux), [macOS](examples/macos), or
+[Windows](examples/windows): a few dotfiles, a setup step, and the commands
+to link them. [docs/manifest.md](docs/manifest.md) describes every field,
+platforms, setup steps, and `home/wsl/` for WSL.
 
 ## Safety
 
