@@ -1,0 +1,351 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="description" content="homeskillet manages your dotfiles across Linux, macOS, and Windows, linking them from your own repository and bootstrapping your system tools, each step only once you approve it.">
+<meta name="color-scheme" content="light dark">
+<title>homeskillet</title>
+<style>
+  :root {
+    color-scheme: light dark;
+    --bg: #fafaf9;
+    --surface: #ffffff;
+    --text: #1c1917;
+    --muted: #57534e;
+    --line: #e7e5e4;
+    --accent: #b45309;
+    --accent-text: #ffffff;
+    --code-bg: #ecebe8;
+    --code-text: #292524;
+    --max: 46rem;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #141312;
+      --surface: #1c1b19;
+      --text: #ece9e4;
+      --muted: #a8a29e;
+      --line: #2c2a27;
+      --accent: #f59e0b;
+      --accent-text: #1c1917;
+      --code-bg: #262320;
+      --code-text: #e7e5e4;
+    }
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 17px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, Ubuntu, Cantarell, "Helvetica Neue", sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover, a:focus-visible { text-decoration: underline; }
+  code, pre, kbd {
+    font-family: ui-monospace, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+    font-size: 0.92em;
+  }
+  code { background: var(--code-bg); color: var(--code-text); padding: 0.1em 0.35em; border-radius: 0.3em; }
+  pre {
+    background: var(--code-bg);
+    color: var(--code-text);
+    border: 1px solid var(--line);
+    border-radius: 0.6rem;
+    padding: 1rem 1.1rem;
+    overflow-x: auto;
+    line-height: 1.5;
+  }
+  pre code { background: none; padding: 0; font-size: 0.88rem; }
+  .wrap { max-width: var(--max); margin: 0 auto; padding: 0 1.25rem; }
+
+  header.site {
+    border-bottom: 1px solid var(--line);
+    background: var(--surface);
+    position: sticky; top: 0; z-index: 2;
+  }
+  header.site .wrap {
+    display: flex; align-items: center; justify-content: space-between; gap: 1rem;
+    min-height: 3.5rem; flex-wrap: wrap;
+  }
+  .brand { font-weight: 700; letter-spacing: -0.01em; color: var(--text); display: inline-flex; align-items: center; gap: 0.45rem; }
+  .brand:hover { text-decoration: none; }
+  .skillet { flex: none; overflow: visible; }
+  nav {
+    display: flex; align-items: stretch; flex-wrap: wrap;
+    border: 1px solid var(--line); background: var(--code-bg);
+    border-radius: 0.4rem;
+  }
+  nav a {
+    display: inline-flex; align-items: center;
+    color: var(--muted); font-size: 0.78rem; font-weight: 600;
+    letter-spacing: 0.06em; text-transform: uppercase;
+    padding: 0.55rem 0.9rem; border-left: 1px solid var(--line);
+    position: relative;
+    transition: color 0.15s ease, background-color 0.15s ease;
+  }
+  nav a:first-child { border-left: 0; border-radius: 0.4rem 0 0 0.4rem; }
+  nav a:last-child { border-radius: 0 0.4rem 0.4rem 0; }
+  nav a::after {
+    content: ""; position: absolute; left: 0; right: 0; bottom: -1px; height: 2px;
+    background: var(--accent); transform: scaleX(0); transition: transform 0.15s ease;
+  }
+  nav a:hover, nav a:focus-visible, nav a[aria-current="true"] { color: var(--text); background: var(--surface); text-decoration: none; }
+  nav a:hover::after, nav a:focus-visible::after, nav a[aria-current="true"]::after { transform: scaleX(1); }
+  nav a:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }
+  nav a.github { padding: 0.55rem 0.7rem; }
+  /* The gopher behind the Install tab, the first in the bar: turned on its
+     side, its head pokes out past the bar's left edge, in a clipped window
+     whose right edge is the tab's left edge, so the body stays hidden behind
+     the bar. Hovering, or the Install section being in view, brings it out a
+     little further. */
+  .peek {
+    position: absolute; right: 100%; top: 50%; width: 36px; height: 40px; margin-top: -20px;
+    overflow: hidden; pointer-events: none;
+  }
+  .peek img {
+    position: absolute; left: 23.5px; top: -4.5px; width: 36px; height: auto;
+    transform: rotate(-90deg); transform-origin: 50% 50%; transition: transform 0.25s ease;
+  }
+  nav a:hover .peek img, nav a:focus-visible .peek img, nav a[aria-current="true"] .peek img { transform: translateX(-13px) rotate(-90deg); }
+  @media (prefers-reduced-motion: reduce) { .peek img { transition: none; } }
+  @media (prefers-reduced-motion: reduce) { nav a, nav a::after { transition: none; } }
+
+  .hero { padding: 4.5rem 0 3rem; }
+  .hero h1 {
+    font-size: clamp(2.2rem, 6vw, 3.4rem);
+    line-height: 1.05; letter-spacing: -0.03em; margin: 0 0 1rem;
+  }
+  .hero p.lead { font-size: 1.2rem; color: var(--muted); max-width: 38rem; margin: 0 0 1.75rem; }
+  .actions { display: flex; gap: 0.75rem; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: 0.65rem 1.1rem; border-radius: 0.5rem;
+    border: 1px solid var(--line); background: var(--surface); color: var(--text); font-weight: 600;
+  }
+  .btn.primary { background: var(--accent); border-color: var(--accent); color: var(--accent-text); }
+  .btn:hover { text-decoration: none; filter: brightness(1.05); }
+
+  section { padding: 2.5rem 0; border-top: 1px solid var(--line); scroll-margin-top: 4.5rem; }
+  #top { scroll-margin-top: 0; }
+  h2 { font-size: 1.5rem; letter-spacing: -0.02em; margin: 0 0 0.75rem; }
+  h3 { font-size: 1.05rem; margin: 1.5rem 0 0.5rem; }
+  p { margin: 0 0 1rem; }
+  .muted { color: var(--muted); }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(14rem, 1fr)); gap: 1rem; margin: 1.25rem 0 0; }
+  .card {
+    background: var(--surface); border: 1px solid var(--line); border-radius: 0.75rem; padding: 1.1rem 1.2rem;
+  }
+  .card h3 { margin: 0 0 0.35rem; font-size: 1rem; }
+  .card p { margin: 0; font-size: 0.95rem; color: var(--muted); }
+
+  .from-source { display: flex; gap: 1.1rem; align-items: flex-start; margin: 1.5rem 0 0.5rem; padding: 1rem 1.1rem; background: var(--surface); border: 1px solid var(--line); border-radius: 0.75rem; }
+  .from-source h3 { margin: 0 0 0.35rem; }
+  .from-source p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+  .gopher { flex: none; width: 52px; height: auto; margin-top: 0.1rem; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.95rem; margin: 1rem 0; }
+  th, td { text-align: left; padding: 0.55rem 0.6rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; }
+  td code { white-space: nowrap; }
+
+  ul.docs { list-style: none; padding: 0; margin: 1rem 0 0; display: grid; gap: 0.5rem; }
+  ul.docs li { padding: 0.6rem 0.8rem; border: 1px solid var(--line); border-radius: 0.5rem; background: var(--surface); }
+  ul.docs span { color: var(--muted); }
+
+  footer.site { border-top: 1px solid var(--line); background: var(--code-bg); padding: 2rem 0 3rem; color: var(--muted); font-size: 0.9rem; }
+  footer.site a { color: var(--muted); text-decoration: underline; }
+  @media (max-width: 40rem) {
+    .hero { padding: 3rem 0 2rem; }
+    nav a { padding: 0.45rem 0.6rem; font-size: 0.72rem; }
+    .peek { display: none; }
+  }
+</style>
+</head>
+<body>
+
+<header class="site">
+  <div class="wrap">
+    <a class="brand" href="#top"><svg class="skillet" viewBox="0 0 44 26" width="34" height="20" aria-hidden="true" focusable="false">
+        <path d="M23 10.6 H40.5 a2.4 2.4 0 0 1 0 4.8 H23 z" fill="#5b4e45" stroke="#8c7b6d" stroke-width="0.8" stroke-linejoin="round"/>
+        <circle cx="38.6" cy="13" r="1.1" fill="var(--surface)"/>
+        <path d="M12.5 1.8 l2.2 -1.4 l2.2 1.4 z M12.5 24.2 l2.2 1.4 l2.2 -1.4 z" fill="#5b4e45"/>
+        <circle cx="13" cy="13" r="11" fill="#5b4e45" stroke="#8c7b6d" stroke-width="1"/>
+        <circle cx="13" cy="13" r="8.2" fill="#2a2420"/>
+        <path d="M7.4 10.2 a6.6 6.6 0 0 1 4.6 -4.2" fill="none" stroke="#7d6c60" stroke-width="1.1" stroke-linecap="round"/>
+      </svg> homeskillet</a>
+    <nav aria-label="Sections">
+      <a href="#install"><span class="peek" aria-hidden="true"><img src="images/gopher.svg" alt=""></span>Install</a>
+      <a href="#use">Use</a>
+      <a href="#repository">Repository</a>
+      <a href="#safety">Safety</a>
+      <a href="#docs">Docs</a>
+      <a class="github" href="https://github.com/nicholashoule/homeskillet" aria-label="homeskillet on GitHub" title="GitHub">
+        <svg viewBox="0 0 16 16" width="20" height="20" aria-hidden="true" focusable="false" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0 0 16 8c0-4.42-3.58-8-8-8z"/></svg>
+      </a>
+    </nav>
+  </div>
+</header>
+
+<main id="top">
+  <div class="wrap hero">
+    <h1>Easily manage your dotfiles across Linux, macOS, and Windows.</h1>
+    <p class="lead">
+      homeskillet links the dotfiles from your own repository into your home directory, on every machine you use,
+      and bootstraps your system tools too: the manifest can install your shell prompt, language toolchains,
+      editors, and packages, each step shown to you and run only once you approve it. One small, dependency-free
+      binary, with nothing to configure but your repository.
+    </p>
+    <div class="actions">
+      <a class="btn primary" href="#install">Install</a>
+      <a class="btn" href="https://github.com/nicholashoule/homeskillet/releases/latest">Latest release</a>
+    </div>
+  </div>
+
+  <section id="why">
+    <div class="wrap">
+      <h2>Built for safety first</h2>
+      <p class="muted">Linked files such as <code>.bashrc</code> run as you, so homeskillet treats a repository the way OpenSSH treats <code>~/.ssh</code>.</p>
+      <div class="grid">
+        <div class="card">
+          <h3>Never overwrites your files</h3>
+          <p>It refuses to replace or delete anything it did not create. Conflicts are reported; <code>--force</code> moves each one into a backup it never deletes.</p>
+        </div>
+        <div class="card">
+          <h3>Checks ownership and permissions</h3>
+          <p>A repository, file, or symlink that another user could change is refused, and running as root needs <code>--allow-root</code>.</p>
+        </div>
+        <div class="card">
+          <h3>Shows every step before it runs</h3>
+          <p>Setup steps are someone's code. Each is shown exactly as it will run, with no shell, expansion, or templating, and "no" is the default.</p>
+        </div>
+        <div class="card">
+          <h3>Dry runs everywhere</h3>
+          <p>Every command that writes into a home directory takes <code>--dry-run</code> and changes nothing.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section id="install">
+    <div class="wrap">
+      <h2>Install</h2>
+      <p>Download the latest release for your platform, check it, and let it install itself as a versioned command under <code>~/.local</code>. Shown for Linux on x64; the other builds are <code>homeskillet-linux-arm64</code>, <code>homeskillet-darwin-amd64</code>, <code>homeskillet-darwin-arm64</code>, and the Windows <code>.exe</code> files.</p>
+<pre><code>base=https://github.com/nicholashoule/homeskillet/releases/latest/download
+curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64"
+curl -fsSLO --proto '=https' "$base/SHA256SUMS"
+grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
+chmod +x homeskillet-linux-amd64
+./homeskillet-linux-amd64 self install</code></pre>
+      <p>From then on, <code>homeskillet update</code> fetches the newest release and checks it against its <code>SHA256SUMS</code> before installing it. Each version keeps its own copy, so going back is one <code>homeskillet use</code> command, and <code>homeskillet self releases</code> shows what is published and installed. Windows needs Developer Mode for symlinks; see the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md">Windows guide</a>.</p>
+
+      <div class="from-source">
+        <img class="gopher" src="images/gopher.svg" width="52" height="71" alt="The Go gopher">
+        <div>
+          <h3>From source, with Go</h3>
+          <p>With Go 1.24 or newer, <code>make install</code> from a clone builds homeskillet and installs it the same way, as a version of its own. The build uses the standard library only, so there is nothing else to fetch.</p>
+        </div>
+      </div>
+
+      <h3>Supported environments</h3>
+      <table>
+        <tr><th>Environment</th><th>Notes</th></tr>
+        <tr><td>Linux</td><td>Any distribution. Tested.</td></tr>
+        <tr><td>macOS</td><td>bash or zsh. Cross-compiled, not yet tested natively.</td></tr>
+        <tr><td>Windows 10 and 11</td><td>Native, x64 and Arm64, from PowerShell. Linking needs Developer Mode.</td></tr>
+        <tr><td>WSL</td><td>The Linux build inside the distribution, or <code>homeskillet wsl</code> from Windows to link a repository's <code>home/wsl/</code> there.</td></tr>
+        <tr><td>Containers</td><td>Running as root needs <code>--allow-root</code> and a repository root owns; or run as a regular user.</td></tr>
+      </table>
+    </div>
+  </section>
+
+  <section id="use">
+    <div class="wrap">
+      <h2>Use</h2>
+      <p>Point homeskillet at a repository. Without a command it reports what <code>link</code> would change.</p>
+<pre><code>homeskillet ~/dotfiles                        # status: what link would change
+homeskillet link ~/dotfiles --dry-run         # preview; nothing changes
+homeskillet link ~/dotfiles                   # link every file
+homeskillet link ~/dotfiles .bashrc --force   # replace ~/.bashrc, keeping a backup
+homeskillet setup ~/dotfiles                  # offer each setup step
+homeskillet check ~/dotfiles                  # list every issue, or say it is valid
+homeskillet backups purge --older-than 30d    # delete old backups, after asking
+homeskillet unlink ~/dotfiles
+homeskillet update                            # install the newest release; use VERSION goes back</code></pre>
+      <p>After the first <code>link</code>, the repository may be left out anywhere. At a terminal the output is grouped for reading; in a script it is one tab-separated line per file, and the exit status reports the result.</p>
+    </div>
+  </section>
+
+  <section id="repository">
+    <div class="wrap">
+      <h2>Configuring a repository</h2>
+      <p>The simplest repository is a <code>home/</code> directory laid out as your home. Every file under it is linked to the same path in yours.</p>
+<pre><code>dotfiles/
+└── home/
+    ├── .bashrc                -> ~/.bashrc
+    └── .config/git/config     -> ~/.config/git/config</code></pre>
+      <p>An optional manifest at the root, <code>bootstrap.json</code> or <code>dotfiles.json</code>, adds what <code>home/</code> cannot say: the platforms the repository is for and the setup steps that install tools. <code>homeskillet init</code> writes a starter.</p>
+<pre><code>{
+  "platforms": ["darwin"],
+  "setup": [
+    { "name": "homebrew", "run": ["bash", "setup/homebrew.sh"], "provides": "brew" }
+  ]
+}</code></pre>
+      <p>To start from a working one, copy the example for <a href="https://github.com/nicholashoule/homeskillet/tree/main/examples/linux">Linux</a>, <a href="https://github.com/nicholashoule/homeskillet/tree/main/examples/macos">macOS</a>, or <a href="https://github.com/nicholashoule/homeskillet/tree/main/examples/windows">Windows</a>. The <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/manifest.md">manifest guide</a> describes every field.</p>
+    </div>
+  </section>
+
+  <section id="safety">
+    <div class="wrap">
+      <h2>Safety</h2>
+      <p>homeskillet never overwrites or deletes a file it did not create, short of backups you ask it to purge after it lists them, and refuses to run as root, or elevated on Windows, without <code>--allow-root</code>. Linked files and setup steps run as you, so it refuses a repository, source, or symlink another user could change, and shows each setup step exactly before you approve it.</p>
+      <p>Review someone else's dotfiles before linking them, and especially before <code>setup --yes</code>. The <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/safety.md">safety guide</a> lists every refusal and the reasoning behind it, and <a href="https://github.com/nicholashoule/homeskillet/blob/main/SECURITY.md">SECURITY.md</a> says how to report a vulnerability.</p>
+    </div>
+  </section>
+
+  <section id="docs">
+    <div class="wrap">
+      <h2>Documentation</h2>
+      <ul class="docs">
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/usage.md">Usage</a> <span>commands, options, choosing the repository and files, and output</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/manifest.md">Configuration repositories</a> <span>home/, manifests, platforms, setup steps, and check</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md">Windows and WSL</a> <span>native Windows, and configuring WSL from a Windows repository</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/install.md">Installing and updating</a> <span>versions, rollback, shell completion, and the data directory</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/safety.md">Safety</a> <span>every refusal, and the reasoning behind it</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/architecture.md">Architecture</a> <span>ownership, execution flow, and safety limits</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/CHANGELOG.md">Changelog</a> <span>what changed in each release</span></li>
+      </ul>
+    </div>
+  </section>
+</main>
+
+<footer class="site">
+  <div class="wrap">
+    <p>homeskillet is open source under the <a href="https://github.com/nicholashoule/homeskillet/blob/main/LICENSE">Apache-2.0 license</a>. Source, issues, and releases are on <a href="https://github.com/nicholashoule/homeskillet">GitHub</a>; you can also <a href="https://github.com/sponsors/nicholashoule">sponsor the project</a>. Built and maintained by <a href="https://github.com/nicholashoule">Nicholas Houle</a>.</p>
+    <p>The Go gopher was designed by <a href="https://reneefrench.blogspot.com/">Renee French</a> and is used under the <a href="https://creativecommons.org/licenses/by/4.0/">Creative Commons Attribution 4.0</a> license.</p>
+  </div>
+</footer>
+
+<script>
+  // Marks the menu item for the section in view, so the bar reads as a menu.
+  (function () {
+    var links = Array.prototype.slice.call(document.querySelectorAll('nav a[href^="#"]'));
+    var byId = {};
+    links.forEach(function (a) { byId[a.getAttribute('href').slice(1)] = a; });
+    var sections = Object.keys(byId).map(function (id) { return document.getElementById(id); }).filter(Boolean);
+    if (!('IntersectionObserver' in window) || sections.length === 0) return;
+    var visible = {};
+    var observer = new IntersectionObserver(function (entries) {
+      entries.forEach(function (e) { visible[e.target.id] = e.isIntersecting ? e.intersectionRatio : 0; });
+      var best = null;
+      sections.forEach(function (s) { if (visible[s.id] > 0 && (best === null || visible[s.id] > visible[best])) best = s.id; });
+      links.forEach(function (a) {
+        if (a.getAttribute('href') === '#' + best) a.setAttribute('aria-current', 'true'); else a.removeAttribute('aria-current');
+      });
+    }, { rootMargin: '-20% 0px -60% 0px', threshold: [0, 0.25, 0.5, 1] });
+    sections.forEach(function (s) { observer.observe(s); });
+  })();
+</script>
+</body>
+</html>

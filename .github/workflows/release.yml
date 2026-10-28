@@ -18,6 +18,8 @@ jobs:
     timeout-minutes: 20
     permissions:
       contents: write # create the Release
+      id-token: write # sign the provenance attestation
+      attestations: write # store it
     env:
       TAG: ${{ github.ref_name }}
 
@@ -51,6 +53,16 @@ jobs:
       # first. The notes go outside the checkout, which must stay clean.
       - name: Build
         run: bash tools/release/build.sh "$TAG" "$RUNNER_TEMP/notes.md"
+
+      # Signed provenance for each binary: a statement, kept by GitHub and
+      # checked with gh attestation verify, that this workflow built it from
+      # this commit, which SHA256SUMS alone cannot say. Attestations are
+      # free for public repositories only, so a private one skips this step.
+      - name: Attest provenance
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: bin/homeskillet-*-*
 
       # A tag with a pre-release part, such as v1.2.3-rc.1, makes a pre-release.
       # A Release that already exists, after a failed upload or one made by

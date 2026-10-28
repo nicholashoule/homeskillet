@@ -49,6 +49,9 @@ a GitHub Release, where people look for them:
   Go release gives the same files, and writes `SHA256SUMS`.
 - It checks, with `go version -m`, that every binary reports the tag from a clean tree. Go ignores a tag that is not
   valid for the module path: a `v2` or later tag needs the path to end in `/v2` first.
+- From a public repository, it attests each binary's provenance with `actions/attest-build-provenance`: a statement
+  signed through GitHub that this workflow built the file from this commit, checked with `gh attestation verify`.
+  GitHub offers attestations only to public repositories, so a private one skips the step.
 - It creates the Release, titled `homeskillet vX.Y.Z`, with the changelog section as its notes and the binaries and
   `SHA256SUMS` attached, as a pre-release when the tag has a pre-release part, such as `v0.2.0-rc.1`.
 
@@ -59,7 +62,9 @@ every binary `+dirty`; a step that makes a file writes it outside the checkout, 
 paragraph and list item of the notes into one line, because GitHub shows every newline in release notes as a line
 break, so the changelog's wrapping never shows on the Release page.
 
-Do not create the release in GitHub's web interface: the tag alone is the release. If one exists when the workflow runs,
+A tag may be moved only while no Release exists for it, as after a run that failed before publishing; once the Release
+is out, a problem gets a new patch version, since a moved tag is what a pinned download cannot tolerate. Do not create
+the release in GitHub's web interface: the tag alone is the release. If one exists when the workflow runs,
 as after a failed upload or a release made by hand, the workflow keeps it and sets its title, notes, and files to what a
 fresh run would have produced. A run that is needed again, say after the Release was deleted, is
 `gh run rerun <run-id>`, not a new tag.

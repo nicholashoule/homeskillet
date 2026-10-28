@@ -20,23 +20,12 @@ import (
 	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
-	"github.com/nicholashoule/homeskillet/internal/host"
 	"github.com/nicholashoule/homeskillet/internal/install"
 	"github.com/nicholashoule/homeskillet/internal/mirror"
 	"github.com/nicholashoule/homeskillet/internal/safefile"
 	"github.com/nicholashoule/homeskillet/internal/trust"
 	"github.com/nicholashoule/homeskillet/internal/version"
 	"github.com/nicholashoule/homeskillet/internal/wsl"
-)
-
-// releases is where published versions' binaries are downloaded from.
-const releases = "https://github.com/nicholashoule/homeskillet/releases/download/"
-
-// Bounds on what wsl install reads: a Linux build, and the SHA256SUMS file
-// that lists the release's binaries.
-const (
-	maxProgram = 64 << 20
-	maxSums    = 64 << 10
 )
 
 // errStopped stops a copy being sent once the distribution has stopped
@@ -338,7 +327,7 @@ func installWSL(ctx context.Context, runner wsl.Runner, inv invocation, output, 
 	if inv.wsl.from != "" {
 		program, err = readLinuxBuild(inv.wsl.from)
 	} else {
-		program, sum, err = downloadRelease(ctx, current, arch)
+		program, sum, err = downloadLinuxBuild(ctx, current, arch)
 	}
 	if err != nil {
 		return err
@@ -503,69 +492,32 @@ func readLinuxBuild(name string) ([]byte, error) {
 	return program, nil
 }
 
-// downloadRelease downloads this version's Linux build for arch, and the
-// checksum SHA256SUMS lists for it, with curl, which Windows includes. Only a
-// release has binaries to download.
-func downloadRelease(ctx context.Context, current, arch string) ([]byte, string, error) {
-	name := "homeskillet-linux-" + arch
+// downloadLinuxBuild downloads this version's Linux build for arch, and
+// returns it with the SHA-256 the release's SHA256SUMS lists for it, which
+// placeBuild checks in the distribution. Only a release has builds to
+// download.
+func downloadLinuxBuild(ctx context.Context, current, arch string) ([]byte, string, error) {
+	name := releaseFile("linux", arch)
 	if !release(current) {
 		return nil, "", fmt.Errorf("this is a development build, %s, with no release to download; build one for Linux with make cross, then:\n"+
 			"  homeskillet wsl install --from bin\\%s", current, name)
 	}
-	windows, err := host.Windows.Path()
+	from, err := newDownloader()
 	if err != nil {
 		return nil, "", err
 	}
-	curl := filepath.Join(windows, "System32", "curl.exe")
 	dir, err := os.MkdirTemp("", "homeskillet-wsl-")
 	if err != nil {
 		return nil, "", err
 	}
 	defer os.RemoveAll(dir) //nolint:errcheck // a temporary directory; failing to remove it changes nothing
-	for _, file := range []string{name, "SHA256SUMS"} {
-		url := releases + current + "/" + file
-		var stderr bytes.Buffer
-		cmd := exec.CommandContext(ctx, curl, "--fail", "--silent", "--show-error", "--location", //nolint:gosec // G204: curl from the system directory, fetching this version's release over HTTPS
-			"--proto", "=https", "--tlsv1.2", "--max-time", "600", "--output", filepath.Join(dir, file), url)
-		cmd.Stderr = &stderr
-		if err := cmd.Run(); err != nil {
-			return nil, "", fmt.Errorf("downloading %s: %w: %s", url, err, strings.TrimSpace(stderr.String()))
-		}
-	}
-	program, err := readFile(filepath.Join(dir, name), maxProgram)
+	sum, err := downloadRelease(ctx, from, current, name, dir)
 	if err != nil {
 		return nil, "", err
 	}
-	sums, err := readFile(filepath.Join(dir, "SHA256SUMS"), maxSums)
+	program, err := safefile.Read(filepath.Join(dir, name), maxProgram)
 	if err != nil {
 		return nil, "", err
-	}
-	sum := checksum(string(sums), name)
-	if sum == "" {
-		return nil, "", fmt.Errorf("the SHA256SUMS of %s lists no %s", current, name)
 	}
 	return program, sum, nil
-}
-
-// readFile reads at most limit bytes of the file at name.
-func readFile(name string, limit int64) ([]byte, error) {
-	file, err := os.Open(name) //nolint:gosec // G304: a file just downloaded into a private temporary directory
-	if err != nil {
-		return nil, err
-	}
-	data, err := safefile.ReadAll(file, limit)
-	return data, errors.Join(err, file.Close())
-}
-
-// checksum returns the SHA-256 that sums, in the format sha256sum writes,
-// lists for the file name, or "" when it lists none.
-func checksum(sums, name string) string {
-	for line := range strings.Lines(sums) {
-		fields := strings.Fields(line)
-		if len(fields) == 2 && strings.TrimPrefix(fields[1], "*") == name && len(fields[0]) == 64 &&
-			!strings.ContainsFunc(fields[0], func(r rune) bool { return !strings.ContainsRune("0123456789abcdefABCDEF", r) }) {
-			return strings.ToLower(fields[0])
-		}
-	}
-	return ""
 }

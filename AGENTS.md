@@ -28,7 +28,7 @@ file: the README, docs/, and this file describe the project, so keep them curren
 |---|---|
 | `main.go` | Entry point only: calls `cli.Run` and exits on error |
 | `main_unsupported.go` | Entry point on unsupported systems such as FreeBSD: says so and exits |
-| `internal/cli` | Flags, root refusal, path canonicalization, output, help, shell completion, `init`'s starter manifest, and `check` |
+| `internal/cli` | Flags, root refusal, path canonicalization, output, help, shell completion, `init`'s starter manifest, `check`, and `update`'s release download |
 | `internal/config` | Reading a repository: `bootstrap.json` and `dotfiles.json` decoding and merging, `home/` discovery, lexical validation |
 | `internal/trust` | Ownership and permission rules (audit these in one place) |
 | `internal/link` | Link planning, conflict detection, filesystem changes, and the record of links |
@@ -45,7 +45,8 @@ file: the README, docs/, and this file describe the project, so keep them curren
 | `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
 | `tools/release` | The release build both the release workflow and CI's dry run run (docs/release.md) |
 | `examples/` | Starter configuration repositories, one per system; `TestExamples` runs `check` on each |
-| `.github/` | CI and release workflows, Dependabot, repogov line limits, and Copilot instructions |
+| `site/` | The website, one hand-written page GitHub Pages serves (docs/development.md) |
+| `.github/` | CI, release, and Pages workflows, Dependabot, repogov line limits, and Copilot instructions |
 | `CHANGELOG.md`, `SECURITY.md` | What changed for users, by release (the release notes come from it); how to report a vulnerability |
 
 `tools/xplat` is a byte-identical copy of `github.com/nicholashoule/go-webapp/tools/xplat`. Do not edit it here: change

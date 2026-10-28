@@ -26,7 +26,12 @@ const usageLines = `  homeskillet [status|link|unlink] [REPOSITORY [FILE...]] [o
   homeskillet wsl install [options]
   homeskillet wsl status|link|unlink|setup [REPOSITORY [FILE...|STEP...]] [options]
   homeskillet backups [list|purge] [options]
+  homeskillet update [VERSION] [options]
+  homeskillet install [options]
+  homeskillet use latest|previous|VERSION [options]
   homeskillet self install|list [options]
+  homeskillet self update [VERSION] [options]
+  homeskillet self releases [options]
   homeskillet self use latest|previous|VERSION [options]
   homeskillet self remove VERSION [options]
   homeskillet version
@@ -45,7 +50,11 @@ var commandHelp = map[string]string{
 	"wsl": "On Windows, or from a WSL shell, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
 		"there on a copy of a Windows clone, or on a clone in the distribution written / or ~ first",
 	"backups": "List the files link --force moved into a backup; backups purge deletes them after showing them and asking",
-	"self":    "Install, list, switch, or remove versions of homeskillet",
+	"update":  "Install the newest release of homeskillet from GitHub, or the VERSION given, checked against its SHA256SUMS, keeping the old one to go back to",
+	"install": "Install this build of homeskillet as a version of its own, and make it the one the command runs unless another is pinned",
+	"use":     "Run latest, previous, or the installed VERSION; latest follows new installs, a version stays pinned",
+	"self": "Install, update, list, switch, or remove versions of homeskillet. self update installs the newest release from GitHub, or the VERSION given, " +
+		"checked against its SHA256SUMS, and keeps the old one to go back to with self use; self releases lists the releases there are",
 	"version": "Show the version and build details",
 	"completion": "Print a shell completion script; load it with eval \"$(homeskillet completion bash)\" in ~/.bashrc, zsh in ~/.zshrc, " +
 		"or in PowerShell with homeskillet completion pwsh | Out-String | Invoke-Expression in $PROFILE",
@@ -58,7 +67,8 @@ var argumentHelp = [][2]string{
 		"(default: the current directory, else the one linked into the home). Without a command, write it as a path: . or ./dotfiles"},
 	{"FILE", "Limits status, link, or unlink to this file or directory, named by link (.bashrc) or source (" +
 		config.HomeDir + "/.bashrc). Put -- before a name starting with -"},
-	{"VERSION", "An installed version, such as v0.1.1, for self use and self remove; self list shows them all"},
+	{"VERSION", "An installed version, such as v0.1.1 or 0.1.1, for self use and self remove; self list shows them all. For self update, " +
+		"a published release to install instead of the newest; self releases shows them all"},
 }
 
 // optionGroups orders the options in help. The first group applies to several

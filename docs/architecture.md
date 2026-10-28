@@ -133,6 +133,14 @@ otherwise. `install.New` resolves the prefix's existing directories, then:
 - `self list` reports versions, roles, and the build details in each version's `build.json`. Install writes that record
   from `version.Current`, which describes the binary being copied because it is the running program. Parsing the details
   out of each binary instead would link in `debug/buildinfo` and its ELF, Mach-O, and PE readers.
+- `self update` downloads a published release, the newest or the one named, and runs it: `latestVersion` reads where
+  GitHub's latest-release page redirects, `downloadRelease` fetches `SHA256SUMS` and then the binary for the detected
+  hardware with the system's `curl` at a fixed path, `verifyDownload` hashes it with the system's hashing tool, and the
+  download then installs itself with `self install`, as `wsl install` has a Linux build do in a distribution. The
+  download is staged under the data directory, not `/tmp`, and a dry run stops before anything downloaded runs
+  ([safety.md](safety.md#updating)).
+- `self releases` lists the published releases from GitHub's API, marking the newest, those installed, and the current
+  one. `update`, `install`, and `use` are the same commands without `self`, rewritten in `takeCommand`.
 
 Like `link.Prepare`, each command checks everything before changing anything, and dry runs stop after the checks.
 

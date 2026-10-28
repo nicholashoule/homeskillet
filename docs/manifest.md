@@ -309,7 +309,8 @@ Run this step? [y/N]
 ```
 
 Steps run from the repository root, so repository scripts such as `setup/uv.sh` work. `HOME` and `HOMESKILLET_HOME` are
-set to the selected home, and on Windows `USERPROFILE` too, and `HOMESKILLET_REPO` to the repository. A step without
+set to the selected home, and on Windows `USERPROFILE` too, and `HOMESKILLET_REPO` to the repository; the rest of your
+environment is passed to the step as it is, so a step can use a proxy setting, and also any token you have set. A step without
 `creates`, `provides`, or `inputs` is offered on every run, so make it safe to repeat. A failing step stops setup;
 declined steps are skipped and the rest are still offered. `setup --yes` runs every pending step without asking, for
 unattended builds such as a Dockerfile; [safety.md](safety.md#setup-steps) explains what that does and does not allow.

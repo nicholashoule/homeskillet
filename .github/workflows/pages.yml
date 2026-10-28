@@ -1,0 +1,50 @@
+# Pages: publish site/ as the repository's GitHub Pages site whenever main
+# changes it. The site is hand-written HTML with no build step, so the job only
+# uploads the directory. It needs Pages enabled in the repository settings with
+# "GitHub Actions" as the source, and a public repository or a plan that serves
+# Pages for private ones. See Website in docs/development.md.
+name: Pages
+
+on:
+  push:
+    branches: [main]
+    paths: ["site/**", ".github/workflows/pages.yml"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One deployment at a time, and a newer one replaces a waiting one.
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    name: Deploy
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # A job's permissions replace the workflow's rather than add to them, so
+    # the checkout's read access is repeated here.
+    permissions:
+      contents: read
+      pages: write # publish the deployment
+      id-token: write # prove to Pages that this workflow made it
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Nothing here pushes, so the token is not left in .git/config.
+          persist-credentials: false
+
+      - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
+
+      - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
+        with:
+          path: site
+
+      - id: deployment
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1

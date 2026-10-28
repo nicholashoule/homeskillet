@@ -142,7 +142,8 @@ A setup step is code from the repository, which may be someone else's, so `setup
 - Setup names and arguments cannot contain control or formatting characters, which could hide part of a command from the
   review.
 - `HOME` is set to the selected home, and on Windows `USERPROFILE` too, so `--home` pointed at a scratch directory keeps
-  installers that honor them out of your real one.
+  installers that honor them out of your real one. Everything else in your environment is passed to the step as it is,
+  proxy settings and any tokens included, so approving a step also hands it those values.
 - Under `--yes`, each step is shown but not asked about, and runs with no input and no terminal, in a session of its
   own. An unattended run never hangs on a step that prompts, even one that reads the terminal directly as `sudo` does,
   and `sudo` in a step cannot use a password you typed in the last few minutes, which it remembers per terminal. The
@@ -187,6 +188,28 @@ copies and where it copies it:
   anything else found in a version directory.
 - Each file is written under a temporary name and renamed into place only once it is complete and flushed to disk, so a
   crash or a full disk never leaves a partial binary.
+
+## Updating
+
+`homeskillet update` runs a program it just downloaded, so everything on the way to running it is checked:
+
+- It downloads only from this project's releases on GitHub, at URLs fixed in the binary, over HTTPS with TLS 1.2 or
+  later, and never follows a redirect to plain HTTP. There is no option to download from elsewhere.
+- It uses the system's own `curl` and hashing tool (`sha256sum` or `shasum`; `certutil` on Windows) at their fixed
+  paths, never ones found on `PATH`, and each must pass the rules for a program homeskillet copies: a regular file,
+  owned by you or root, writable by nobody else.
+- The binary goes into a private directory made under the data directory, whose ownership and ancestors pass the rules
+  above, so nobody else can swap the file between the check and the run, and no `noexec` mount of `/tmp` gets in the
+  way. It is bounded in size, must match the SHA-256 the release's `SHA256SUMS` lists for it, and must report the
+  version asked for, before anything runs it.
+- It then installs itself with `self install`, under the rules above, so the version that was running stays installed,
+  and the closing note names it when what runs has changed. A version already installed is never downloaded again or
+  rewritten.
+- A dry run stops after the download and the checksum check. It runs nothing it downloaded, so what it changes never
+  depends on the download honoring `--dry-run`.
+
+`SHA256SUMS` comes from the same release as the binary, so the check proves the download arrived intact, not who
+published it; the release workflow is what stands behind that ([release.md](release.md#tagging)).
 
 ## System Directories
 

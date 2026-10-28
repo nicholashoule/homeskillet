@@ -27,15 +27,45 @@ against. In the commands below, `OWNER` is the GitHub account that hosts homeski
 [windows.md](windows.md#installing).
 
 ```sh
-gh release download v0.1.1 --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS
+gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS   # the latest release
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
+gh attestation verify homeskillet-linux-amd64 --repo OWNER/homeskillet   # optional: that the release workflow built it
 chmod +x homeskillet-linux-amd64
 ./homeskillet-linux-amd64 self install
 ```
 
 `self install` installs the downloaded binary as `make install` installs a build (see [Versions and
-Updates](#versions-and-updates)); delete the download afterward. Release builds are reproducible: building the tag with
-the Go release the workflow used gives the same `SHA256SUMS` ([release.md](release.md#tagging)).
+Updates](#versions-and-updates)); delete the download afterward. From then on, [`homeskillet update`](#updating) does
+the downloading and checking. Release builds are reproducible: building the tag with the Go release the workflow used
+gives the same `SHA256SUMS` ([release.md](release.md#tagging)).
+
+## Updating
+
+```sh
+homeskillet update                    # install the newest release, if it is not installed
+homeskillet update --dry-run          # download and check it, but change nothing
+homeskillet update 0.2.0              # install that release instead
+homeskillet self releases             # the published releases, and which are installed
+homeskillet use v0.2.0                # go back; update's closing note names the version
+```
+
+`update` asks GitHub which release is newest, downloads the release's `SHA256SUMS` and the binary for this machine into
+a private directory under the [data directory](#data-directory), checks the binary against the listed SHA-256, checks
+that it reports that version, and then runs its `self install` with the same `--home`, `--prefix`, and `--data-dir`,
+so the new version records its own build details and the version you had stays installed (see [Versions and
+Updates](#versions-and-updates)). When what runs has changed, `update` ends by naming the command that runs the old
+version again; `use previous` does the same whenever the old version was the latest. The download comes only from this
+project's releases on GitHub, over HTTPS, with the system's own `curl` and hashing tool at their fixed paths
+([safety.md](safety.md#updating)). A version that is already installed is left as it is, so `update` is safe to run as
+often as you like, and a `--dry-run` downloads and checks without running or installing anything.
+
+The check against `SHA256SUMS` proves the download arrived intact, not who published it. Releases from the public
+repository also carry signed build provenance, which `gh attestation verify` checks (see [Downloading a
+Release](#downloading-a-release)); `update` does not check it yet.
+
+`update`, `install`, and `use` are the same as `self update`, `self install`, and `self use`; versions may be written
+with or without their leading `v`. A development build, whose version is a pseudo-version or `+dirty`, can update to a
+release too; the release then ranks as `latest` only if its version is higher.
 
 ## Shell Completion
 
@@ -104,13 +134,14 @@ default data directory, on Linux and macOS (Windows keeps `current` as a file in
 
 - `latest` and `previous` always name the highest and second-highest installed versions. Installing or removing a
   version recomputes both.
-- `current` chooses what the `homeskillet` command runs. It follows `latest` unless you pin a version, so updating is
-  `git pull` then `make install`.
+- `current` chooses what the `homeskillet` command runs. It follows `latest` unless you pin a version, so
+  `homeskillet update`, or `git pull` then `make install`, changes what runs.
 - Every change replaces a link in one atomic rename, and a new binary is written under a temporary name first, so the
   command never disappears or runs a half-written file.
 
 ```sh
 homeskillet self list                 # versions, roles, and recorded build details
+homeskillet self releases             # published releases, newest first, and which are installed
 homeskillet self use previous         # roll back; pins that version
 homeskillet self use v0.0.1           # pin any installed version
 homeskillet self use latest           # follow the newest again
