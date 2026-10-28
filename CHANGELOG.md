@@ -2,7 +2,8 @@
 
 What changed for people using homeskillet in the latest release, and what is
 coming in the next. The format follows
-[Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), without dates, as
+each release's tag records when it was made, and versions follow
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html). A version's section
 becomes its release notes on GitHub, so entries say what you can now do, not
 what was committed; earlier releases are linked at the bottom
@@ -10,7 +11,7 @@ what was committed; earlier releases are linked at the bottom
 
 ## [Unreleased]
 
-## [0.2.0] - 2026-10-27
+## [0.2.0]
 
 homeskillet now runs natively on Windows, and configures WSL from Windows
 too: one repository can hold both your Windows profile and your WSL home. A
@@ -87,7 +88,7 @@ Windows, on x64 and Arm64, join those for Linux and macOS
 Each release keeps its notes on its GitHub Release; see
 [all releases](https://github.com/nicholashoule/homeskillet/releases).
 
-- [0.1.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.1.1) - 2026-10-26: the first release, for Linux and macOS.
+- [0.1.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.1.1): the first release, for Linux and macOS.
 
 [Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.2.0...HEAD
 [0.2.0]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.2.0
