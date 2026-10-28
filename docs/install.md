@@ -1,15 +1,37 @@
 # Installing and Updating
 
-How homeskillet records its version and keeps installed versions side by side.
-[README.md](../README.md#build-and-install) covers building and the first
-install.
+How to install homeskillet, how it records its version, and how it keeps
+installed versions side by side. [development.md](development.md) covers
+building it for development.
+
+## Building and Installing
+
+With Go 1.24 or newer, from a clone of this repository:
+
+```sh
+make install          # build bin/homeskillet, then install it as a new version
+homeskillet version
+```
+
+`make install` runs the build's `self install`, which copies it into a
+directory of its own version in the [data directory](#data-directory) and
+points the `homeskillet` command in `~/.local/bin` at it (see
+[Versions and Updates](#versions-and-updates)). homeskillet says so when that
+directory is not on your `PATH`, as on macOS it usually is not.
+`make install PREFIX=<dir>` installs under another prefix, and `make build`
+alone leaves the binary in `bin/`. On Windows, see
+[windows.md](windows.md#installing); for WSL, `homeskillet wsl install` on
+Windows installs the Linux build in a distribution
+([windows.md](windows.md#the-wsl-command)).
 
 ## Downloading a Release
 
-Each version tag publishes the static binaries `make cross` builds, for Linux
-and macOS, on the repository's Releases page: one `homeskillet-<os>-<arch>` per
-platform, with a `SHA256SUMS` file to check them against. In the commands
-below, `OWNER` is the GitHub account that hosts homeskillet.
+Each version tag publishes the static binaries `make cross` builds, for Linux,
+macOS, and Windows, on the repository's Releases page: one
+`homeskillet-<os>-<arch>` per platform, `.exe` for Windows, with a `SHA256SUMS`
+file to check them against. In the commands below, `OWNER` is the GitHub
+account that hosts homeskillet; on Windows, see
+[windows.md](windows.md#installing).
 
 ```sh
 gh release download v0.1.1 --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS
@@ -26,10 +48,10 @@ release the workflow used gives the same `SHA256SUMS`
 
 ## Shell Completion
 
-`homeskillet completion bash` and `homeskillet completion zsh` print a
-completion script for commands, options, platforms, setup step names, and
-installed versions. Load it from your shell's startup file, so it always
-matches the installed version:
+`homeskillet completion bash`, `zsh`, and `pwsh` print a completion script
+for commands, options, platforms, setup step names, and installed versions.
+Load it from your shell's startup file, so it always matches the installed
+version; for PowerShell, see [windows.md](windows.md#installing):
 
 ```sh
 # ~/.bashrc
@@ -43,7 +65,7 @@ For zsh, the script may instead be saved as `_homeskillet` in a directory on
 
 The scripts are fixed text and ask homeskillet for each completion through a
 hidden `homeskillet __complete` command, which only reads
-([safety.md](safety.md#starter-manifests-and-completion)).
+([safety.md](safety.md#starter-manifests-checks-and-completion)).
 
 ## Version Information
 
@@ -89,8 +111,9 @@ build you later tag `v0.0.1`, and an installed version is never rewritten.
 ## Versions and Updates
 
 Each install keeps its own copy in the
-[data directory](../README.md#data-directory), and symlinks choose which one
-runs. With the default data directory:
+[data directory](#data-directory), and symlinks choose which one
+runs. With the default data directory, on Linux and macOS (Windows keeps
+`current` as a file instead; see [windows.md](windows.md#installing-homeskillet)):
 
 ```text
 ~/.local/share/homeskillet/versions/v0.0.1/homeskillet
@@ -120,8 +143,9 @@ homeskillet self install --dry-run    # preview; the self commands all take it
 
 A pinned version stays pinned when you install another; `self install` says
 so. If the pinned version's directory is deleted by hand, the command dangles;
-`self list` says so, and `homeskillet self use latest` repairs it. `self remove` refuses the version that runs. An installed version is never
-rewritten: installing the same version with different contents is refused,
+`self list` says so, and `homeskillet self use latest` repairs it. `self remove`
+refuses the version the command runs and the one running at the moment. An
+installed version is never rewritten: installing the same version with different contents is refused,
 except for `+dirty` builds, which name no exact build. Rebuilding a release
 from the same commit, with the same Go and platform, differs only in its build
 time, so it counts as already installed and the installed binary stays. A
@@ -135,9 +159,12 @@ you to move it aside.
 
 homeskillet keeps its own files in one data directory: the installed versions
 (see [Versions and Updates](#versions-and-updates)), `links.json`, a record of
-the links it made, and `backups/`, the files `link --force` moved aside, each
-at its path in home with the Unix time appended. homeskillet never deletes a
-backup; remove one once you no longer need it. The default is
+the links it made, `setup.json`, a record of the setup steps with `inputs` that
+ran ([manifest.md](manifest.md#steps-that-install-from-a-list)), and
+`backups/`, the files `link --force` moved aside, each
+at its path in home with the Unix time appended. homeskillet deletes a backup
+only when you purge it, after it shows each one and you approve
+([usage.md](usage.md#conflicts-and-backups)). The default is
 `~/.local/share/homeskillet`. Backups are moved there by renaming, so a data
 directory on another file system than home makes `--force` fail, changing
 nothing. To keep it

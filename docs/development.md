@@ -39,9 +39,41 @@ system forbids them, as on Windows.
 Fixtures canonicalize temporary paths because macOS can expose its temporary
 directory through a symlink.
 
-Tests cannot exercise the root refusal or files owned by another user without
-root. To check the refusal by hand, `unshare -r bin/homeskillet status` runs the
-binary as root inside a user namespace.
+`TestRefusesRoot` covers the refusal of root, and of an elevated process on
+Windows, by replacing the check that detects it; to see the real one by hand,
+`unshare -r bin/homeskillet status` runs the binary as root inside a user
+namespace. Tests cannot exercise files owned by another user without root.
+
+### On Windows
+
+The Makefile targets Linux and macOS, but it also runs on Windows, from
+PowerShell or Git Bash, where GNU Make and Git for Windows's `sh` and `env` are
+on PATH; builds there get `.exe` (`go env GOEXE`). Otherwise run the checks
+directly, from PowerShell:
+
+```powershell
+go vet ./...; $env:GOOS = 'linux'; go vet ./...; Remove-Item Env:GOOS
+golangci-lint run ./...
+go test ./...
+```
+
+Tests that make symlinks skip, saying why, unless Developer Mode is on
+([windows.md](windows.md#before-you-start)); CI's Windows runners run them
+elevated, which allows symlinks. Lint the Linux build too
+(`$env:GOOS = 'linux'` before `golangci-lint run`), since files for one system
+are invisible to a lint of the other.
+
+`homeskillet wsl` needs a real WSL distribution, which CI does not have, so
+try it by hand. A development build has no release to download, so build the
+Linux one from the same tree, which `wsl install` requires, and keep
+everything in a scratch home in the distribution:
+
+```powershell
+make install; make cross-linux-amd64
+wsl.exe --exec mkdir -p -m 700 /tmp/scratch/home
+homeskillet wsl install --from bin\homeskillet-linux-amd64 --home /tmp/scratch/home
+homeskillet wsl link C:\path\to\repository --home /tmp/scratch/home
+```
 
 ## Git Hooks
 
@@ -68,14 +100,17 @@ and demojify, the checks CI runs, and stops when any fails:
 - `make vet` and `make test` on Linux and macOS, with every Go release from the
   `go.mod` floor to the latest. The macOS runner also proves the Makefile works
   with its GNU Make 3.81.
-- On Windows, `go vet` and `go test` for the packages that build there, and a
-  check that the program only says Windows isn't supported.
+- On Windows, `go vet` and `go test`, which run elevated there, so the tests
+  that make symlinks run too, and a built homeskillet linking, reporting, and
+  unlinking a repository in a scratch home.
 - The shell completion tests load the bash script into every bash they find,
-  under `set -u`, including macOS's `/bin/bash`, which is bash 3.2, and load
-  the zsh script where zsh is installed. Locally, a machine without zsh skips
-  the zsh test, so the macOS runners are where it runs.
+  under `set -u`, including macOS's `/bin/bash`, which is bash 3.2, load
+  the zsh script where zsh is installed, and complete through the PowerShell
+  script where pwsh is, as on the Windows runners. Locally, a machine without
+  zsh skips the zsh test, so the macOS runners are where it runs.
 - `make cross`, once, on Linux with the latest Go.
-- golangci-lint, which also checks formatting; repogov, which checks the
+- golangci-lint for the Linux and Windows builds, which also checks
+  formatting; repogov, which checks the
   Markdown line limits in [.github/repogov-config.json](../.github/repogov-config.json);
   and demojify, which fails on emoji in Go, Markdown, YAML, and JSON files.
   demojify only reports, and skips `_test.go` files, which may hold emoji as
@@ -97,7 +132,7 @@ later releases, which leaves the comment behind.
 
 ## Binary Size
 
-A build is about 2.8 MiB. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table
+A build is about 2.9 MiB. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table
 and DWARF data (about a third of the binary) while keeping function names and
 lines in panics, and set `CGO_ENABLED=0` for a static binary. Code avoids
 packages that cost more than they do here: `regexp` (about 260 KiB) gave way
@@ -141,12 +176,13 @@ from a command copied here.
 ## Cross Builds
 
 ```sh
-make cross                  # all of linux/darwin x amd64/arm64
+make cross                  # every release platform: linux, darwin, and windows, each amd64 and arm64
 make cross-darwin-arm64     # one platform
 ```
 
-Each target writes `bin/homeskillet-<os>-<arch>` with `CGO_ENABLED=0` and
-`-trimpath`, so binaries are static and contain no local filesystem paths.
+Each target writes `bin/homeskillet-<os>-<arch>`, with `.exe` for Windows, with
+`CGO_ENABLED=0` and `-trimpath`, so binaries are static and contain no local
+filesystem paths. A release builds the same way ([release.md](release.md#tagging)).
 
 Cross-compilation verifies builds, not native macOS execution. Native checks on
 a Mac are still required before claiming runtime verification there.

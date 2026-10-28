@@ -32,9 +32,11 @@ the code does; refactors, test fixes, and CI work stay out. Group lines under
 section with a sentence or two on what the release is about.
 
 To release, move the previous version's heading to a link line under `Earlier
-Releases` and drop its body, rename `Unreleased` to `## [X.Y.Z] - YYYY-MM-DD`,
-start a new empty `Unreleased` above it, update the two reference links at the
-bottom, and merge that through a pull request. The release workflow copies the
+Releases` and drop its body, rename `Unreleased` to `## [X.Y.Z]`, start a new
+empty `Unreleased` above it, update the two reference links at the bottom, and
+merge that through a pull request. Headings and links carry no date: one
+written before the tag goes stale, and the tag and its GitHub Release record
+when the version shipped. The release workflow copies the
 tag's section into the GitHub Release as its notes, pointing links to files in
 the repository at the tag's copies, and refuses a tag that has no section, so
 a release cannot go out unexplained.

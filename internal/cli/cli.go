@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Package cli implements homeskillet's command line: argument parsing,
 // process-wide policy such as refusing to run as root, and printed output. It
@@ -14,8 +14,10 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"strconv"
 	"strings"
@@ -30,29 +32,36 @@ import (
 )
 
 var (
-	commands     = []string{"status", "link", "unlink", "setup", "init", "self", "version", "completion", "help"}
-	selfCommands = []string{"install", "use", "list", "remove"}
+	commands        = []string{"status", "link", "unlink", "setup", "init", "check", "wsl", "backups", "self", "version", "completion", "help"}
+	selfCommands    = []string{"install", "use", "list", "remove"}
+	backupsCommands = []string{"list", "purge"}
 	// scoped lists the commands that accept each flag that only some
 	// commands use. Accepting such a flag silently elsewhere would suggest
 	// it changes something there, and --yes in particular approves running
 	// code.
 	scoped = map[string][]string{
-		"repo": {"status", "link", "unlink", "setup", "init"},
+		"repo": {"status", "link", "unlink", "setup", "init", "check"},
 		// init writes only into the repository.
-		"home": {"status", "link", "unlink", "setup", "self"},
-		"yes":  {"setup"},
+		"home": {"status", "link", "unlink", "setup", "self", "backups"},
+		// --yes approves running steps, or deleting backups, without asking.
+		"yes": {"setup", "backups"},
 		// self installs the running build and version prints its own
 		// details, so neither acts for another platform. init writes it
 		// into the starter manifest.
 		"platform": {"status", "link", "unlink", "setup", "init"},
 		"prefix":   {"self"},
-		// setup and version keep nothing in the data directory.
-		"data-dir": {"status", "link", "unlink", "self"},
+		// version keeps nothing in the data directory; setup keeps the record
+		// of steps with inputs there.
+		"data-dir": {"status", "link", "unlink", "setup", "self", "backups"},
 		// Only link replaces anything, and only by moving it aside.
-		"force": {"link"},
+		"force":      {"link"},
+		"older-than": {"backups"},
+		// Only wsl reaches into a WSL distribution.
+		"distribution": {"wsl"},
+		"from":         {"wsl"},
 		// setup must show every step exactly before it is approved, so it
 		// cannot be quiet.
-		"quiet": {"status", "link", "unlink", "self", "init"},
+		"quiet": {"status", "link", "unlink", "self", "init", "check"},
 	}
 	// selecting lists the commands that take files after the repository,
 	// acting on those alone.
@@ -88,6 +97,21 @@ type invocation struct {
 	// platform is --platform, the platform to act for instead of the
 	// detected one.
 	platform string
+	// olderThan is --older-than, which limits backups to those moved longer
+	// ago (see parseAge).
+	olderThan string
+	// wsl holds what only the wsl command reads (see parseWSL).
+	wsl *wslOptions
+}
+
+// wslOptions are the wsl command's own: the distribution (--distribution,
+// default WSL's own), the Linux build to install (--from), and the
+// arguments passed on to homeskillet in the distribution after the
+// repository.
+type wslOptions struct {
+	distribution string
+	from         string
+	forward      []string
 }
 
 // Run executes one homeskillet command. args excludes the program name. input
@@ -127,11 +151,14 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	// install" would put a binary the user owns on root's PATH. The checks in
 	// package trust already reject both; refusing root outright also makes
 	// managing root's own dotfiles, as in a container, a deliberate choice.
-	if os.Geteuid() == 0 && !inv.root {
-		return errors.New("refusing to run as root; pass --allow-root to manage root's own dotfiles")
+	// On Windows, an elevated process is refused the same way: it may change
+	// what every user runs, and the checks cannot tell it from the same user
+	// unelevated, since both have one identity.
+	if privileged() && !inv.root {
+		return errors.New(rootRefusal)
 	}
-	if inv.command == "init" {
-		return runInit(inv, output)
+	if handled, err := runApart(ctx, inv, input, output, diagnostics); handled {
+		return err
 	}
 	homePath := inv.home
 	if homePath == "" {
@@ -149,8 +176,8 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if err := trust.CheckLocation(home); err != nil {
 		return fmt.Errorf("home: %w", err)
 	}
-	if inv.command == "self" {
-		return runSelf(inv, home, output)
+	if handled, err := runInHome(inv, home, input, output); handled {
+		return err
 	}
 	repo, manifest, remembered, err := openRepository(inv, home)
 	if err != nil {
@@ -161,37 +188,84 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 		return err
 	}
 	files, steps := manifest.FilesFor(platform), manifest.SetupFor(platform)
-	// A repository whose platforms leave out this one would otherwise do
-	// nothing and report success, as if everything were linked. unlink
-	// still runs, so links made before the platforms changed can be removed.
-	// A repository with nothing in it yet, as init leaves one, has nothing
-	// for its platforms to leave out.
-	filtered := len(manifest.Files)+len(manifest.Setup) > 0
-	if len(files) == 0 && len(steps) == 0 && len(manifest.Platforms) > 0 && filtered && inv.command != "unlink" {
-		return fmt.Errorf("nothing in %s applies to %s: its platforms are %s; pass --platform to act for another platform",
-			repo, platform, strings.Join(manifest.Platforms, ", "))
+	if err := leftOut(inv.command, manifest, len(files)+len(steps), repo, platform); err != nil {
+		return err
 	}
 	// A person at a terminal sees first what is running and where; scripts
 	// get only the results (see terminal).
 	v := newView(output)
 	if v != nil {
+		v.copyOf = describeCopy(inv, home, repo)
 		if err := v.header(output, inv.command, repo, remembered, home, platform, inv.dryRun); err != nil {
 			return err
 		}
+	}
+	data, err := dataDir(inv, home)
+	if err != nil {
+		return err
 	}
 	if inv.command == "setup" {
 		if steps, err = selectSteps(inv.steps, steps, manifest.Setup, repo, platform); err != nil {
 			return err
 		}
 		return runSetup(ctx, steps, repo, home, inv.dryRun, setup.Options{
-			Repo: repo, Home: home, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
+			Repo: repo, Home: home, Data: data, Again: len(inv.steps) > 0, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
 		}, v)
 	}
-	data, err := dataDir(inv, home)
-	if err != nil {
-		return err
+	// A person who has just linked a repository may not know it has setup
+	// steps waiting, such as the one that makes their shell load what was
+	// linked, so the view says what to run next.
+	if v != nil && (inv.command == "link" || inv.command == "status") && len(steps) > 0 {
+		v.next = nextSetup(steps, repo, home, data, remembered)
 	}
 	return runLinks(inv, files, repo, home, data, output, diagnostics, v)
+}
+
+// runApart runs the commands that do not act on a repository and a home
+// here, as the rest do, and reports whether inv was one of them: init and
+// check, which need only the repository, and wsl and the copy and record it
+// sends, which work in a WSL distribution's home.
+func runApart(ctx context.Context, inv invocation, input io.Reader, output, diagnostics io.Writer) (bool, error) {
+	switch inv.command {
+	case "init":
+		return true, runInit(inv, output)
+	case "check":
+		return true, runCheck(inv, output)
+	case "wsl":
+		return true, runWSL(ctx, inv, input, output, diagnostics)
+	case mirrorCommand:
+		return true, runMirror(inv, input, output)
+	case windowsBuildCommand:
+		return true, runWindowsBuild(inv)
+	}
+	return false, nil
+}
+
+// runInHome runs the commands that act on the home's own files rather than
+// a repository's, and reports whether inv was one of them: self, on installed
+// versions, and backups, on what link --force moved aside.
+func runInHome(inv invocation, home string, input io.Reader, output io.Writer) (bool, error) {
+	switch inv.command {
+	case "self":
+		return true, runSelf(inv, home, output)
+	case "backups":
+		return true, runBackups(inv, home, input, output)
+	}
+	return false, nil
+}
+
+// leftOut returns an error when the repository has files or steps, yet none
+// apply to platform, applying being how many do. Such a repository would otherwise
+// do nothing and report success, as if everything were linked. unlink is not
+// checked, so links made before the platforms changed can be removed, and a
+// repository with nothing in it yet, as init leaves one, has nothing for its
+// platforms to leave out.
+func leftOut(command string, manifest config.Manifest, applying int, repo string, platform config.Platform) error {
+	if command == "unlink" || applying > 0 || len(manifest.Platforms) == 0 || len(manifest.Files)+len(manifest.Setup) == 0 {
+		return nil
+	}
+	return fmt.Errorf("nothing in %s applies to %s: its platforms are %s; pass --platform to act for another platform",
+		repo, platform, strings.Join(manifest.Platforms, ", "))
 }
 
 // writeVersion writes the version and build details, for version.
@@ -205,7 +279,7 @@ func writeVersion(output io.Writer) error {
 	if detected.String() != info.Platform {
 		hostLine := detected.String()
 		if translated {
-			hostLine += " (translated by Rosetta; install a " + detected.String() + " build)"
+			hostLine += " (translated by " + translator() + "; install a " + detected.String() + " build)"
 		}
 		platform = fmt.Sprintf("  %-10s %s\n  %-10s %s\n", "built for:", info.Platform, "host:", hostLine)
 	}
@@ -240,10 +314,8 @@ func choosePlatform(inv invocation) (config.Platform, error) {
 // parse reads a command line. It returns an invocation with no command when
 // help was requested, after writing the help text to output.
 func parse(args []string, output io.Writer) (invocation, error) {
-	// Completion scripts pass the line being completed as it stands, options
-	// and all, so it is never parsed as a command line here.
-	if len(args) > 0 && args[0] == completeCommand {
-		return invocation{command: completeCommand, words: args[1:]}, nil
+	if inv, hidden, err := parseHidden(args); hidden {
+		return inv, err
 	}
 	// --version is the conventional spelling of the version command.
 	if len(args) == 1 && (args[0] == "--version" || args[0] == "-version") {
@@ -263,19 +335,14 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		args = append([]string{inv.command}, args...)
 		inv.command = "status"
 	}
-	// The help text covers every command, so a command named after help gets
-	// the same text.
-	if inv.command == "help" {
-		if len(args) > 1 || len(args) == 1 && !slices.Contains(commands, args[0]) && args[0] != "--help" && args[0] != "-h" {
-			return invocation{}, fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
-		}
-		return invocation{}, help(output, newFlags(&inv))
+	switch inv.command {
+	case "help":
+		return parseHelp(args, output)
+	case "wsl":
+		return parseWSL(args, output)
 	}
-	if inv.command == "self" {
+	if _, ok := subcommands[inv.command]; ok {
 		inv.sub, args = word(args, "")
-		if inv.sub != "" && !slices.Contains(selfCommands, inv.sub) {
-			return invocation{}, fmt.Errorf("unknown command self %s; use self %s", inv.sub, strings.Join(selfCommands, ", self "))
-		}
 	}
 	flags := newFlags(&inv)
 	operands, err := parseFlags(flags, args)
@@ -316,12 +383,8 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		inv.repo, operands = operands[0], operands[1:]
 		inv.repoGiven = true
 	}
-	// self --dry-run list: the subcommand may follow options.
-	if inv.command == "self" && inv.sub == "" && len(operands) > 0 {
-		inv.sub, operands = operands[0], operands[1:]
-		if !slices.Contains(selfCommands, inv.sub) {
-			return invocation{}, fmt.Errorf("unknown command self %s; use self %s", inv.sub, strings.Join(selfCommands, ", self "))
-		}
+	if operands, err = takeSubcommand(&inv, operands); err != nil {
+		return invocation{}, err
 	}
 	switch {
 	case misplaced != nil:
@@ -341,13 +404,63 @@ func parse(args []string, output io.Writer) (invocation, error) {
 	case (inv.command == "version" || inv.command == "completion") && flags.NFlag() != 0:
 		return invocation{}, fmt.Errorf("%s takes no options", inv.command)
 	case inv.command == "completion" && inv.operand == "":
-		return invocation{}, errors.New("completion needs a shell: bash or zsh")
+		return invocation{}, fmt.Errorf("completion needs a shell: %s", strings.Join(slices.Sorted(maps.Keys(completionScripts)), ", "))
 	case inv.command == "self" && inv.sub == "":
 		return invocation{}, fmt.Errorf("self needs a command: %s", strings.Join(selfCommands, ", "))
 	case (inv.sub == "use" || inv.sub == "remove") && inv.operand == "":
 		return invocation{}, fmt.Errorf("self %s needs a version", inv.sub)
 	}
 	return inv, nil
+}
+
+// subcommands lists, for each command that takes a command of its own after
+// it, the ones it takes.
+var subcommands = map[string][]string{"self": selfCommands, "backups": backupsCommands}
+
+// takeSubcommand takes the command after self or backups from operands when
+// options came first, as in self --dry-run list, and checks it.
+func takeSubcommand(inv *invocation, operands []string) ([]string, error) {
+	allowed, ok := subcommands[inv.command]
+	if !ok {
+		return operands, nil
+	}
+	if inv.sub == "" && len(operands) > 0 {
+		inv.sub, operands = operands[0], operands[1:]
+	}
+	if inv.sub != "" && !slices.Contains(allowed, inv.sub) {
+		return nil, fmt.Errorf("unknown command %s %s; use %s %s", inv.command, inv.sub, inv.command, strings.Join(allowed, ", "+inv.command+" "))
+	}
+	return operands, nil
+}
+
+// parseHidden parses the lines of the hidden commands, which are not
+// command lines with options, and reports whether args is one.
+func parseHidden(args []string) (invocation, bool, error) {
+	if len(args) == 0 {
+		return invocation{}, false, nil
+	}
+	switch args[0] {
+	// Completion scripts pass the line being completed as it stands, options
+	// and all, so it is never parsed as a command line here.
+	case completeCommand:
+		return invocation{command: completeCommand, words: args[1:]}, true, nil
+	case mirrorCommand:
+		inv, err := parseMirror(args[1:])
+		return inv, true, err
+	case windowsBuildCommand:
+		inv, err := parseWindowsBuild(args[1:])
+		return inv, true, err
+	}
+	return invocation{}, false, nil
+}
+
+// parseHelp writes the help text for help. It covers every command, so a
+// command named after help gets the same text.
+func parseHelp(args []string, output io.Writer) (invocation, error) {
+	if len(args) > 1 || len(args) == 1 && !slices.Contains(commands, args[0]) && args[0] != "--help" && args[0] != "-h" {
+		return invocation{}, fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
+	}
+	return invocation{}, help(output, newFlags(new(invocation)))
 }
 
 // newFlags returns the options, set to write into inv. Their usage strings
@@ -364,10 +477,16 @@ func newFlags(inv *invocation) *flag.FlagSet {
 	flags.BoolVar(&inv.quiet, "quiet", false, "Print only errors; the exit status reports the result (not for setup)")
 	flags.StringVar(&inv.data, "data-dir", "", "Keep the link record, backups, and installed versions in `DIR`, relative to the home unless absolute "+
 		"(default: $"+dataDirVariable+", else .local/share/homeskillet)")
-	flags.BoolVar(&inv.root, "allow-root", false, "Allow running as root, for root's own dotfiles; root must own everything homeskillet reads")
+	flags.BoolVar(&inv.root, "allow-root", false, "Allow running as root, or elevated on Windows, for root's own dotfiles; root must own everything homeskillet reads")
 	flags.BoolVar(&inv.force, "force", false, "Move conflicting files into a backup, then link")
-	flags.BoolVar(&inv.yes, "yes", false, "Run every pending step without asking")
+	flags.BoolVar(&inv.yes, "yes", false, "Run every pending step, or for backups purge delete every backup listed, without asking")
+	flags.StringVar(&inv.olderThan, "older-than", "", "Only backups moved more than `AGE` ago, in days or hours, such as 30d or 12h")
 	flags.StringVar(&inv.prefix, "prefix", "", "Install into `DIR`/bin (default: .local in the home directory)")
+	if inv.wsl == nil {
+		inv.wsl = new(wslOptions)
+	}
+	flags.StringVar(&inv.wsl.distribution, "distribution", "", "Act in the WSL distribution `NAME` (default: WSL's default)")
+	flags.StringVar(&inv.wsl.from, "from", "", "For wsl install, install the Linux build in `FILE`, as make cross builds, instead of downloading this version's release")
 	return flags
 }
 
@@ -381,10 +500,21 @@ func word(args []string, fallback string) (string, []string) {
 }
 
 // isPath reports whether a word in place of a command is plainly a path: . or
-// .., or anything containing a slash. It looks only at the text, so whether a
+// .., or anything containing a slash, and on Windows a backslash or a drive
+// too, as in .\dotfiles or C:dotfiles. It looks only at the text, so whether a
 // word is read as a command never depends on what the current directory holds.
 func isPath(word string) bool {
-	return word == "." || word == ".." || strings.ContainsRune(word, '/')
+	return word == "." || word == ".." || strings.ContainsRune(word, '/') ||
+		runtime.GOOS == "windows" && strings.ContainsAny(word, `\:`)
+}
+
+// homeRelative returns the rest of name after ~ when name is ~ or starts
+// with ~ and a separator, as ~/.bashrc does, or ~\.bashrc on Windows; ok
+// reports whether it does. Shells expand ~ only at the start of a word, so
+// homeskillet expands it where they leave it alone, as after --data-dir=.
+func homeRelative(name string) (rest string, ok bool) {
+	rest, ok = strings.CutPrefix(name, "~")
+	return rest, ok && (rest == "" || os.IsPathSeparator(rest[0]))
 }
 
 // parseFlags parses args with flags, accepting options both before and after
@@ -419,9 +549,17 @@ func parseFlags(flags *flag.FlagSet, args []string) ([]string, error) {
 // A named directory is never replaced by a recorded one. But naming the home
 // itself is an easy slip, as if the argument chose where to link, so that
 // error also names the repositories linked into it.
+//
+// An unnamed current directory that homeskillet refuses to act on (see
+// trust.CheckLocation) is no more the repository than one with nothing in
+// it, so it falls back the same way. Windows programs run from a WSL shell
+// start in the distribution's files, so homeskillet.exe there still finds
+// the Windows repository.
 func openRepository(inv invocation, home string) (repo string, manifest config.Manifest, remembered bool, err error) {
 	repo, manifest, err = loadRepository(inv.repo)
-	if err == nil || !errors.Is(err, config.ErrNothingToManage) || inv.repoGiven && repo != home {
+	var refused refusedLocation
+	unusable := errors.Is(err, config.ErrNothingToManage) || !inv.repoGiven && errors.As(err, &refused)
+	if err == nil || !unusable || inv.repoGiven && repo != home {
 		return repo, manifest, false, err
 	}
 	var recorded []string
@@ -465,11 +603,17 @@ func loadRepository(path string) (string, config.Manifest, error) {
 		return "", config.Manifest{}, fmt.Errorf("repository: %w", err)
 	}
 	if err := trust.CheckLocation(repo); err != nil {
-		return "", config.Manifest{}, fmt.Errorf("repository: %w", err)
+		return "", config.Manifest{}, fmt.Errorf("repository: %w", refusedLocation{err})
 	}
 	manifest, err := config.Load(repo)
 	return repo, manifest, err
 }
+
+// refusedLocation is a repository trust.CheckLocation refuses, which
+// openRepository may replace with a recorded one.
+type refusedLocation struct{ error }
+
+func (e refusedLocation) Unwrap() error { return e.error }
 
 // runLinks reports or carries out status, link, or unlink for the files
 // inv.files names, or for every entry when it names none (see matcher). v
@@ -521,6 +665,17 @@ func runLinks(inv invocation, files []config.Entry, repo, home, data string, out
 	// keeps the preview honest.
 	if inv.force {
 		if err := link.CheckForce(plans); err != nil {
+			return err
+		}
+	}
+	// Windows lets a process make symlinks only in Developer Mode. Finding
+	// that out from the first link would leave its directories made, and
+	// under --force files moved, so link asks first, in a dry run too.
+	linking := slices.ContainsFunc(plans, func(plan link.Plan) bool {
+		return plan.State == link.Missing || plan.State == link.Conflict && inv.force
+	})
+	if inv.command == "link" && linking && !blocked {
+		if err := host.CheckSymlinks(); err != nil {
 			return err
 		}
 	}
@@ -632,11 +787,12 @@ func newMatcher(names []string, repo, home string) *matcher {
 	m := &matcher{names: names}
 	for _, name := range names {
 		var paths []string
+		rest, homeName := homeRelative(name)
 		switch {
 		case filepath.IsAbs(name):
 			paths = []string{filepath.Clean(name)}
-		case name == "~" || strings.HasPrefix(name, "~/"):
-			paths = []string{filepath.Join(home, name[1:])}
+		case homeName:
+			paths = []string{filepath.Join(home, rest)}
 		default:
 			paths = []string{filepath.Join(home, name), filepath.Join(repo, name)}
 		}
@@ -701,8 +857,8 @@ func selectSteps(names []string, applicable, all []config.Step, repo string, pla
 			return nil, fmt.Errorf("setup step %s is not for %s", name, platform)
 		default:
 			var known []string
-			for _, step := range applicable {
-				known = append(known, step.Name)
+			for i := range applicable {
+				known = append(known, applicable[i].Name)
 			}
 			return nil, fmt.Errorf("%s has no setup step %s; its steps for %s are %s\n  to name a repository, write it as a path, such as ./%s",
 				repo, name, platform, cmp.Or(strings.Join(known, ", "), "none"), name)
@@ -712,11 +868,17 @@ func selectSteps(names []string, applicable, all []config.Step, repo string, pla
 }
 
 // runSetup lists the steps for a dry run, grouped for a person at a terminal
-// (v) or one line each for scripts, or runs them.
+// (v) or one line each for scripts, or runs them. Steps a person named are
+// offered even when done (see setup.Options.Again), and listed so.
 func runSetup(ctx context.Context, steps []config.Step, repo, home string, dryRun bool, opts setup.Options, v *view) error {
-	plans, err := setup.Prepare(steps, repo, home)
+	plans, err := setup.Prepare(steps, repo, home, opts.Data)
 	if err != nil {
 		return err
+	}
+	if opts.Again {
+		for i := range plans {
+			plans[i].State = setup.Pending
+		}
 	}
 	if !dryRun {
 		if v != nil {
@@ -766,7 +928,7 @@ func runSelf(inv invocation, home string, output io.Writer) error {
 		}
 		err = layout.Install(executable, version.Current(), inv.dryRun, output)
 		if err == nil && !onPath(layout.Bin) {
-			_, err = fmt.Fprintf(output, "note\t%s is not on PATH; add it in your shell startup file\n", layout.Bin)
+			_, err = fmt.Fprintf(output, notOnPathLine, layout.Bin, pathAdvice)
 		}
 	case "use":
 		err = layout.Use(inv.operand, inv.dryRun, output)
@@ -787,7 +949,7 @@ func selfLayout(inv invocation, home string) (install.Layout, error) {
 	if prefix == "" {
 		prefix = filepath.Join(home, ".local")
 	}
-	prefix, err := filepath.Abs(prefix)
+	prefix, err := filepath.Abs(underHome(prefix, home))
 	if err != nil {
 		return install.Layout{}, err
 	}
@@ -850,6 +1012,11 @@ func listVersions(layout install.Layout, output io.Writer) error {
 	return nil
 }
 
+// notOnPathLine is the note self install writes when the directory it
+// installs into is not on PATH, with pathAdvice. wsl install rewrites it
+// (see installNotes).
+const notOnPathLine = "note\t%s is not on PATH; %s\n"
+
 // onPath reports whether dir is on PATH. Entries are compared after
 // resolving symlinks, so one that reaches dir through a symlink counts.
 func onPath(dir string) bool {
@@ -857,7 +1024,7 @@ func onPath(dir string) bool {
 		if entry == "" {
 			continue
 		}
-		if resolved, err := filepath.EvalSymlinks(entry); err == nil && resolved == dir {
+		if resolved, err := filepath.EvalSymlinks(entry); err == nil && trust.SamePath(resolved, dir) {
 			return true
 		}
 	}
@@ -886,7 +1053,7 @@ const dataDirVariable = "HOMESKILLET_DATA_DIR"
 func dataDir(inv invocation, home string) (string, error) {
 	value := inv.data
 	if value == "" && inv.command == "self" && inv.prefix != "" {
-		prefix, err := filepath.Abs(inv.prefix)
+		prefix, err := filepath.Abs(underHome(inv.prefix, home))
 		if err != nil {
 			return "", err
 		}
@@ -898,7 +1065,7 @@ func dataDir(inv invocation, home string) (string, error) {
 	if value == "" {
 		value = filepath.Join(".local", "share", install.Binary)
 	}
-	if rest, ok := strings.CutPrefix(value, "~"); ok && (rest == "" || rest[0] == '/') {
+	if rest, ok := homeRelative(value); ok {
 		value = "." + rest
 	}
 	if !filepath.IsAbs(value) {
@@ -914,10 +1081,40 @@ func dataDir(inv invocation, home string) (string, error) {
 	return data, nil
 }
 
-// canonicalDirectory makes path absolute and resolves its symlinks. Packages
-// link and trust compare path strings to decide containment and ownership,
-// which is only sound for canonical paths.
+// underHome returns value with a leading ~ (see homeRelative) meaning home,
+// the selected home, as for --prefix and --data-dir.
+func underHome(value, home string) string {
+	if rest, ok := homeRelative(value); ok {
+		return filepath.Join(home, rest)
+	}
+	return value
+}
+
+// expandHome returns path with a leading ~ (see homeRelative) replaced by
+// the user's own home, as Unix shells do, but cmd never and PowerShell not
+// everywhere, so ~/dotfiles, or ~\dotfiles on Windows, names the same
+// directory from any shell. A ~ anywhere else, or ~user, is left alone.
+func expandHome(path string) (string, error) {
+	rest, ok := homeRelative(path)
+	if !ok {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, rest), nil
+}
+
+// canonicalDirectory makes path absolute, with a leading ~ expanded (see
+// expandHome), and resolves its symlinks. Packages link and trust compare
+// path strings to decide containment and ownership, which is only sound for
+// canonical paths.
 func canonicalDirectory(path string) (string, error) {
+	path, err := expandHome(path)
+	if err != nil {
+		return "", err
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return "", err

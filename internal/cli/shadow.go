@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Finding linked commands that a shell would run instead of another of the
 // same name on PATH, such as a ~/.local/bin/sudo, which status and link point
@@ -12,12 +12,8 @@ import (
 	"slices"
 
 	"github.com/nicholashoule/homeskillet/internal/link"
+	"github.com/nicholashoule/homeskillet/internal/trust"
 )
-
-// userBins are the directories in home that login scripts on common systems,
-// such as Fedora's .bashrc and Ubuntu's .profile, put at the front of PATH
-// once they exist, which linking into them may be what makes them do.
-var userBins = []string{filepath.Join(".local", "bin"), "bin"}
 
 // shadowed returns, for each plan that is or will be linked where a shell
 // finds it before a command of the same name later on PATH, and after none
@@ -45,7 +41,7 @@ func shadowed(plans []link.Plan, home string, force bool) map[string]string {
 		if resolved, err := filepath.EvalSymlinks(dir); err == nil {
 			dir = resolved
 		}
-		if !slices.Contains(dirs, dir) {
+		if !slices.ContainsFunc(dirs, func(listed string) bool { return trust.SamePath(listed, dir) }) {
 			dirs = append(dirs, dir)
 		}
 	}
@@ -54,14 +50,14 @@ func shadowed(plans []link.Plan, home string, force bool) map[string]string {
 		if plan.State != link.Linked && plan.State != link.Missing && (!force || plan.State != link.Conflict) {
 			continue
 		}
-		at := slices.Index(dirs, filepath.Dir(plan.Target))
+		at := slices.IndexFunc(dirs, func(dir string) bool { return trust.SamePath(dir, filepath.Dir(plan.Target)) })
 		source, err := os.Stat(plan.Source)
-		if at < 0 || err != nil || !executable(source) {
+		if at < 0 || err != nil || !executable(plan.Target, source) {
 			continue
 		}
 		// A command of the same name earlier on PATH runs instead of the
 		// link, so the link takes the place of nothing.
-		name := filepath.Base(plan.Target)
+		name := commandName(plan.Target)
 		if command(dirs[:at], name, source) != "" {
 			continue
 		}
@@ -72,21 +68,15 @@ func shadowed(plans []link.Plan, home string, force bool) map[string]string {
 	return found
 }
 
-// command returns the first executable named name in dirs, as a shell's
-// search would find it, leaving out source itself, or "" if there is none.
+// command returns the first command named name in dirs, as a shell's search
+// would find it, leaving out source itself, or "" if there is none.
 func command(dirs []string, name string, source os.FileInfo) string {
 	for _, dir := range dirs {
-		path := filepath.Join(dir, name)
-		//nolint:gosec // G703: only stats a command name in a PATH directory, as a shell's search does, and opens nothing
-		if info, err := os.Stat(path); err == nil && executable(info) && !os.SameFile(info, source) {
-			return path
+		for _, path := range candidates(dir, name) {
+			if info, err := os.Stat(path); err == nil && executable(path, info) && !os.SameFile(info, source) {
+				return path
+			}
 		}
 	}
 	return ""
-}
-
-// executable reports whether info describes a regular file that someone may
-// execute, as a shell's command search requires.
-func executable(info os.FileInfo) bool {
-	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }

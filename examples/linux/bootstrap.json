@@ -1,0 +1,13 @@
+{
+  "platforms": ["linux"],
+  "setup": [
+    {
+      "name": "packages",
+      "run": [
+        ["sudo", "apt-get", "update"],
+        ["xargs", "--arg-file=home/.config/apt/packages", "sudo", "apt-get", "install", "--yes"]
+      ],
+      "inputs": ["home/.config/apt/packages"]
+    }
+  ]
+}

@@ -1,0 +1,4 @@
+# Ignored in every Git repository.
+Thumbs.db
+desktop.ini
+.env

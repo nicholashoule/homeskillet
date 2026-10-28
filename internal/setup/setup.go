@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Package setup runs the setup steps a manifest declares, such as installing a
 // prompt, a font, or a language toolchain, after the user has reviewed and
@@ -15,12 +15,15 @@
 //   - Steps run as argument vectors, never through an implicit shell, so
 //     shell metacharacters in an argument are inert unless the step itself
 //     invokes a shell for everyone to see.
-//   - HOME is set to the selected home directory, so a trial run against a
-//     scratch home does not install into the real one through tools that
-//     honor HOME. That home's .local/bin is appended to PATH, so one step can
-//     use a program an earlier step installed there (see searchPath).
-//   - Steps approved together with --yes cannot reach the terminal, so sudo
-//     in one cannot use a password cached there (see runDetached).
+//   - HOME is set to the selected home directory, and on Windows USERPROFILE
+//     as well, so a trial run against a scratch home does not install into
+//     the real one through tools that honor them. The directories where
+//     installers put programs, such as that home's .local/bin, are appended
+//     to PATH, so one step can use a program an earlier step installed (see
+//     searchPath).
+//   - Steps approved together with --yes get no input, and on Linux and
+//     macOS cannot reach the terminal, so sudo in one cannot use a password
+//     cached there (see runDetached).
 package setup
 
 import (
@@ -31,11 +34,11 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
-	"os/signal"
 	"path/filepath"
+	"runtime"
+	"slices"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
@@ -47,7 +50,8 @@ type State string
 
 const (
 	// Done means the step's Creates path exists or its Provides command is on
-	// PATH, so it is not offered again.
+	// PATH, and for a step with inputs, that it last ran with them as they
+	// are (see fingerprint), so it is not offered again.
 	Done State = "done"
 	// Pending means the step will be offered when setup runs.
 	Pending State = "pending"
@@ -61,17 +65,25 @@ type Plan struct {
 	// path, or the program its Provides names. Output shows it, so a step
 	// that is not offered still says why.
 	Found string
+	// Ran is, for a Done step with inputs, when it last ran with them as they
+	// are now, which output shows when there is nothing to show as Found.
+	Ran time.Time
+	// fingerprint is, for a step with inputs, its fingerprint as prepared,
+	// recorded once the step succeeds.
+	fingerprint string
 }
 
 // Prepare checks that the repository is private and reports each step's
-// state. repo and home must be absolute with symlinks resolved. Deciding a
-// step's state never runs anything: it only looks for files and searches
-// PATH.
+// state. repo and home must be absolute with symlinks resolved, and data is
+// the data directory holding the record of steps with inputs (see
+// fingerprint), which may be empty only when no step has inputs. Deciding a
+// step's state never runs anything: it only looks for files, searches PATH,
+// and reads inputs and the record.
 //
 // With no steps, Prepare returns nothing and skips the checks. They protect
 // what a step runs, so a repository without setup steps for this platform,
 // or without a manifest at all, must not fail setup over files it never uses.
-func Prepare(steps []config.Step, repo, home string) ([]Plan, error) {
+func Prepare(steps []config.Step, repo, home, data string) ([]Plan, error) {
 	if len(steps) == 0 {
 		return nil, nil
 	}
@@ -93,36 +105,89 @@ func Prepare(steps []config.Step, repo, home string) ([]Plan, error) {
 	if err := trust.CheckDirectory(home); err != nil {
 		return nil, err
 	}
+	rec, err := recordFor(data, slices.ContainsFunc(steps, hasInputs))
+	if err != nil {
+		return nil, err
+	}
 	plans := make([]Plan, 0, len(steps))
-	for _, step := range steps {
-		state, found, err := stepState(step, home)
+	for i := range steps {
+		plan, err := stepState(steps[i], repo, home, rec)
 		if err != nil {
 			return nil, err
 		}
-		plans = append(plans, Plan{Step: step, State: state, Found: found})
+		plans = append(plans, plan)
 	}
 	return plans, nil
 }
 
-// stepState reports whether step is done, and if so the file that shows it
-// (see Plan.Found).
-func stepState(step config.Step, home string) (State, string, error) {
+// hasInputs reports whether step has inputs, which the record decides.
+func hasInputs(step config.Step) bool {
+	return step.Inputs != nil
+}
+
+// stepState returns step's plan: whether it is done, and if so what shows
+// it. A step with inputs is done only when the record, rec, says it last ran
+// with the fingerprint it has now, and its Creates or Provides, when it has
+// them, also say so.
+func stepState(step config.Step, repo, home string, rec record) (Plan, error) {
+	plan := Plan{Step: step, State: Pending}
+	done, found, err := present(step, home)
+	if err != nil {
+		return Plan{}, err
+	}
+	if !hasInputs(step) {
+		if done {
+			plan.State, plan.Found = Done, found
+		}
+		return plan, nil
+	}
+	if plan.fingerprint, err = fingerprint(step, repo); err != nil {
+		return Plan{}, fmt.Errorf("setup step %s: %w", step.Name, err)
+	}
+	last, ok := rec.last(home, repo, step.Name)
+	if ok && last.Fingerprint == plan.fingerprint && (done || step.Creates == "" && step.Provides == "") {
+		plan.State, plan.Found, plan.Ran = Done, found, last.Time
+	}
+	return plan, nil
+}
+
+// present reports whether step's Creates path exists or its Provides command
+// is found, and which.
+func present(step config.Step, home string) (bool, string, error) {
 	if step.Creates != "" {
-		path := filepath.Join(home, step.Creates)
-		_, err := os.Lstat(path)
+		path, err := createsPath(step.Creates, home)
+		if err != nil {
+			return false, "", fmt.Errorf("setup step %s: %w", step.Name, err)
+		}
+		_, err = os.Lstat(path)
 		if err == nil {
-			return Done, path, nil
+			return true, path, nil
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
-			return "", "", err
+			return false, "", err
 		}
 	}
 	if step.Provides != "" {
 		if program := provided(step.Provides, home); program != "" {
-			return Done, program, nil
+			return true, program, nil
 		}
 	}
-	return Pending, "", nil
+	return false, "", nil
+}
+
+// createsPath returns the file a step's creates names: a path in home, or,
+// after config.DocumentsPrefix, a path in the user's Documents folder (see
+// documents).
+func createsPath(creates, home string) (string, error) {
+	rest, ok := strings.CutPrefix(creates, config.DocumentsPrefix)
+	if !ok {
+		return filepath.Join(home, creates), nil
+	}
+	dir, err := documents(home)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, filepath.FromSlash(rest)), nil
 }
 
 // Options configures Run. Repo and Home must be set, as Prepare received
@@ -131,6 +196,13 @@ func stepState(step config.Step, home string) (State, string, error) {
 type Options struct {
 	Repo string // working directory for every step
 	Home string // HOME for every step
+	// Data is the data directory, as Prepare received it, where a step with
+	// inputs is recorded once it succeeds.
+	Data string
+	// Again offers every step, even one found done, as for steps a person
+	// named: a package uninstalled by hand leaves its list unchanged, and
+	// naming the step is how to install it again.
+	Again bool
 	// Yes approves every pending step without asking. It is for unattended
 	// bootstrap, such as a Dockerfile, where whoever wrote the build already
 	// chose the repository and its revision. Steps then get no input and no
@@ -183,11 +255,15 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 	if opts.Report == nil {
 		opts.Report = func(outcome string, plan Plan) error { return report(opts.Output, outcome, plan) }
 	}
+	rec, err := recordFor(opts.Data, slices.ContainsFunc(plans, func(plan Plan) bool { return hasInputs(plan.Step) }))
+	if err != nil {
+		return err
+	}
 	for i := range plans {
 		plan := &plans[i]
 		// Every step is accounted for, so one that is not offered still
 		// says why rather than vanishing from the output.
-		if plan.State == Done {
+		if plan.State == Done && !opts.Again {
 			if err := opts.Report(string(Done), *plan); err != nil {
 				return err
 			}
@@ -197,12 +273,12 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		// that also brings the program a later step provides, or changed
 		// the repository, whose rules every step relies on. Both are checked
 		// again before each step rather than once for the whole run.
-		state, found, err := stepState(plan.Step, opts.Home)
+		current, err := stepState(plan.Step, opts.Repo, opts.Home, rec)
 		if err != nil {
 			return err
 		}
-		if state == Done {
-			if err := opts.Report(string(Done), Plan{Step: plan.Step, State: Done, Found: found}); err != nil {
+		if current.State == Done && !opts.Again {
+			if err := opts.Report(string(Done), current); err != nil {
 				return err
 			}
 			continue
@@ -230,6 +306,13 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 		}
 		if err := execute(ctx, plan.Step, opts); err != nil {
 			return fmt.Errorf("setup step %s: %w", plan.Step.Name, err)
+		}
+		// The fingerprint taken before the step ran, of what was approved:
+		// inputs changed meanwhile offer it again next time.
+		if hasInputs(plan.Step) {
+			if rec, err = recordRan(opts.Data, opts.Home, opts.Repo, plan.Step.Name, current.fingerprint); err != nil {
+				return fmt.Errorf("setup step %s ran, but recording it failed, so it will be offered again: %w", plan.Step.Name, err)
+			}
 		}
 		if err := opts.Report("ran", *plan); err != nil {
 			return err
@@ -267,10 +350,14 @@ func List(w io.Writer, plan Plan) error {
 }
 
 // Detail returns what to show beside a step in a listing: for a Done step the
-// file or program that makes it done, and for a Pending step its commands,
-// in shell quoting, separated by "; " when there are several. The prompt
-// before a step runs shows them one per line instead (see Describe).
+// file or program that makes it done, or for a step with inputs alone when it
+// last ran with them as they are, and for a Pending step its commands, in
+// shell quoting, separated by "; " when there are several. The prompt before
+// a step runs shows them one per line instead (see Describe).
 func Detail(plan Plan) string {
+	if plan.State == Done && plan.Found == "" && !plan.Ran.IsZero() {
+		return "inputs unchanged since it ran " + plan.Ran.Local().Format("2006-01-02 15:04")
+	}
 	if plan.State == Done {
 		return printable(plan.Found)
 	}
@@ -310,16 +397,22 @@ func executeCommand(ctx context.Context, command []string, opts Options) error {
 	// argv[0] stays the name the user reviewed, not the resolved path.
 	cmd.Args[0] = command[0]
 	cmd.Dir = opts.Repo
-	// Later entries win, so these replace any inherited values.
+	// Later entries win, so these replace any inherited values, on Windows
+	// whatever their case, such as Path for PATH.
 	cmd.Env = append(os.Environ(),
 		"HOME="+opts.Home,
 		"HOMESKILLET_HOME="+opts.Home,
 		"HOMESKILLET_REPO="+opts.Repo,
 		"PATH="+path,
 	)
+	// Windows programs find the profile through USERPROFILE; HOME, which
+	// Windows does not set, is for Git and other programs from Unix.
+	if runtime.GOOS == "windows" {
+		cmd.Env = append(cmd.Env, "USERPROFILE="+opts.Home)
+	}
 	cmd.Stdin, cmd.Stdout, cmd.Stderr = opts.Input, opts.Output, opts.Errors
 	// Unattended, nobody can answer a step that prompts, so it reads end of
-	// input (a nil Stdin is /dev/null) rather than waiting forever.
+	// input (a nil Stdin is the null device) rather than waiting forever.
 	if opts.Yes {
 		cmd.Stdin = nil
 		return runDetached(cmd)
@@ -327,108 +420,19 @@ func executeCommand(ctx context.Context, command []string, opts Options) error {
 	return cmd.Run()
 }
 
-// runDetached runs cmd, a step approved by --yes, in a session of its own,
-// which has no controlling terminal, so the step cannot open /dev/tty either.
-// sudo, doas, and su read passwords from there, and by default remember one
-// per terminal for a few minutes, so in such a step they can neither prompt,
-// which would hang an unattended run, nor run as root on a password the user
-// typed for something else. The kernel enforces this however the step
-// reaches them: through sh -c, a script, or eval of hex or base64 text, all
-// of which defeat any check of the command's words. Steps approved one at a
-// time keep the terminal, as the user has just reviewed each one.
-//
-// It does not stop sudo configured to need no password (NOPASSWD) or to
-// share one cached password across terminals (timestamp_type=global), which
-// the system's administrator chose, nor a graphical password prompt, which
-// the user sees.
-//
-// The terminal sends Ctrl-C to its foreground process group, which the step
-// has left, so interrupts reaching homeskillet while the step runs are passed
-// on to the step's process group. The step leads that group, as Setsid makes
-// it, so a negative process ID reaches everything it started; cancellation
-// stops the whole group the same way.
-//
-// A step need not stop for the signal: a non-interactive shell starts its
-// background jobs ignoring SIGINT, and a step may catch it. So whatever is
-// still running interruptGrace after the first signal is killed, which no
-// process can ignore, and the step fails even if it exited successfully, so
-// setup stops rather than run the commands and steps after it.
-func runDetached(cmd *exec.Cmd) error {
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
-	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
-	// A signal the process was started ignoring, as nohup ignores SIGHUP and
-	// a shell ignores SIGINT for a background job, stays ignored: Notify
-	// would otherwise start delivering it, and the step would die of the
-	// very signal the user shut out. The step inherits the ignoring too.
-	signals := make(chan os.Signal, 1)
-	for _, sig := range []os.Signal{os.Interrupt, syscall.SIGTERM, syscall.SIGHUP} {
-		if !signal.Ignored(sig) {
-			signal.Notify(signals, sig)
-		}
-	}
-	defer signal.Stop(signals)
-	if err := cmd.Start(); err != nil {
-		return err
-	}
-	done, stopped := make(chan struct{}), make(chan struct{})
-	var interrupted os.Signal
-	go func() {
-		defer close(stopped)
-		var kill <-chan time.Time
-		for {
-			select {
-			case received := <-signals:
-				// The step may already have exited, leaving nothing to
-				// signal.
-				if number, ok := received.(syscall.Signal); ok {
-					_ = syscall.Kill(-cmd.Process.Pid, number)
-				}
-				if interrupted == nil {
-					interrupted = received
-					kill = time.After(interruptGrace)
-				}
-			case <-kill:
-				_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-			case <-done:
-				return
-			}
-		}
-	}()
-	err := cmd.Wait()
-	close(done)
-	<-stopped
-	// A signal that arrived as the step finished still counts. Stop first:
-	// once it returns nothing more is sent, so the drain below misses none.
-	signal.Stop(signals)
-	if interrupted == nil {
-		select {
-		case interrupted = <-signals:
-		default:
-		}
-	}
-	if interrupted != nil {
-		// The step may have exited while children that ignore the signal
-		// go on: with output in files rather than pipes, Wait returns as
-		// soon as the leader is gone, before the grace period above fires.
-		// The group keeps its ID while any member lives, so it is killed
-		// here as well; nothing remains to signal otherwise.
-		_ = syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-		return errors.Join(fmt.Errorf("stopped by %v", interrupted), err)
-	}
-	return err
+// confirm asks whether to run the step just described (see Confirm).
+func confirm(input io.Reader, output io.Writer) (bool, error) {
+	return Confirm(input, output, "Run this step?")
 }
 
-// interruptGrace is how long a step run under --yes has to stop after an
-// interrupt before its process group is killed (see runDetached).
-var interruptGrace = 5 * time.Second
-
-// confirm asks whether to run the step just described. Only "y" or "yes"
-// approves. Anything else, including end of input, declines, so a closed or
-// redirected stdin can never approve a step by accident. It reads one byte at
-// a time so it never consumes input that belongs to the step itself.
-func confirm(input io.Reader, output io.Writer) (bool, error) {
+// Confirm asks question, followed by [y/N], and reads the answer from input.
+// Only "y" or "yes" approves. Anything else, including end of input,
+// declines, so a closed or redirected stdin can never approve by accident.
+// It reads one byte at a time so it never consumes input that belongs to a
+// step run after it.
+func Confirm(input io.Reader, output io.Writer, question string) (bool, error) {
 	const maxAnswer = 64
-	if _, err := fmt.Fprint(output, "Run this step? [y/N] "); err != nil {
+	if _, err := fmt.Fprint(output, question+" [y/N] "); err != nil {
 		return false, err
 	}
 	if input == nil {

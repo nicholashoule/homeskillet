@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Tests of the help text and usage errors: every command and option listed
 // once, descriptions in one column, and the line width.

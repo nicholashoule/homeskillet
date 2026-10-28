@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Tests of planning and making links: conflicts, absent sources, overlapping
 // targets, symlink escapes, ownership and permission refusals, and selected
@@ -70,6 +70,7 @@ func states(plans []Plan) []State {
 }
 
 func TestConflicts(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "first", Target: "first"}, {Source: "second", Target: "second"}}
 	for _, kind := range []string{"file", "directory", "foreign-link"} {
 		t.Run(kind, func(t *testing.T) {
@@ -119,6 +120,7 @@ func TestConflicts(t *testing.T) {
 }
 
 func TestMissingSource(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "one", Target: "one"}, {Source: "two", Target: "two"}}
 	repo, home := fixture(t, entries...)
 	two := filepath.Join(home, "two")
@@ -174,6 +176,7 @@ func TestRepositoryTargetRejected(t *testing.T) {
 }
 
 func TestSymlinkEscapes(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "config", Target: ".config/config"}}
 	for _, side := range []string{"source", "target-parent"} {
 		t.Run(side, func(t *testing.T) {
@@ -200,6 +203,7 @@ func TestSymlinkEscapes(t *testing.T) {
 }
 
 func TestRelativeOwnedLink(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "config", Target: "config"}}
 	repo, home := fixture(t, entries...)
 	relative, err := filepath.Rel(home, filepath.Join(repo, "config"))
@@ -215,6 +219,7 @@ func TestRelativeOwnedLink(t *testing.T) {
 }
 
 func TestNewParentsArePrivate(t *testing.T) {
+	requireModes(t)
 	entries := []config.Entry{{Source: "config", Target: ".ssh/config"}}
 	repo, home := fixture(t, entries...)
 	plans, err := Prepare(entries, repo, home, dataDir(home), false)
@@ -230,6 +235,7 @@ func TestNewParentsArePrivate(t *testing.T) {
 }
 
 func TestRepositoryMustBePrivate(t *testing.T) {
+	requireModes(t)
 	entries := []config.Entry{{Source: "home/config", Target: "config"}, {Source: "links/alias", Target: "alias"}}
 	// Paths are relative to the fixture root, the repository's parent.
 	cases := map[string]struct {
@@ -238,7 +244,7 @@ func TestRepositoryMustBePrivate(t *testing.T) {
 	}{
 		"ancestor":            {"", 0o777},
 		"repository":          {"repo", 0o775},
-		"manifest":            {"repo/dotfiles.json", 0o606},
+		"manifest":            {"repo/" + config.FileName, 0o606},
 		"source directory":    {"repo/home", 0o757},
 		"source":              {"repo/home/config", 0o620},
 		"symlink directory":   {"repo/links", 0o777},
@@ -290,6 +296,7 @@ func TestRepositoryMustBePrivate(t *testing.T) {
 }
 
 func TestTargetDirectoriesMustBePrivate(t *testing.T) {
+	requireModes(t)
 	entries := []config.Entry{{Source: "config", Target: ".config/app/config"}}
 	// Paths are relative to home. .config/app does not exist yet, and link
 	// creates it private, so only directories that already exist matter.
@@ -344,6 +351,7 @@ func TestSystemLocationsRefused(t *testing.T) {
 }
 
 func TestNilLog(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "config", Target: "config"}}
 	repo, home := fixture(t, entries...)
 	plans, err := Prepare(entries, repo, home, dataDir(home), false)
@@ -362,6 +370,7 @@ func TestNilLog(t *testing.T) {
 }
 
 func TestEverySymlinkHopIsChecked(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "home/entry", Target: "entry"}}
 	for name, hop := range map[string]func(t *testing.T, repo string) string{
 		// entry -> outside/hop -> repo/real: the final destination is
@@ -380,9 +389,7 @@ func TestEverySymlinkHopIsChecked(t *testing.T) {
 			if err := os.Mkdir(dir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			if err := os.Chmod(dir, 0o777); err != nil {
-				t.Fatal(err)
-			}
+			makeShared(t, dir)
 			return filepath.Join(dir, "hop")
 		},
 	} {
@@ -466,6 +473,7 @@ func TestForceMovesNoDirectories(t *testing.T) {
 // link's place after Prepare looked is left alone: unlink removes symlinks
 // only, never anything homeskillet did not create.
 func TestRemoveNeverDeletesDirectories(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)
@@ -523,6 +531,7 @@ func TestBackupRechecksTargets(t *testing.T) {
 // repository: it removes symlinks in home and runs nothing, so the source no
 // longer matters.
 func TestUnlinkIgnoresReplacedSources(t *testing.T) {
+	requireSymlinks(t)
 	entries := []config.Entry{{Source: "a", Target: "a"}, {Source: "b", Target: "b"}, {Source: "c", Target: "c"}}
 	repo, home := fixture(t, entries...)
 	apply(t, entries, repo, home, false)

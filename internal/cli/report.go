@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Output for status, link, and unlink: the view a person at a terminal reads,
 // with a header, entries grouped by what happens to them, and a closing line,
@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"slices"
 	"strconv"
 	"strings"
@@ -18,6 +19,7 @@ import (
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/link"
 	"github.com/nicholashoule/homeskillet/internal/setup"
+	"github.com/nicholashoule/homeskillet/internal/trust"
 )
 
 // terminal reports whether w is a terminal, where a person reads the output
@@ -25,18 +27,7 @@ import (
 // lines, one per entry, which stay stable for them to parse.
 func terminal(w io.Writer) bool {
 	file, ok := w.(*os.File)
-	if !ok {
-		return false
-	}
-	info, err := file.Stat()
-	if err != nil || info.Mode()&os.ModeCharDevice == 0 {
-		return false
-	}
-	// /dev/null is a character device too, but nobody reads it. Taken for a
-	// terminal, it would get the view, whose explained errors main does not
-	// print again, so homeskillet link >/dev/null would fail in silence.
-	null, err := os.Stat(os.DevNull)
-	return err != nil || !os.SameFile(info, null)
+	return ok && isTerminal(file)
 }
 
 // view writes results for a person at a terminal: what is running and where,
@@ -47,6 +38,12 @@ type view struct {
 	// shadows maps each target a shell would run instead of another command
 	// to that command (see shadowed).
 	shadows map[string]string
+	// next, when set, follows the closing line of link and status with what
+	// to run next (see nextSetup).
+	next string
+	// copyOf, when set, says in the header that the repository is a copy
+	// homeskillet wsl keeps (see describeCopy).
+	copyOf string
 }
 
 // newView returns a view for output, or nil when output is not a terminal.
@@ -84,8 +81,11 @@ func (v *view) header(w io.Writer, command, repo string, remembered bool, home s
 	if remembered {
 		repository += "  (linked into this home before; none was named)"
 	}
-	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n  %-11s %s\n  %-11s %s\n",
-		command, "repository:", repository, "home:", v.path(home), "platform:", platform)
+	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n", command, "repository:", repository)
+	if v.copyOf != "" {
+		text += fmt.Sprintf("  %-11s %s\n", "copy of:", v.copyOf)
+	}
+	text += fmt.Sprintf("  %-11s %s\n  %-11s %s\n", "home:", v.path(home), "platform:", platform)
 	if dryRun {
 		text += fmt.Sprintf("  %-11s %s\n", "dry run:", "nothing will change")
 	}
@@ -194,8 +194,51 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 			return err
 		}
 	}
-	_, err := fmt.Fprintln(w, summary(command, byState, applied, force))
+	text := summary(command, byState, applied, force) + "\n"
+	// Setup comes after linking; a blocked link has its own next step.
+	blocked := len(byState[link.NoSource]) > 0 || len(byState[link.Conflict]) > 0 && !force
+	if v.next != "" && !blocked {
+		text += v.next + "\n"
+	}
+	_, err := io.WriteString(w, text)
 	return err
+}
+
+// nextSetup returns the line that ends link and status at a terminal when the
+// repository has setup steps pending for this platform, steps, so that a
+// person who has just linked it learns that, for example, the step that makes
+// their shell load what was linked has not run. It is "" when no step is
+// pending, or when the steps cannot be checked, which setup itself reports.
+// remembered marks a repository taken from the record, as setup takes it too.
+// data is the data directory, with the record of steps with inputs.
+func nextSetup(steps []config.Step, repo, home, data string, remembered bool) string {
+	plans, err := setup.Prepare(steps, repo, home, data)
+	if err != nil {
+		return ""
+	}
+	pending := 0
+	for i := range plans {
+		if plans[i].State == setup.Pending {
+			pending++
+		}
+	}
+	if pending == 0 {
+		return ""
+	}
+	// The repository can go unnamed when it is the current directory, or the
+	// one in the record, which setup falls back to as link did.
+	command := "homeskillet setup"
+	if cwd, err := os.Getwd(); !remembered && (err != nil || !samePlace(cwd, repo)) {
+		command += " " + setup.Quote([]string{repo})
+	}
+	return fmt.Sprintf("Next: %s offers %s, each shown before it runs.", command, files(pending, "pending setup step"))
+}
+
+// samePlace reports whether the directory dir, as given, is repo, which is
+// canonical.
+func samePlace(dir, repo string) bool {
+	resolved, err := filepath.EvalSymlinks(dir)
+	return err == nil && trust.SamePath(resolved, repo)
 }
 
 // steps writes a dry run's setup steps for a person: the done steps with what

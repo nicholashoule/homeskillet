@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Package trust decides whether files in a configuration repository, and the
 // directories and programs homeskillet installs itself from and into, are
@@ -10,9 +10,13 @@
 // run code as the user, so these checks refuse a repository that someone else
 // could modify, following the rules OpenSSH's StrictModes applies to ~/.ssh.
 //
-// Ownership is compared with the effective user ID, the identity the kernel
-// uses for permission checks. Under sudo that is root, so a repository owned by
-// the invoking user is rejected.
+// The rules are the same everywhere; what "owned by" and "writable by" mean is
+// not. On Linux and macOS (trust_unix.go), ownership is compared with the
+// effective user ID, the identity the kernel uses for permission checks, and
+// permissions are mode bits. Under sudo that is root, so a repository owned
+// by the invoking user is rejected. On Windows (trust_windows.go), they come
+// from each file's security descriptor: its owner, and the access control
+// list that says who may change it.
 package trust
 
 import (
@@ -21,15 +25,15 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 )
 
 // CheckRepository checks the repository directory and every directory above
-// it (see CheckDirectory), and its manifest if it has one. repo must be
+// it (see CheckDirectory), and its manifests if it has any. repo must be
 // absolute with symlinks resolved.
 func CheckRepository(repo string) error {
 	if err := CheckDirectory(repo); err != nil {
@@ -124,56 +128,44 @@ func CheckCreatable(dir string) error {
 	}
 }
 
-// CheckProgram requires a program that homeskillet is about to copy to be a
-// regular file owned by the current user or root and writable by nobody else.
-// info must come from the open file, not from its path, so the check applies
-// to exactly the bytes that are then read. A program owned by root is as
-// trustworthy as the system it came with; one owned by another user is not,
-// and under sudo that includes the invoking user.
-func CheckProgram(path string, info os.FileInfo) error {
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("%s is not a regular file", printable(path))
-	}
-	return checkShared(path, info)
-}
-
-// checkShared allows path to belong to root as well as to the current user,
-// and to be writable by others only if it is a sticky directory.
-func checkShared(path string, info os.FileInfo) error {
-	owner, err := fileOwner(path, info)
+// CheckProgram requires a program that homeskillet is about to copy, already
+// open as file, to be a regular file owned by the current user or root and
+// writable by nobody else. The check reads the open file, not its path, so it
+// applies to exactly the bytes that are then read. A program owned by root is
+// as trustworthy as the system it came with; one owned by another user is
+// not, and under sudo that includes the invoking user.
+func CheckProgram(file *os.File) error {
+	info, err := file.Stat()
 	if err != nil {
 		return err
 	}
-	if owner != 0 && owner != os.Geteuid() {
-		return fmt.Errorf("%s is owned by another user", printable(path))
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("%s is not a regular file", printable(file.Name()))
 	}
-	// The sticky bit stops others renaming or deleting a directory's entries,
-	// which is what makes a shared ancestor like /tmp safe. On a regular file
-	// it protects nothing: anyone with write permission can still change the
-	// contents, so it excuses only directories.
-	sticky := info.IsDir() && info.Mode()&os.ModeSticky != 0
-	if info.Mode().Perm()&0o022 != 0 && !sticky {
-		return writableError(path)
-	}
-	return nil
+	return checkOpenProgram(file, info)
 }
 
-// checkManifest holds the manifest to the rules for a linked source (see
-// Resolve): every directory and symlink on the way to it must be private and
-// inside the repository. A manifest symlinked through a directory that others
-// can write would otherwise let them swap in their own entries and setup
-// steps, even though the file it points at is private.
+// checkManifest holds each manifest the repository has (see
+// config.FileNames) to the rules for a linked source (see Resolve): every
+// directory and symlink on the way to it must be private and inside the
+// repository. A manifest symlinked through a directory that others can write
+// would otherwise let them swap in their own entries and setup steps, even
+// though the file it points at is private.
 //
-// The manifest is optional (see config.Load). Its absence cannot be forged:
-// deleting or renaming it needs write access to the repository directory,
+// Manifests are optional (see config.Load). Their absence cannot be forged:
+// deleting or renaming one needs write access to the repository directory,
 // which CheckRepository has already checked.
 func checkManifest(repo string) error {
-	manifest := filepath.Join(repo, config.FileName)
-	if _, err := os.Lstat(manifest); errors.Is(err, fs.ErrNotExist) {
-		return nil
+	for _, name := range config.FileNames() {
+		manifest := filepath.Join(repo, name)
+		if _, err := os.Lstat(manifest); errors.Is(err, fs.ErrNotExist) {
+			continue
+		}
+		if _, err := Resolve(repo, manifest); err != nil {
+			return err
+		}
 	}
-	_, err := Resolve(repo, manifest)
-	return err
+	return nil
 }
 
 // maxHops bounds the symlinks Resolve follows, as the kernel's own limit
@@ -207,7 +199,7 @@ func Resolve(root, path string) (string, error) {
 		return "", err
 	}
 	separator := string(filepath.Separator)
-	pending := strings.Split(rest, separator)
+	pending := components(rest)
 	resolved, hops := root, 0
 	for len(pending) > 0 {
 		component := pending[0]
@@ -242,10 +234,24 @@ func Resolve(root, path string) (string, error) {
 			if err != nil {
 				return "", err
 			}
-			if filepath.IsAbs(target) {
-				resolved = separator
+			// An absolute target starts again from the root of its volume.
+			// So does one that starts with a separator but names no volume,
+			// which Windows reads as relative to the root of the link's own
+			// volume; on Linux and macOS, every such target is absolute and
+			// volumes are always empty.
+			if volume := filepath.VolumeName(target); volume != "" || strings.HasPrefix(target, separator) {
+				// C:file means file in drive C's current directory, which
+				// depends on the process, not on the link.
+				if volume != "" && !filepath.IsAbs(target) {
+					return "", fmt.Errorf("%s: %s names a drive but no directory", printable(path), printable(next))
+				}
+				if volume == "" {
+					volume = filepath.VolumeName(root)
+				}
+				resolved = volume + separator
+				target = target[len(filepath.VolumeName(target)):]
 			}
-			pending = append(strings.Split(target, separator), pending...)
+			pending = append(components(target), pending...)
 			continue
 		}
 		if err := checkPrivate(next, info); err != nil {
@@ -273,7 +279,7 @@ func CheckPath(root, path string) error {
 		return err
 	}
 	current := root
-	for component := range strings.SplitSeq(relative, string(filepath.Separator)) {
+	for _, component := range components(relative) {
 		current = filepath.Join(current, component)
 		info, err := os.Lstat(current)
 		if err != nil {
@@ -351,7 +357,8 @@ func CheckTree(root string) error {
 
 // Within reports whether path is root itself or lies below it. It compares
 // path strings only, so both must be clean and absolute, with symlinks already
-// resolved wherever the answer guards a filesystem change.
+// resolved wherever the answer guards a filesystem change. On Windows the
+// comparison ignores case, as Windows does.
 func Within(root, path string) bool {
 	relative, err := filepath.Rel(root, path)
 	return err == nil && filepath.IsLocal(relative)
@@ -381,66 +388,33 @@ func CheckOwner(path string) error {
 	if err != nil {
 		return err
 	}
-	owner, err := fileOwner(path, info)
-	if err != nil {
-		return err
-	}
-	if owner != 0 && owner != os.Geteuid() {
-		return fmt.Errorf("%s is owned by another user", printable(path))
-	}
-	return nil
+	return checkOwner(path, info)
 }
 
-// fileOwner returns the user ID that owns path, as described by info. On Linux
-// and macOS, the only systems this package builds for, file information from
-// package os always carries a *syscall.Stat_t. The type is still checked so
-// that anything else is an error, not a panic.
-func fileOwner(path string, info os.FileInfo) (int, error) {
-	stat, ok := info.Sys().(*syscall.Stat_t)
-	if !ok {
-		return 0, fmt.Errorf("%s: file system reports no owner", printable(path))
+// SamePath reports whether a and b name the same path: exactly on Linux and
+// macOS, and without regard to case on Windows, whose file systems ignore
+// it. Both must be clean and absolute, as for Within, which filepath.Rel
+// already makes case-insensitive on Windows.
+func SamePath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
 	}
-	return int(stat.Uid), nil
+	return a == b
 }
 
-// checkPrivate requires path to belong to the current user and to be writable
-// by nobody else. Group write is rejected even on systems with per-user groups,
-// because homeskillet cannot cheaply prove that a group has no other members.
-func checkPrivate(path string, info os.FileInfo) error {
-	owner, err := fileOwner(path, info)
-	if err != nil {
-		return err
+// PathKey returns path in the form to use as a map key wherever SamePath
+// decides which paths are the same: lowercase on Windows, unchanged elsewhere.
+func PathKey(path string) string {
+	if runtime.GOOS == "windows" {
+		return strings.ToLower(path)
 	}
-	if owner != os.Geteuid() {
-		return fmt.Errorf("%s is not owned by the current user", printable(path))
-	}
-	if info.Mode().Perm()&0o022 != 0 {
-		return writableError(path)
-	}
-	return nil
+	return path
 }
 
-// windowsDrive reports whether path is a Windows drive at one of WSL's
-// default mount points, such as /mnt/c, or is below one.
-func windowsDrive(path string) bool {
-	rest, ok := strings.CutPrefix(path, "/mnt/")
-	if !ok || rest == "" {
-		return false
-	}
-	letter := rest[0]
-	isLetter := 'a' <= letter && letter <= 'z' || 'A' <= letter && letter <= 'Z'
-	return isLetter && (len(rest) == 1 || rest[1] == '/')
-}
-
-// writableError reports a path that others can write and says how to fix it.
-// On WSL, Windows drives mounted under /mnt report every file as 0777 and
-// silently ignore chmod unless mounted with the metadata option, so the usual
-// advice would fail there and the repository belongs in the Linux filesystem.
-func writableError(path string) error {
-	if os.Getenv("WSL_DISTRO_NAME") != "" && windowsDrive(path) {
-		return fmt.Errorf("%s is writable by group or others; on WSL, Windows drives ignore chmod, so clone the repository inside the Linux filesystem (for example under ~/)", printable(path))
-	}
-	return fmt.Errorf("%s is writable by group or others; run chmod go-w on it", printable(path))
+// components splits path at every separator, dropping empty names. Windows
+// accepts both / and \, so a symlink written with either is read the same.
+func components(path string) []string {
+	return strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == filepath.Separator })
 }
 
 // printable quotes a path that contains control or formatting characters.

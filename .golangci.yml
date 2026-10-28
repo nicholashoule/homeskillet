@@ -137,6 +137,15 @@ linters:
       - path: _test\.go
         linters: [godot, revive, funlen, forbidigo]
 
+      # gosec's taint analysis (G703) can find a path tainted when linting
+      # for one GOOS and not for another, and the cache carries its results
+      # from one GOOS's run to the next, as CI's Linux and Windows lints
+      # share it. A directive that a clean run for each GOOS needs could
+      # then read as unused, failing lint by the order of runs alone. Only
+      # that report is excused; every G703 finding still needs a directive.
+      - linters: [nolintlint]
+        text: 'directive `//nolint:gosec // G703'
+
       # Tests create fixtures with ordinary permissions (G301, G302, G306)
       # and read files they chose themselves (G304). Every other gosec rule
       # still applies to tests.

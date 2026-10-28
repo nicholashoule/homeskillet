@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Tests of link --force backups: undoing the moves when one fails, and moving
 // nothing when a source is absent.

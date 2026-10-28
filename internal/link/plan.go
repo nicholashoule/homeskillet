@@ -1,4 +1,4 @@
-//go:build linux || darwin
+//go:build linux || darwin || windows
 
 // Package link decides what homeskillet would change in a home directory and
 // then makes those changes.
@@ -12,11 +12,11 @@
 // an I/O error stops Create or Remove midway, the result can be partial;
 // rerunning the command after fixing the cause completes it.
 //
-// Every file in this package carries the linux || darwin build constraint, as
-// do packages trust, setup, and cli. The ownership checks in package trust
-// read Unix file metadata, and constraining whole packages means other systems
-// skip them in `go build ./...` and `go test ./...` instead of failing to
-// compile half a package.
+// Every file in this package carries the linux || darwin || windows build
+// constraint, as do packages trust, setup, install, and cli. The ownership
+// checks in package trust read each system's own file metadata, and
+// constraining whole packages means other systems skip them in `go build ./...`
+// and `go test ./...` instead of failing to compile half a package.
 package link
 
 import (
@@ -201,6 +201,19 @@ func PrepareSelected(entries []config.Entry, repo, home, data string, unlinking 
 	return plans, nil
 }
 
+// CheckSource returns why source, an entry's source joined to repo, could not
+// be linked, or nil if it could: it must be a regular file reached only
+// through private directories and symlinks that stay inside repo, as Prepare
+// requires. A source the repository lacks gives an error matching
+// fs.ErrNotExist. repo must be canonical and pass trust.CheckRepository.
+func CheckSource(repo, source string) error {
+	missing, err := checkSource(repo, source, false)
+	if missing {
+		return fmt.Errorf("source %s: %w", source, os.ErrNotExist)
+	}
+	return err
+}
+
 // checkSource verifies that source is a regular file inside repo and, unless
 // unlinking, that every directory and symlink on the way to it is private and
 // inside repo (see trust.Resolve). It reports whether the source is absent
@@ -282,11 +295,12 @@ func targetState(source, target string) (State, error) {
 	// A link is ours if it names the source path. Comparing the name rather
 	// than the resolved file means a dangling link to a deleted source is
 	// still recognized and can be removed. Relative links, such as those GNU
-	// Stow creates, are accepted too.
+	// Stow creates, are accepted too. On Windows, case does not count, as it
+	// does not when Windows follows the link.
 	if !filepath.IsAbs(destination) {
 		destination = filepath.Join(filepath.Dir(target), destination)
 	}
-	if filepath.Clean(destination) == source {
+	if trust.SamePath(filepath.Clean(destination), source) {
 		return Linked, nil
 	}
 	return Conflict, nil
