@@ -45,6 +45,7 @@ describe the project, so keep them current instead.
 | `tools/xplat` | Cross-platform shim for Makefile recipes, vendored from `go-webapp` |
 | `tools/buildtime` | Prints the build time the Makefile stamps into binaries |
 | `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
+| `tools/release` | The release build both the release workflow and CI's dry run run (docs/release.md) |
 | `examples/` | Starter configuration repositories, one per system; `TestExamples` runs `check` on each |
 | `.github/` | CI and release workflows, Dependabot, repogov line limits, and Copilot instructions |
 | `CHANGELOG.md`, `SECURITY.md` | What changed for users, by release (the release notes come from it); how to report a vulnerability |

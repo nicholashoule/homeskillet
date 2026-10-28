@@ -108,7 +108,9 @@ and demojify, the checks CI runs, and stops when any fails:
   the zsh script where zsh is installed, and complete through the PowerShell
   script where pwsh is, as on the Windows runners. Locally, a machine without
   zsh skips the zsh test, so the macOS runners are where it runs.
-- `make cross`, once, on Linux with the latest Go.
+- A dry run of the release build on Linux with the latest Go: the release
+  workflow's own script, on a tag made for the run and never pushed, with
+  the newest version in `CHANGELOG.md` ([release.md](release.md#tagging)).
 - golangci-lint for the Linux and Windows builds, which also checks
   formatting; repogov, which checks the
   Markdown line limits in [.github/repogov-config.json](../.github/repogov-config.json);

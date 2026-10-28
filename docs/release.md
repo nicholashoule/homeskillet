@@ -68,6 +68,14 @@ which publishes the binaries as a GitHub Release, where people look for them:
   section as its notes and the binaries and `SHA256SUMS` attached, as a
   pre-release when the tag has a pre-release part, such as `v0.2.0-rc.1`.
 
+The notes, the build, and the checks are one script,
+[tools/release/build.sh](../tools/release/build.sh), which
+CI also runs on every pull request, on a tag it makes and never pushes, so a
+change that would break a release fails there, before anything is tagged. The
+script refuses a checkout with any change or untracked file, since Go would
+then stamp every binary `+dirty`; a step that makes a file writes it outside
+the checkout, as in `$RUNNER_TEMP`.
+
 Do not create the release in GitHub's web interface: the tag alone is the
 release. If one exists when the workflow runs, as after a failed upload or a
 release made by hand, the workflow keeps it and sets its title, notes, and
