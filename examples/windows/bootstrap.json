@@ -11,7 +11,7 @@
     },
     {
       "name": "profile",
-      "run": ["pwsh", "-NoProfile", "-File", "setup/profile.ps1"],
+      "run": ["pwsh", "-NoProfile", "-File", "home/.config/powershell/init-profile.ps1"],
       "creates": "{documents}/PowerShell/profile.ps1"
     }
   ]

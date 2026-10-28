@@ -7,9 +7,9 @@ PowerShell 7 with winget and load the profile from Documents.
 ```text
 windows/
 ├── bootstrap.json          for Windows, with the powershell and profile setup steps
-├── setup/profile.ps1       writes the line in Documents that loads the profile
 └── home/                   linked into %USERPROFILE%
     ├── .config/powershell/profile.ps1
+    ├── .config/powershell/init-profile.ps1   writes the line in Documents that loads it
     └── .config/git/ignore
 ```
 

@@ -3,8 +3,8 @@
   "setup": [
     {
       "name": "brew-bundle",
-      "run": ["brew", "bundle", "--file=Brewfile"],
-      "inputs": ["Brewfile"]
+      "run": ["brew", "bundle", "--file=home/.Brewfile"],
+      "inputs": ["home/.Brewfile"]
     }
   ]
 }

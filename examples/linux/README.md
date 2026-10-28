@@ -2,15 +2,15 @@
 
 A starter dotfiles repository for Linux with bash and apt, as on Debian and
 Ubuntu: a `.bashrc`, a Git ignore file for every repository, and a setup step
-that installs the packages in `packages.txt`.
+that installs the packages in a list.
 
 ```text
 linux/
-├── bootstrap.json          for Linux, with the packages setup step
-├── packages.txt            apt packages, one per line
-└── home/                   linked into your home directory
-    ├── .bashrc             -> ~/.bashrc
-    └── .config/git/ignore  -> ~/.config/git/ignore
+├── bootstrap.json            for Linux, with the packages setup step
+└── home/                     linked into your home directory
+    ├── .bashrc               -> ~/.bashrc
+    ├── .config/apt/packages  -> ~/.config/apt/packages, one per line
+    └── .config/git/ignore    -> ~/.config/git/ignore
 ```
 
 ## Get Going
@@ -36,8 +36,9 @@ After the first `link`, `homeskillet link` and `homeskillet setup` find
 
 - Add a file under `home/` where it goes in your home, then `link` again:
   `home/.config/tmux/tmux.conf` becomes `~/.config/tmux/tmux.conf`.
-- Add a package to `packages.txt`, and `setup` offers the step again; until
-  then it is done. `apt-mark showmanual` lists the packages you installed.
+- Add a package to `home/.config/apt/packages`, and `setup` offers the step
+  again; until then it is done. `apt-mark showmanual` lists the packages you
+  installed.
 - On Fedora, use `dnf` in `bootstrap.json` instead of `apt-get`, and drop
   `update`.
 - Keep the repository in Git: `git init ~/dotfiles`.
