@@ -141,6 +141,9 @@ otherwise. `install.New` resolves the prefix's existing directories, then:
   ([safety.md](safety.md#updating)).
 - `self releases` lists the published releases from GitHub's API, marking the newest, those installed, and the current
   one. `update`, `install`, and `use` are the same commands without `self`, rewritten in `takeCommand`.
+- The note that a newer release is available (`startUpdateCheck`, in `notice.go`) runs the same latest-release lookup
+  alongside `status`, `link`, `unlink`, and `setup` at a terminal, once a day, recorded in `update.json` in the data
+  directory, and is collected after the command's output with a short limit, so it never slows or fails a command.
 
 Like `link.Prepare`, each command checks everything before changing anything, and dry runs stop after the checks.
 

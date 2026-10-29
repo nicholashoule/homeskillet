@@ -63,6 +63,13 @@ project's releases on GitHub, over HTTPS, with the system's own `curl` and hashi
 ([safety.md](safety.md#updating)). A version that is already installed is left as it is, so `update` is safe to run as
 often as you like, and a `--dry-run` downloads and checks without running or installing anything.
 
+At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available, such as
+`note  v0.3.1 is available; homeskillet update installs it`. It is meant to stay out of the way: GitHub is asked at
+most once a day, the line is shown at most once a day, the check runs alongside the command with a two-second limit so
+it never slows or fails one, nothing is written unless the [data directory](#data-directory) already exists, and a dry
+run, `--quiet`, a script, or a development build never checks. To turn it off, put `HOMESKILLET_UPDATE_CHECK=off` in
+your shell startup file.
+
 The check against `SHA256SUMS` proves the download arrived intact, not who published it. Releases from the public
 repository also carry signed build provenance, which `gh attestation verify` checks (see [Downloading a
 Release](#downloading-a-release)); `update` does not check it yet.

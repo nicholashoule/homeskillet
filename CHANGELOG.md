@@ -10,7 +10,13 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 
 ## [0.3.1]
 
-A small follow-up to 0.3.0, so that `homeskillet update` has a newer release to move to.
+A small follow-up to 0.3.0, so that `homeskillet update` has a newer release to move to, and says when one is.
+
+### Added
+
+- At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available, checked
+  at most once a day and shown at most once a day; `HOMESKILLET_UPDATE_CHECK=off` turns it off
+  ([docs/install.md](docs/install.md#updating)).
 
 ### Changed
 
