@@ -42,6 +42,7 @@ file: the README, docs/, and this file describe the project, so keep them curren
 | `tools/xplat` | Cross-platform shim for Makefile recipes, vendored from `go-webapp` |
 | `tools/buildtime` | Prints the build time the Makefile stamps into binaries |
 | `tools/smoke` | The smoke test: the built binary links and unlinks this system's example in a scratch home, `make smoke` and CI |
+| `tools/site` | The website check: the page and every file it references, `make site`, CI, and the Pages workflow |
 | `tools/githooks` | The pre-commit hook and its installer, `make hooks` |
 | `tools/release` | The release build both the release workflow and CI's dry run run (docs/release.md) |
 | `examples/` | Starter configuration repositories, one per system; `TestExamples` runs `check` on each |

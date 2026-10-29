@@ -172,7 +172,15 @@ runtime verification there.
 [site/index.html](../site/index.html) is the project's website, one hand-written page with no build step or framework,
 and only a few lines of script that mark the menu item for the section in view, kept in step with the README. The Go
 gopher in `site/images/` is the Go project's own file, Renee French's design under Creative Commons Attribution 4.0,
-which the page credits. Pushing a change to `site/` to `main` runs
+which the page credits.
+
+`make site` runs [tools/site](../tools/site), the site's only check: the page is bounded in size, declares a title, a
+language, a viewport, and a description, every link or source relative to it is a file under `site/`, and no link uses
+plain HTTP. `make check` includes it. The Pages workflow runs the same check, on pull requests that touch the site as
+well as on `main`, and on `main` goes on to deploy and then fetches the page until it is served with the site's title.
+It cannot enable Pages itself, which needs a personal token, so when Pages is off, as after unpublishing the site, it
+fails with the setting to change rather than the action's generic error. Deployments are never cancelled midway; a
+second push waits for the first. Pushing a change to `site/` to `main` runs
 [.github/workflows/pages.yml](../.github/workflows/pages.yml), which uploads the directory and deploys it to GitHub
 Pages at `https://<owner>.github.io/homeskillet/`. The workflow needs Pages enabled once in the repository settings
 with "GitHub Actions" as the source. The page links to the documents in `docs/` on GitHub rather than copying them, so

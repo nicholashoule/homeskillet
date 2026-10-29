@@ -95,7 +95,10 @@ test: ## Run tests, with the race detector when cgo is available
 smoke: ## Build homeskillet, then link and unlink this system's example in a scratch home
 	go run ./tools/smoke
 
-check: vet lint test smoke ## Run vet, lint, tests, and the smoke test; required before handing off work
+site: ## Check the website in site/: its page, and every file it references
+	go run ./tools/site
+
+check: vet lint test smoke site ## Run vet, lint, tests, the smoke test, and the site check; required before handing off work
 
 # tools/githooks resolves the hooks directory through Git and never replaces a
 # hook it did not install. Run it again after changing tools/githooks/pre-commit.
@@ -130,4 +133,4 @@ integration: build ## Link the dotfiles-linux manifest into a temporary home (ne
 clean: ## Remove bin/
 	$(XPLAT) rmrf $(BIN)
 
-.PHONY: help fmt vet lint test check hooks build install cross integration clean
+.PHONY: help fmt vet lint test smoke site check hooks build install cross integration clean
