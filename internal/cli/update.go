@@ -124,7 +124,7 @@ func installDownload(ctx context.Context, file, target string, inv invocation, h
 	if err := os.Chmod(file, 0o700); err != nil { //nolint:gosec // G302: a program must be executable, and only by its owner
 		return err
 	}
-	reported, err := exec.CommandContext(ctx, file, "version").Output() //nolint:gosec // G204: the release binary just downloaded and checked
+	reported, err := exec.CommandContext(ctx, file, "version").Output() //nolint:gosec // G702: the release binary just downloaded into the private staging directory and checked against SHA256SUMS
 	if err != nil {
 		return fmt.Errorf("the downloaded %s does not run here: %w", name, err)
 	}
