@@ -23,12 +23,15 @@ const usageLines = `  homeskillet [status|link|unlink] [REPOSITORY [FILE...]] [o
   homeskillet setup [REPOSITORY] [options]
   homeskillet init [REPOSITORY] [options]
   homeskillet check [REPOSITORY] [options]
+  homeskillet prepare|prep [options]
   homeskillet wsl install [options]
   homeskillet wsl status|link|unlink|setup [REPOSITORY [FILE...|STEP...]] [options]
   homeskillet backups [list|purge] [options]
   homeskillet update [VERSION] [options]
   homeskillet install [VERSION] [options]
   homeskillet use latest|previous|VERSION [options]
+  homeskillet list [options]
+  homeskillet list-remote [options]
   homeskillet self install [VERSION] [options]
   homeskillet self list [options]
   homeskillet self update [VERSION] [options]
@@ -40,29 +43,31 @@ const usageLines = `  homeskillet [status|link|unlink] [REPOSITORY [FILE...]] [o
   homeskillet help
 `
 
-// commandHelp describes each of commands.
+// docsURL is where help points for the details its one-line descriptions
+// leave out.
+const docsURL = "https://github.com/nicholashoule/homeskillet/blob/main/docs/usage.md"
+
+// commandHelp describes each of commands in one line; help points to the
+// docs for the rest (see docsURL).
 var commandHelp = map[string]string{
-	"status": "Show whether each file is linked (the default)",
-	"link":   "Link the repository's files into the home directory",
-	"unlink": "Remove the repository's links from the home directory",
-	"setup":  "Show each setup step, and run the ones you approve",
-	"init":   "Write a starter " + config.FileName + " for platforms and setup steps; a " + config.HomeDir + "/ directory alone needs none",
-	"check":  "Check the repository's manifests and files, for every platform, and list each issue, or say that it is valid",
-	"wsl": "On Windows, or from a WSL shell, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
-		"there on a copy of a Windows clone, or on a clone in the distribution written / or ~ first",
-	"backups": "List the files link --force moved into a backup; backups purge deletes them after showing them and asking",
-	"update": "Install the newest release of homeskillet from GitHub, or the VERSION given, checked against its SHA256SUMS, keeping the old one to go back to. " +
-		"At a terminal, status, link, unlink, and setup end with a note when a newer release is available, checked once a day; " +
-		"export HOMESKILLET_UPDATE_CHECK=off to turn that off",
-	"install": "Install this build of homeskillet as a version of its own, and make it the one the command runs unless another is pinned; " +
-		"with a VERSION, install that release from GitHub instead, as update does. A build from go run or go install installs only where none is yet",
-	"use": "Run latest, previous, or the installed VERSION; latest follows new installs, a version stays pinned",
-	"self": "Install, update, list, switch, or remove versions of homeskillet. self update installs the newest release from GitHub, or the VERSION given, " +
-		"checked against its SHA256SUMS, and keeps the old one to go back to with self use; self releases lists the releases there are",
-	"version": "Show the version and build details",
-	"completion": "Print a shell completion script; load it with eval \"$(homeskillet completion bash)\" in ~/.bashrc, zsh in ~/.zshrc, " +
-		"or in PowerShell with homeskillet completion pwsh | Out-String | Invoke-Expression in $PROFILE",
-	"help": "Show this help",
+	"status":      "Show whether each file is linked (the default)",
+	"link":        "Link the repository's files into the home directory",
+	"unlink":      "Remove the repository's links from the home directory",
+	"setup":       "Show each setup step and run the ones you approve",
+	"init":        "Write a starter " + config.FileName + " in a repository without a manifest",
+	"check":       "List every issue in a repository, for every platform, or say it is valid",
+	"prepare":     "Check for what homeskillet needs, such as Developer Mode and Git, and offer what is missing",
+	"wsl":         "Install homeskillet in a WSL distribution, or run status, link, unlink, or setup there",
+	"backups":     "List the files link --force moved aside; backups purge deletes them after asking",
+	"update":      "Install the newest release and run it, keeping the old one to go back to",
+	"install":     "Install this build as a version of its own, or with a VERSION, that release",
+	"use":         "Run latest, previous, or an installed VERSION",
+	"list":        "List the installed versions and which one runs",
+	"list-remote": "List the published versions and which are installed",
+	"self":        "The version commands above, as self install, self list, and so on, plus self remove",
+	"version":     "Show the version and build details",
+	"completion":  "Print a completion script for bash, zsh, or pwsh",
+	"help":        "Show this help",
 }
 
 var argumentHelp = [][2]string{
@@ -81,7 +86,7 @@ var optionGroups = []struct {
 	command string
 	names   []string
 }{
-	{"", []string{"dry-run", "home", "repo", "platform", "quiet", "data-dir", "yes", "allow-root"}},
+	{"", []string{"dry-run", "home", "repo", "platform", "quiet", "verbose", "data-dir", "yes", "allow-root"}},
 	{"link", []string{"force"}},
 	{"self", []string{"prefix"}},
 	{"backups", []string{"older-than"}},
@@ -141,6 +146,9 @@ func help(w io.Writer, flags *flag.FlagSet) error {
 			wrap(&b, "  "+row[0]+strings.Repeat(" ", column-2-len(row[0])), row[1])
 		}
 	}
+	// The details the descriptions leave out, such as how to load a
+	// completion script or turn off the update note, are in the docs.
+	fmt.Fprintf(&b, "\nEvery command and option in full: %s\n", docsURL)
 	_, err := io.WriteString(w, b.String())
 	return err
 }

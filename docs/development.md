@@ -99,6 +99,8 @@ commit then runs `make check`, repogov, and demojify, the checks CI runs, and st
   `/bin/bash`, which is bash 3.2, load the zsh script where zsh is installed, and complete through the PowerShell script
   where pwsh is, as on the Windows runners. Locally, a machine without zsh skips the zsh test, so the macOS runners are
   where it runs.
+- `homeskillet prepare --dry-run` on each system, which checks Developer Mode and finds Git, winget, and PowerShell on
+  real Windows runners, read-only.
 - A dry run of the release build on Linux with the latest Go: the release workflow's own script, on a tag made for the
   run and never pushed, with the newest version in `CHANGELOG.md` ([release.md](release.md#tagging)).
 - golangci-lint for the Linux and Windows builds, which also checks formatting; govulncheck, which fails on a known

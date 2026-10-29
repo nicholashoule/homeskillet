@@ -14,11 +14,13 @@ option.
 | `setup` | Show each setup step and run the ones you approve ([manifest.md](manifest.md#setup-steps)). |
 | `init` | Write a starter `bootstrap.json` where there is no manifest ([manifest.md](manifest.md#creating-one)). |
 | `check` | List every issue in a repository, for every platform, or say it is valid ([manifest.md](manifest.md#checking-one)). |
+| `prepare`, `prep` | Check that this machine has what homeskillet needs, such as Developer Mode and Git on Windows, and offer what is missing once you approve ([windows.md](windows.md#preparing-windows)). |
 | `wsl` | On Windows, or from a WSL shell, act in a WSL distribution ([windows.md](windows.md#the-wsl-command)). |
 | `backups` | List the files `link --force` moved aside; `backups purge` deletes them once you approve ([Conflicts and Backups](#conflicts-and-backups)). |
 | `update` | Install the newest release from GitHub, or the version given, checked against its `SHA256SUMS`, keeping the old one ([install.md](install.md#updating)). |
 | `install`, `use` | Install this build as a version of its own, or with a version, that release as `update` does; run `latest`, `previous`, or a version ([install.md](install.md#versions-and-updates)). |
-| `self` | The same as `update`, `install`, and `use`, plus `self list`, `self releases`, and `self remove` ([install.md](install.md#versions-and-updates)). |
+| `list`, `list-remote` | List the installed versions and which one runs; list the versions published on GitHub and which are installed ([install.md](install.md#versions-and-updates)). |
+| `self` | The same as `update`, `install`, `use`, `list`, and `list-remote` (`self releases`), plus `self remove` ([install.md](install.md#versions-and-updates)). |
 | `version`, `completion`, `help` | Show the version, print a shell completion script ([install.md](install.md#shell-completion)), or show the help. |
 
 ```sh
@@ -62,6 +64,7 @@ value, as from an unset variable in `--home "$SCRATCH"`, is refused rather than 
 | `--home DIR` | Act on another home, such as a scratch one to try a repository in. |
 | `--platform OS[/ARCH]` | Act for another platform, such as `darwin` or `linux/arm64` ([manifest.md](manifest.md#platforms)). |
 | `--quiet` | Print nothing but errors; the exit status reports the result. Not for `setup`, whose steps must be shown. |
+| `--verbose` | On failure, show the whole error, not only its first line ([Output](#output)). |
 | `--force` | For `link`: move conflicting files into a backup, then link (see below). |
 | `--yes` | For `setup`: run every pending step without asking, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). For `backups purge`: delete every backup listed without asking. |
 | `--older-than AGE` | For `backups`: only backups moved more than `AGE` ago, such as `30d`. |
@@ -76,6 +79,10 @@ At a terminal, homeskillet says what it is running and where, groups files by wh
 and ends with what changed or what to do; after `link` and `status`, it also names any setup steps still pending. In a
 pipe or a script it prints one tab-separated line per file or step instead, a stable format to parse, such as
 `linked<TAB>/home/you/.bashrc -> /home/you/dotfiles/home/.bashrc`.
+
+A failure is one line saying what failed, with homeskillet's own advice on the lines after it, and a hint when the cause
+is one it recognizes: a setup step that failed or names a program not on `PATH`, a permission it lacks, or a full disk.
+Anything more, such as a second error from cleaning up, is left out and a line says so; `--verbose` shows it all.
 
 `status` and `link` exit nonzero when anything blocks linking: a file that is not homeskillet's link where a link should
 go, or a listed file the repository lacks. A linked file a shell would run in place of a command, such as

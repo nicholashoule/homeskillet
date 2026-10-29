@@ -272,6 +272,9 @@ func completions(words []string) (string, []string) {
 	command, rest := "", line.positional
 	if len(rest) > 0 {
 		command, rest = rest[0], rest[1:]
+		if full, ok := shortNames[command]; ok {
+			command = full
+		}
 		if !slices.Contains(commands, command) {
 			// A path in place of a command is the repository for status.
 			if !isPath(command) {
@@ -279,8 +282,8 @@ func completions(words []string) (string, []string) {
 			}
 			command, rest = "status", line.positional
 		}
-		if slices.Contains(selfAliases, command) {
-			command, rest = "self", line.positional
+		if sub, ok := selfAliases[command]; ok {
+			command, rest = "self", append([]string{sub}, rest...)
 		}
 	}
 	if !line.terminated && strings.HasPrefix(line.current, "-") {

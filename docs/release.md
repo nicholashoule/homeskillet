@@ -6,10 +6,11 @@ How a version of homeskillet is published. The checks a change must pass first a
 
 Go 1.24 and newer stamp each build from a Git checkout with the version (the tag, or a pseudo-version after it), the
 commit, and whether the tree was modified, which adds `+dirty`; the Makefile adds the build time (`BUILT`, from
-`tools/buildtime`, which honors `SOURCE_DATE_EPOCH`). `homeskillet version` prints them, and `self list` reads them from
-each installed binary. A release is therefore a tag on `main`, and the only text written by hand is its changelog entry.
+`tools/buildtime`, which honors `SOURCE_DATE_EPOCH`). `homeskillet version` prints them, and `homeskillet list` reads
+them from each installed binary. A release is therefore a tag on `main`, and the only text written by hand is its
+changelog entry.
 
-Until the repository has a commit, builds report `(devel)`, which `self install` refuses. `make install VERSION=v0.0.1`
+Until the repository has a commit, builds report `(devel)`, which `install` refuses. `make install VERSION=v0.0.1`
 (or `make build VERSION=v0.0.1`) stamps a version with `-ldflags -X` for builds without Git metadata, such as containers
 that exclude `.git`; it overrides the version only, not the commit details. In a checkout, tag instead: a stamped build
 differs from the tagged one, and installed versions are never rewritten.
@@ -76,6 +77,6 @@ fresh run would have produced. A run that is needed again, say after the Release
 To try installs without touching your own `~/.local`, point them elsewhere:
 
 ```sh
-bin/homeskillet self install --prefix "$(mktemp -d)" --dry-run
-bin/homeskillet self install --home /path/to/scratch/home
+bin/homeskillet install --prefix "$(mktemp -d)" --dry-run
+bin/homeskillet install --home /path/to/scratch/home
 ```

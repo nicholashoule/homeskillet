@@ -430,7 +430,7 @@ func selectInstalled(ctx context.Context, runner wsl.Runner, file, current strin
 		}
 	}
 	if target != install.Latest && !inv.quiet {
-		if _, err := fmt.Fprintf(output, "note\twsl install pins %s in %s, since the wsl commands need it to run there; homeskillet self use latest there follows the newest again\n",
+		if _, err := fmt.Fprintf(output, "note\twsl install pins %s in %s, since the wsl commands need it to run there; homeskillet use latest there follows the newest again\n",
 			current, runner.Distribution()); err != nil {
 			return err
 		}

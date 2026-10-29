@@ -10,3 +10,8 @@ package host
 func CheckSymlinks() error {
 	return nil
 }
+
+// ProbeSymlinks returns nil, as CheckSymlinks does.
+func ProbeSymlinks() error {
+	return nil
+}

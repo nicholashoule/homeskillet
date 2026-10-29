@@ -163,6 +163,16 @@ A setup step is code from the repository, which may be someone else's, so `setup
 
 Review a step before approving it. homeskillet cannot tell what an installer will do once it runs.
 
+`homeskillet prepare` offers its own steps, such as installing Git with winget, through the same review and prompt:
+shown exactly, then run only on `y` or `yes`, or under `--yes`. Their commands are part of homeskillet, so there is no
+repository to check, and they run in the home, which must still pass the ownership rules, as must every program they
+find on `PATH`. Developer Mode is never switched on for you: it takes an administrator, so `prepare` only opens the
+Settings page, with `explorer.exe` from the Windows directory, and checks again once you say it is on. Registering or
+repairing winget runs Windows PowerShell from the Windows directory, never one found on `PATH`; the repair installs
+Microsoft's `Microsoft.WinGet.Client` module from the PowerShell Gallery, for your account only, which is code from the
+network like any installer, so it is offered only when registering did not bring winget, and asked about even under
+`--yes` ([windows.md](windows.md#preparing-windows)).
+
 ## Starter Manifests, Checks, and Completion
 
 - `init` writes `bootstrap.json` only into a repository with no manifest under either name, not even as a symlink, never

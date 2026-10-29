@@ -20,7 +20,7 @@ shell is.
 |---|---|
 | Linux | Any distribution. Tested. |
 | macOS | bash or zsh. Cross-compiled, not yet tested natively. |
-| Windows 10 and 11 | Native, x64 and Arm64, from PowerShell. Linking needs Developer Mode ([docs/windows.md](docs/windows.md)). |
+| Windows 10 and 11 | Native, x64 and Arm64, from PowerShell. `homeskillet prepare` gets a fresh machine ready: Developer Mode, Git, and PowerShell 7, each only once you approve ([docs/windows.md](docs/windows.md#preparing-windows)). |
 | WSL | The Linux build inside the distribution, with the repository on its Linux file system, not `/mnt/c`. From Windows, or a WSL shell, `homeskillet wsl` links a repository's `home/wsl/` there ([docs/windows.md](docs/windows.md#windows-and-wsl-together)). |
 | Containers | Running as root needs `--allow-root` and a repository root owns, so a bind mount from the host is refused; or run as a regular user ([docs/safety.md](docs/safety.md#ownership)). |
 
@@ -36,7 +36,7 @@ Download the latest release for your system, check it, and let it install itself
 base=https://github.com/nicholashoule/homeskillet/releases/latest/download
 curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64" && curl -fsSLO --proto '=https' "$base/SHA256SUMS"
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
-chmod +x homeskillet-linux-amd64 && ./homeskillet-linux-amd64 self install
+chmod +x homeskillet-linux-amd64 && ./homeskillet-linux-amd64 install
 ```
 
 The other builds are `homeskillet-linux-arm64`, `homeskillet-darwin-amd64`, `homeskillet-darwin-arm64`, and on
@@ -44,15 +44,15 @@ Windows the `.exe` files, checked in PowerShell ([docs/windows.md](docs/windows.
 homeskillet manages its own versions:
 
 ```sh
-homeskillet update            # install the newest release, keeping the one you have
-homeskillet install 0.3.0     # install that release
-homeskillet self list         # installed versions, and which one runs
-homeskillet self releases     # published versions
-homeskillet use previous      # go back
+homeskillet update            # install the newest release and run it, keeping the one you have
+homeskillet list              # installed versions, and which one runs
+homeskillet list-remote       # published versions, and which are installed
+homeskillet install 0.3.1     # install that release, without changing which one runs
+homeskillet use 0.3.1         # run that version; use latest follows the newest again
 ```
 
 With Go 1.24 or newer, on a machine without homeskillet,
-`go run github.com/nicholashoule/homeskillet@latest self install` builds the release from source and installs it
+`go run github.com/nicholashoule/homeskillet@latest install` builds the release from source and installs it
 instead, on any system, and `make install` does the same from a clone
 ([docs/install.md](docs/install.md#building-and-installing)).
 

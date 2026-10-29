@@ -139,7 +139,7 @@ func listVersions(layout install.Layout, output io.Writer) error {
 		if !config.Printable(target) {
 			target = strconv.Quote(target)
 		}
-		if _, err := fmt.Fprintf(output, "current\tbroken: points to %s, which is not installed; run homeskillet self use latest\n", target); err != nil {
+		if _, err := fmt.Fprintf(output, "current\tbroken: points to %s, which is not installed; run homeskillet use latest\n", target); err != nil {
 			return err
 		}
 	}

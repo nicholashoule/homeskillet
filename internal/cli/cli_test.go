@@ -250,7 +250,7 @@ func TestRepositoryArgument(t *testing.T) {
 	}{
 		// A bare word is a command, never a directory that happens to
 		// exist, so a typo cannot select a repository.
-		{[]string{"dotfiles"}, "./dotfiles"},
+		{[]string{"dotfiles"}, "is not a command"},
 		{[]string{"version", "/r"}, "unexpected"},
 		{[]string{"self", "list", "/r"}, "unexpected"},
 		{[]string{"self", "use", "v0.0.1", "v0.0.2"}, "unexpected"},
@@ -557,6 +557,8 @@ func TestMain(m *testing.M) {
 	if err := os.Unsetenv(dataDirVariable); err != nil {
 		panic(err)
 	}
+	// Advice names homeskillet, not the test binary (see selfName).
+	selfName = func() string { return "homeskillet" }
 	// GitHub's Windows runners run tests elevated, the counterpart of root,
 	// which every command refuses. The rules under test are the same either
 	// way, and TestRefusesRoot covers the refusal itself.
@@ -1126,8 +1128,9 @@ func TestSetupView(t *testing.T) {
 			t.Errorf("setup view lacks %q:\n%s", want, output.String())
 		}
 	}
-	// A real run at a terminal lists the done steps first, then reports each
-	// pending one as it is approved or declined, without tab-separated lines.
+	// A real run at a terminal lists the done steps first, then shows each
+	// pending one before asking, without tab-separated lines, and adds no
+	// line after a step that ran: its own output says what it did.
 	var run bytes.Buffer
 	manifest.Setup[1].Run = config.Commands{{"true"}}
 	err = runSetup(context.Background(), manifest.Setup, repo, home, false, setup.Options{
@@ -1136,10 +1139,13 @@ func TestSetupView(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"Done (1)\n  git  " + filepath.Join(home, ".gitconfig"), "Run this step? [y/N] ", "ran      tools\n"} {
+	for _, want := range []string{"Done (1)\n  git  " + filepath.Join(home, ".gitconfig"), "pending  tools\n", "Run this step? [y/N] "} {
 		if !strings.Contains(run.String(), want) {
 			t.Errorf("terminal run lacks %q:\n%s", want, run.String())
 		}
+	}
+	if strings.Contains(run.String(), "ran ") {
+		t.Errorf("terminal run says a step ran:\n%s", run.String())
 	}
 	if strings.Contains(run.String(), "done\t") || strings.Contains(run.String(), "ran\t") {
 		t.Errorf("terminal run has tab-separated lines:\n%s", run.String())
@@ -1232,5 +1238,39 @@ func TestNextSetup(t *testing.T) {
 	blocked := []link.Plan{{Source: filepath.Join(repo, "a"), Target: filepath.Join(home, "a"), State: link.Conflict}}
 	if err := v.links(&output, "link", blocked, false, false, nil); err != nil || strings.Contains(output.String(), "Next: run setup.") {
 		t.Fatalf("blocked link names the setup step: %q, %v", output.String(), err)
+	}
+}
+
+func TestUnknownCommand(t *testing.T) {
+	for word, want := range map[string]string{
+		"lnk":    "'lnk' is not a command; did you mean 'link'?",
+		"stauts": "'stauts' is not a command; did you mean 'status'?",
+		"Unlnk":  "'Unlnk' is not a command; did you mean 'unlink'?",
+		"udpate": "'udpate' is not a command; did you mean 'update'?",
+		"lst":    "'lst' is not a command; did you mean 'list'?",
+		"xyzzy":  "'xyzzy' is not a command; see 'homeskillet help'",
+		"go":     "'go' is not a command; see 'homeskillet help'",
+	} {
+		if _, err := parse([]string{word}, new(bytes.Buffer)); err == nil || err.Error() != want {
+			t.Errorf("%q: %v, want %q", word, err, want)
+		}
+	}
+	// A directory by that name is here: the error says how to name it.
+	t.Chdir(t.TempDir())
+	if err := os.Mkdir("dotfiles", 0o700); err != nil {
+		t.Fatal(err)
+	}
+	_, err := parse([]string{"dotfiles"}, new(bytes.Buffer))
+	if want := "'dotfiles' is not a command; see 'homeskillet help'\n  for the repository in dotfiles, write it as a path: ./dotfiles"; err == nil || err.Error() != want {
+		t.Errorf("a directory named like the word: %v, want %q", err, want)
+	}
+	if _, err := parse([]string{"bad\x1b[2Jword"}, new(bytes.Buffer)); err == nil || strings.ContainsRune(err.Error(), 0x1b) {
+		t.Errorf("a word with control characters reached the message: %v", err)
+	}
+	for a, b := range map[string]string{"": "", "link": "link", "lnk": "link", "kitten": "sitting"} {
+		want := map[string]int{"": 0, "link": 0, "lnk": 1, "kitten": 3}[a]
+		if got := editDistance(a, b); got != want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", a, b, got, want)
+		}
 	}
 }
