@@ -24,6 +24,12 @@ import (
 	"github.com/nicholashoule/homeskillet/internal/setup"
 )
 
+// findProgram is where prepare looks for a program, as a step's provides
+// would (see setup.Provided): PATH, the directories installers add to it,
+// and on macOS Homebrew's. Tests replace it, since emptying PATH does not
+// hide a program Homebrew installed.
+var findProgram = setup.Provided
+
 // developerModeStep names Developer Mode in prepare's output.
 const developerModeStep = "developer-mode"
 
@@ -131,7 +137,7 @@ var titles = map[string]string{developerModeStep: "Developer Mode", "winget": "w
 func assess(os, home string) []item {
 	found := func(id, program string, required bool, pending, missing string) item {
 		it := item{id: id, title: titles[id], required: required}
-		switch path := setup.Provided(program, home); {
+		switch path := findProgram(program, home); {
 		case path != "":
 			it.state, it.detail = itemDone, displayPath(path)
 		case pending != "":
@@ -335,7 +341,7 @@ func offerWindows(ctx context.Context, inv invocation, home string, items []item
 		}
 	}
 	steps := windowsSteps()
-	if setup.Provided("winget", home) == "" {
+	if findProgram("winget", home) == "" {
 		if err := out.outcome(itemMissing, "winget", wingetMissing); err != nil {
 			return err
 		}
@@ -368,7 +374,7 @@ func bringWinget(ctx context.Context, home string, options setup.Options) error 
 	if err != nil {
 		return err
 	}
-	found := func() bool { return setup.Provided("winget", home) != "" }
+	found := func() bool { return findProgram("winget", home) != "" }
 	ways := wingetSteps(powershell)
 	for i := range ways {
 		if found() {
@@ -477,7 +483,7 @@ func stillMissing(os, home string) []string {
 	if os == "windows" && host.ProbeSymlinks() != nil {
 		missing = append(missing, developerModeStep)
 	}
-	if setup.Provided("git", home) == "" {
+	if findProgram("git", home) == "" {
 		missing = append(missing, "git")
 	}
 	return missing

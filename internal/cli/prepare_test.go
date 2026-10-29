@@ -92,6 +92,20 @@ func TestWaitFor(t *testing.T) {
 	}
 }
 
+// hideGit makes prepare find no Git for the test, wherever it is installed;
+// emptying PATH would not hide Homebrew's.
+func hideGit(t *testing.T) {
+	t.Helper()
+	saved := findProgram
+	findProgram = func(name, home string) string {
+		if name == "git" {
+			return ""
+		}
+		return saved(name, home)
+	}
+	t.Cleanup(func() { findProgram = saved })
+}
+
 func TestPrepareArguments(t *testing.T) {
 	for _, args := range [][]string{{"prepare"}, {"prepare", "--dry-run"}, {"prepare", "--yes"}, {"prepare", "--home", "/tmp/h"}, {"prep"}, {"prep", "--dry-run"}} {
 		if inv, err := parse(args, new(bytes.Buffer)); err != nil || inv.command != "prepare" {
@@ -109,8 +123,6 @@ func TestPrepareArguments(t *testing.T) {
 func TestPrepareGit(t *testing.T) {
 	requireUnix(t)
 	_, home := repository(t)
-	empty := t.TempDir()
-	t.Setenv("PATH", empty)
 	prepare := func() (string, error) {
 		var output bytes.Buffer
 		err := Run(context.Background(), []string{"prepare", "--home", home}, strings.NewReader(""), &output, &output)
@@ -119,7 +131,10 @@ func TestPrepareGit(t *testing.T) {
 
 	// Without Git: says how to get it, offers nothing to run, and fails, so
 	// a script can tell.
+	restore := findProgram
+	hideGit(t)
 	output, err := prepare()
+	findProgram = restore
 	if err == nil || err.Error() != "not ready: missing git" || !strings.Contains(output, "missing\tgit\t"+gitAdvice(runtime.GOOS)) || strings.Contains(output, "[y/N]") {
 		t.Errorf("without git: %q, %v", output, err)
 	}
@@ -188,8 +203,9 @@ func TestPrepareView(t *testing.T) {
 		t.Errorf("overview:\n%s\nwant:\n%s", output.String(), want)
 	}
 
-	// Git is not on PATH: not ready, said once, so main prints nothing more.
-	t.Setenv("PATH", t.TempDir())
+	// No Git: not ready, said once, so main prints nothing more.
+	restore := findProgram
+	hideGit(t)
 	output.Reset()
 	err := out.closing("linux", home, items, true)
 	if !Reported(err) || output.String() != "Dry run: nothing changed; prepare would offer 2 steps.\nNot ready: Git is still needed.\n" {
@@ -202,6 +218,7 @@ func TestPrepareView(t *testing.T) {
 	}
 
 	// Git on PATH: ready.
+	findProgram = restore
 	bin := filepath.Join(t.TempDir(), "bin")
 	if err := os.Mkdir(bin, 0o700); err != nil {
 		t.Fatal(err)
