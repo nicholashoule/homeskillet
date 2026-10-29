@@ -14,9 +14,15 @@ import (
 // CheckSymlinks returns an error saying how to let this process make
 // symlinks when Windows would refuse it one, and nil when it would not.
 // Callers check before changing anything, so a link that cannot be made
-// never leaves half of its work done. It tries once, in a directory of its
-// own under the temporary directory, which it removes again.
-var CheckSymlinks = sync.OnceValue(func() error {
+// never leaves half of its work done. It tries once per process (see
+// ProbeSymlinks).
+var CheckSymlinks = sync.OnceValue(ProbeSymlinks)
+
+// ProbeSymlinks is CheckSymlinks without remembering the answer, for a caller
+// that checks again after Developer Mode may have been turned on, as
+// homeskillet prepare does. It tries, in a directory of its own under the
+// temporary directory, which it removes again.
+func ProbeSymlinks() error {
 	dir, err := os.MkdirTemp("", "homeskillet-symlink-")
 	if err != nil {
 		return err
@@ -28,4 +34,4 @@ var CheckSymlinks = sync.OnceValue(func() error {
 			"  then run the command again; nothing has changed")
 	}
 	return errors.Join(err, os.RemoveAll(dir))
-})
+}

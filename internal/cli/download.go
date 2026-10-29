@@ -155,8 +155,18 @@ func describeFailure(doing string, err error, stderr string) error {
 			what = stderr
 		}
 	}
-	return fmt.Errorf("%s: %s\n  %s Nothing was changed", doing, what, advice)
+	return downloadError{message: fmt.Sprintf("%s: %s\n  %s Nothing was changed", doing, what, advice), notFound: what == "GitHub has nothing there (404)"}
 }
+
+// downloadError is a failed download, as describeFailure words it, and
+// whether GitHub answered that nothing is there, which a caller asking for
+// one version can explain better.
+type downloadError struct {
+	message  string
+	notFound bool
+}
+
+func (e downloadError) Error() string { return e.message }
 
 // systemProgram returns the first of candidates, each an absolute path, that
 // exists, after checking that it is a regular file that only its owner, the

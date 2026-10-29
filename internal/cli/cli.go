@@ -19,6 +19,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"slices"
+	"strconv"
 	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
@@ -31,10 +32,16 @@ import (
 )
 
 var (
-	commands = []string{"status", "link", "unlink", "setup", "init", "check", "wsl", "backups", "update", "install", "use", "self", "version", "completion", "help"}
-	// selfAliases are the self commands that are also commands of their
-	// own: homeskillet update is homeskillet self update.
-	selfAliases     = []string{"update", "install", "use"}
+	commands = []string{"status", "link", "unlink", "setup", "init", "check", "prepare", "wsl", "backups",
+		"update", "install", "use", "list", "list-remote", "self", "version", "completion", "help"}
+	// selfAliases maps the self commands that are also commands of their own
+	// to the self command each runs: homeskillet update is homeskillet self
+	// update, and homeskillet list-remote is homeskillet self releases, named
+	// as version managers name it.
+	selfAliases = map[string]string{"update": "update", "install": "install", "use": "use", "list": "list", "list-remote": "releases"}
+	// shortNames maps a command's short form to the command, which it runs
+	// in every way; help and errors list only the full name.
+	shortNames      = map[string]string{"prep": "prepare"}
 	selfCommands    = []string{"install", "update", "releases", "use", "list", "remove"}
 	backupsCommands = []string{"list", "purge"}
 	// scoped lists the commands that accept each flag that only some
@@ -44,9 +51,10 @@ var (
 	scoped = map[string][]string{
 		"repo": {"status", "link", "unlink", "setup", "init", "check"},
 		// init writes only into the repository.
-		"home": {"status", "link", "unlink", "setup", "self", "backups"},
-		// --yes approves running steps, or deleting backups, without asking.
-		"yes": {"setup", "backups"},
+		"home": {"status", "link", "unlink", "setup", "prepare", "self", "backups"},
+		// --yes approves running steps, prepare's installs, or deleting
+		// backups, without asking.
+		"yes": {"setup", "prepare", "backups"},
 		// self installs the running build and version prints its own
 		// details, so neither acts for another platform. init writes it
 		// into the starter manifest.
@@ -267,6 +275,8 @@ func runInHome(ctx context.Context, inv invocation, home string, input io.Reader
 		return true, runSelf(ctx, inv, home, output, diagnostics)
 	case "backups":
 		return true, runBackups(inv, home, input, output)
+	case "prepare":
+		return true, runPrepare(ctx, inv, home, input, output, diagnostics)
 	}
 	return false, nil
 }
@@ -442,15 +452,71 @@ func withV(v string) string {
 // such as update, becomes self with the alias as its command.
 func takeCommand(args []string) (string, []string, error) {
 	command, rest := word(args, "status")
+	if full, ok := shortNames[command]; ok {
+		command = full
+	}
+	if sub, ok := selfAliases[command]; ok {
+		return "self", append([]string{sub}, rest...), nil
+	}
 	switch {
-	case slices.Contains(selfAliases, command):
-		return "self", append([]string{command}, rest...), nil
 	case slices.Contains(commands, command):
 		return command, rest, nil
 	case isPath(command):
 		return "status", args, nil
 	}
-	return "", nil, fmt.Errorf("unknown command %q; use %s, or a repository path such as ./%s", command, strings.Join(commands, ", "), command)
+	return "", nil, unknownCommand(command)
+}
+
+// unknownCommand says that word is not a command, in two short lines rather
+// than the whole list: the nearest command when word is likely a typo of it,
+// then where the list is, and how to write a repository instead, since a bare
+// word is never read as one (see isPath).
+func unknownCommand(word string) error {
+	shown := word
+	if !config.Printable(shown) {
+		shown = strconv.Quote(shown)
+	}
+	guess := ""
+	if near := nearestCommand(word); near != "" {
+		guess = fmt.Sprintf("; did you mean %s?", near)
+	}
+	return fmt.Errorf("unknown command %s%s\n  homeskillet help lists the commands; write a repository as a path, such as ./%s", shown, guess, shown)
+}
+
+// nearestCommand returns the command word is most likely a typo of: the one
+// at the smallest edit distance, if that is at most two and less than half
+// the word, so that a short or unrelated word suggests nothing. Ties go to
+// the command listed first.
+func nearestCommand(word string) string {
+	best, bestDistance := "", 3
+	for _, command := range commands {
+		if d := editDistance(strings.ToLower(word), command); d < bestDistance && 2*d < len(word) {
+			best, bestDistance = command, d
+		}
+	}
+	return best
+}
+
+// editDistance returns the Levenshtein distance between a and b, by bytes,
+// which is enough for command names.
+func editDistance(a, b string) int {
+	previous := make([]int, len(b)+1)
+	for j := range previous {
+		previous[j] = j
+	}
+	for i := 1; i <= len(a); i++ {
+		current := make([]int, len(b)+1)
+		current[0] = i
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			current[j] = min(previous[j]+1, current[j-1]+1, previous[j-1]+cost)
+		}
+		previous = current
+	}
+	return previous[len(b)]
 }
 
 // subcommands lists, for each command that takes a command of its own after

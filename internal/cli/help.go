@@ -23,12 +23,15 @@ const usageLines = `  homeskillet [status|link|unlink] [REPOSITORY [FILE...]] [o
   homeskillet setup [REPOSITORY] [options]
   homeskillet init [REPOSITORY] [options]
   homeskillet check [REPOSITORY] [options]
+  homeskillet prepare|prep [options]
   homeskillet wsl install [options]
   homeskillet wsl status|link|unlink|setup [REPOSITORY [FILE...|STEP...]] [options]
   homeskillet backups [list|purge] [options]
   homeskillet update [VERSION] [options]
   homeskillet install [VERSION] [options]
   homeskillet use latest|previous|VERSION [options]
+  homeskillet list [options]
+  homeskillet list-remote [options]
   homeskillet self install [VERSION] [options]
   homeskillet self list [options]
   homeskillet self update [VERSION] [options]
@@ -50,15 +53,21 @@ var commandHelp = map[string]string{
 	"check":  "Check the repository's manifests and files, for every platform, and list each issue, or say that it is valid",
 	"wsl": "On Windows, or from a WSL shell, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
 		"there on a copy of a Windows clone, or on a clone in the distribution written / or ~ first",
+	"prepare": "Check that this machine has what homeskillet needs before a repository is cloned, and offer what is missing, each shown and run only " +
+		"once you approve: on Windows Developer Mode, Git, and PowerShell 7 through winget; elsewhere it says how to install Git. prep is short for it",
 	"backups": "List the files link --force moved into a backup; backups purge deletes them after showing them and asking",
-	"update": "Install the newest release of homeskillet from GitHub, or the VERSION given, checked against its SHA256SUMS, keeping the old one to go back to. " +
+	"update": "Install the newest release of homeskillet from GitHub, checked against its SHA256SUMS, and run it, following latest again if a version is pinned; " +
+		"with a VERSION, install that release and leave which one runs as it is. The old version stays installed to go back to. " +
 		"At a terminal, status, link, unlink, and setup end with a note when a newer release is available, checked once a day; " +
 		"export HOMESKILLET_UPDATE_CHECK=off to turn that off",
 	"install": "Install this build of homeskillet as a version of its own, and make it the one the command runs unless another is pinned; " +
 		"with a VERSION, install that release from GitHub instead, as update does. A build from go run or go install installs only where none is yet",
-	"use": "Run latest, previous, or the installed VERSION; latest follows new installs, a version stays pinned",
+	"use":         "Run latest, previous, or the installed VERSION; latest follows new installs, a version stays pinned",
+	"list":        "List the installed versions of homeskillet, which one runs, and each one's build details",
+	"list-remote": "List the versions published on GitHub, newest first, and which of them are installed and which one runs",
 	"self": "Install, update, list, switch, or remove versions of homeskillet. self update installs the newest release from GitHub, or the VERSION given, " +
-		"checked against its SHA256SUMS, and keeps the old one to go back to with self use; self releases lists the releases there are",
+		"checked against its SHA256SUMS, and keeps the old one to go back to with self use; self releases lists the releases there are. " +
+		"update, install, use, list, and list-remote are the same as self update, self install, self use, self list, and self releases",
 	"version": "Show the version and build details",
 	"completion": "Print a shell completion script; load it with eval \"$(homeskillet completion bash)\" in ~/.bashrc, zsh in ~/.zshrc, " +
 		"or in PowerShell with homeskillet completion pwsh | Out-String | Invoke-Expression in $PROFILE",

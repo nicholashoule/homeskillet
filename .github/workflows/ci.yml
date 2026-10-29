@@ -65,6 +65,14 @@ jobs:
         shell: bash
         run: go run ./tools/smoke ${{ runner.os == 'Windows' && '-allow-root' || '' }}
 
+      # homeskillet prepare's checks on each system, read-only: on Windows,
+      # the Developer Mode probe and finding Git, winget, and PowerShell on
+      # PATH, winget's being an app execution alias. The runners have Git, so
+      # it reports ready; elevated Windows runners can make symlinks.
+      - name: Prepare (dry run)
+        shell: bash
+        run: go run . prepare --dry-run ${{ runner.os == 'Windows' && '--allow-root' || '' }}
+
   # The release workflow's build, run on a tag made here and never pushed, so
   # a change that would break a release fails here rather than when a version
   # is tagged. It uses the newest version in CHANGELOG.md, whose section the

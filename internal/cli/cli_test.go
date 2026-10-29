@@ -1234,3 +1234,38 @@ func TestNextSetup(t *testing.T) {
 		t.Fatalf("blocked link names the setup step: %q, %v", output.String(), err)
 	}
 }
+
+func TestUnknownCommand(t *testing.T) {
+	for _, test := range []struct{ word, guess string }{
+		{"lnk", "did you mean link?"},
+		{"stauts", "did you mean status?"},
+		{"Unlnk", "did you mean unlink?"},
+		{"udpate", "did you mean update?"},
+		{"lst", "did you mean list?"},
+		{"xyzzy", ""},
+		{"go", ""},
+	} {
+		_, err := parse([]string{test.word}, new(bytes.Buffer))
+		if err == nil {
+			t.Fatalf("%q was accepted", test.word)
+		}
+		message := err.Error()
+		first, second, _ := strings.Cut(message, "\n")
+		if !strings.HasPrefix(first, "unknown command "+test.word) || !strings.Contains(second, "homeskillet help lists the commands") ||
+			!strings.Contains(second, "./"+test.word) || strings.Contains(message, "completion, help") {
+			t.Errorf("%q: %q", test.word, message)
+		}
+		if test.guess == "" && strings.Contains(first, "did you mean") || test.guess != "" && !strings.HasSuffix(first, test.guess) {
+			t.Errorf("%q: %q, want the guess %q", test.word, first, test.guess)
+		}
+	}
+	if _, err := parse([]string{"bad\x1b[2Jword"}, new(bytes.Buffer)); err == nil || strings.ContainsRune(err.Error(), 0x1b) {
+		t.Errorf("a word with control characters reached the message: %v", err)
+	}
+	for a, b := range map[string]string{"": "", "link": "link", "lnk": "link", "kitten": "sitting"} {
+		want := map[string]int{"": 0, "link": 0, "lnk": 1, "kitten": 3}[a]
+		if got := editDistance(a, b); got != want {
+			t.Errorf("editDistance(%q, %q) = %d, want %d", a, b, got, want)
+		}
+	}
+}

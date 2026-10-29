@@ -403,9 +403,18 @@ func reportRunning(log io.Writer, state State, after []string, v string) error {
 
 // The lines reportRunning writes, which AboutRunning recognizes.
 const (
-	pinnedLine = "pinned\t%s\trun homeskillet self use latest to follow the newest version\n"
-	latestLine = "note\t%s still runs because it is latest; homeskillet self use %s runs %s\n"
+	pinnedLine = "pinned\t%s\trun homeskillet use latest to follow the newest version\n"
+	latestLine = "note\t%s still runs because it is latest; homeskillet use %s runs %s\n"
 )
+
+// runningLines are the lines AboutRunning recognizes: this version's, and
+// the ones versions before 0.4.0 write, since a caller such as update reads
+// what another version's self install wrote.
+var runningLines = []string{
+	pinnedLine, latestLine,
+	"pinned\t%s\trun homeskillet self use latest to follow the newest version\n",
+	"note\t%s still runs because it is latest; homeskillet self use %s runs %s\n",
+}
 
 // AboutRunning reports whether line, one of the lines Install writes, without
 // its newline, is the one that says which version runs after the install
@@ -413,7 +422,7 @@ const (
 // as wsl install does, leaves it out, as it would be out of date before it
 // is read.
 func AboutRunning(line string) bool {
-	return fits(line, pinnedLine) || fits(line, latestLine)
+	return slices.ContainsFunc(runningLines, func(format string) bool { return fits(line, format) })
 }
 
 // fits reports whether line is what format, with %s verbs only and a final
@@ -523,7 +532,7 @@ func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 	case !version.Valid(choice):
 		return fmt.Errorf("%q is not %s, %s, or a version such as v0.0.1", choice, Latest, Previous)
 	case !slices.Contains(state.Versions, choice):
-		return fmt.Errorf("%s is not installed; homeskillet self list shows what is", choice)
+		return fmt.Errorf("%s is not installed; homeskillet list shows what is, and homeskillet install %s installs it", choice, choice)
 	}
 	target, line := Latest, Latest+" ("+state.Latest()+")"
 	if pinned != "" {
@@ -572,10 +581,10 @@ func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 		return err
 	}
 	if !slices.Contains(state.Versions, v) {
-		return fmt.Errorf("%s is not installed; homeskillet self list shows what is", v)
+		return fmt.Errorf("%s is not installed; homeskillet list shows what is", v)
 	}
 	if v == state.Current {
-		return fmt.Errorf("%s is the version that runs; choose another first with homeskillet self use", v)
+		return fmt.Errorf("%s is the version that runs; choose another first with homeskillet use", v)
 	}
 	// The program running now may be another version, run by its path.
 	// Windows cannot delete a running program, and would refuse only after

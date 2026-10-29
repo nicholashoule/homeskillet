@@ -14,11 +14,13 @@ option.
 | `setup` | Show each setup step and run the ones you approve ([manifest.md](manifest.md#setup-steps)). |
 | `init` | Write a starter `bootstrap.json` where there is no manifest ([manifest.md](manifest.md#creating-one)). |
 | `check` | List every issue in a repository, for every platform, or say it is valid ([manifest.md](manifest.md#checking-one)). |
+| `prepare`, `prep` | Check that this machine has what homeskillet needs, such as Developer Mode and Git on Windows, and offer what is missing once you approve ([windows.md](windows.md#preparing-windows)). |
 | `wsl` | On Windows, or from a WSL shell, act in a WSL distribution ([windows.md](windows.md#the-wsl-command)). |
 | `backups` | List the files `link --force` moved aside; `backups purge` deletes them once you approve ([Conflicts and Backups](#conflicts-and-backups)). |
 | `update` | Install the newest release from GitHub, or the version given, checked against its `SHA256SUMS`, keeping the old one ([install.md](install.md#updating)). |
 | `install`, `use` | Install this build as a version of its own, or with a version, that release as `update` does; run `latest`, `previous`, or a version ([install.md](install.md#versions-and-updates)). |
-| `self` | The same as `update`, `install`, and `use`, plus `self list`, `self releases`, and `self remove` ([install.md](install.md#versions-and-updates)). |
+| `list`, `list-remote` | List the installed versions and which one runs; list the versions published on GitHub and which are installed ([install.md](install.md#versions-and-updates)). |
+| `self` | The same as `update`, `install`, `use`, `list`, and `list-remote` (`self releases`), plus `self remove` ([install.md](install.md#versions-and-updates)). |
 | `version`, `completion`, `help` | Show the version, print a shell completion script ([install.md](install.md#shell-completion)), or show the help. |
 
 ```sh

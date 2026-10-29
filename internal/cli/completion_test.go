@@ -71,7 +71,11 @@ func TestCompletions(t *testing.T) {
 	}{
 		// Only commands come first; directories only once the word looks
 		// like a repository path.
-		{[]string{"li"}, ":none", []string{"link"}},
+		{[]string{"lin"}, ":none", []string{"link"}},
+		{[]string{"li"}, ":none", []string{"link", "list", "list-remote"}},
+		{[]string{"list-remote", "--h"}, ":none", []string{"--help", "--home"}},
+		{[]string{"prep", "--y"}, ":none", []string{"--yes"}},
+		{[]string{"pre"}, ":none", []string{"prepare"}},
 		{[]string{""}, ":none", commands},
 		{[]string{"./do"}, ":dirs", nil},
 		{[]string{"~/do"}, ":dirs", nil},
@@ -228,7 +232,7 @@ if ((${#COMPREPLY[@]})); then printf '%s\n' "${COMPREPLY[@]}"; fi`
 		words []string
 		want  []string
 	}{
-		{[]string{"li"}, []string{"link"}},
+		{[]string{"lin"}, []string{"link"}},
 		// The setup command, though the current directory has a setup/.
 		{[]string{"set"}, []string{"setup"}},
 		// Nothing but commands, though the directory bash runs in has files.
@@ -321,7 +325,7 @@ $result.CompletionMatches | ForEach-Object CompletionText
 		line string
 		want []string
 	}{
-		{"homeskillet li", []string{"link"}},
+		{"homeskillet lin", []string{"link"}},
 		{"homeskillet ", commands},
 		{"homeskillet setup --repo " + repo + " --home " + home + " f", []string{"fonts", "fzf"}},
 		{"homeskillet link --platform darwin/a", []string{"darwin/amd64", "darwin/arm64"}},

@@ -136,14 +136,21 @@ otherwise. `install.New` resolves the prefix's existing directories, then:
 - `self list` reports versions, roles, and the build details in each version's `build.json`. Install writes that record
   from `version.Current`, which describes the binary being copied because it is the running program. Parsing the details
   out of each binary instead would link in `debug/buildinfo` and its ELF, Mach-O, and PE readers.
-- `self update` downloads a published release, the newest or the one named, and runs it: `latestVersion` reads where
-  GitHub's latest-release page redirects, `downloadRelease` fetches `SHA256SUMS` and then the binary for the detected
-  hardware with the system's `curl` at a fixed path, `verifyDownload` hashes it with the system's hashing tool, and the
-  download then installs itself with `self install`, as `wsl install` has a Linux build do in a distribution. The
-  download is staged under the data directory, not `/tmp`, and a dry run stops before anything downloaded runs
-  ([safety.md](safety.md#updating)).
+- `self update` downloads a published release, the newest or the one named, and runs it to install itself; without a
+  version, it then follows `latest` if a version was pinned (`followLatest`), dropping the install's line about the pin:
+  `latestVersion` reads where GitHub's latest-release page redirects, `downloadRelease` fetches `SHA256SUMS` and then
+  the binary for the detected hardware with the system's `curl` at a fixed path, `verifyDownload` hashes it with the
+  system's hashing tool, and the download then installs itself with `self install`, as `wsl install` has a Linux build
+  do in a distribution. The download is staged under the data directory, not `/tmp`, and a dry run stops before anything
+  downloaded runs ([safety.md](safety.md#updating)).
+- `prepare` (`prepare.go`) needs no repository. On Windows it probes Developer Mode with `host.ProbeSymlinks`, which
+  unlike `host.CheckSymlinks` does not keep its answer, and offers winget's registration and the Git and PowerShell 7
+  installs as built-in steps: `setup.PrepareBuiltin` and `setup.RunBuiltin` give them the review, prompt, PATH, and done
+  checks of a repository's steps, with no repository checks, run in the home. Elsewhere it looks for Git and says how
+  to install it.
 - `self releases` lists the published releases from GitHub's API, marking the newest, those installed, and the current
-  one. `update`, `install`, and `use` are the same commands without `self`, rewritten in `takeCommand`.
+  one. `update`, `install`, `use`, `list`, and `list-remote` are commands of their own, rewritten in `takeCommand` to
+  `self update`, `self install`, `self use`, `self list`, and `self releases`.
 - The note that a newer release is available (`startUpdateCheck`, in `notice.go`) runs the same latest-release lookup
   alongside `status`, `link`, `unlink`, and `setup` at a terminal, once a day, recorded in `update.json` in the data
   directory, and is collected after the command's output, at most two seconds after the command started, so it never

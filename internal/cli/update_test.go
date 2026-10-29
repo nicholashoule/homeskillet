@@ -22,6 +22,9 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/nicholashoule/homeskillet/internal/install"
+	"github.com/nicholashoule/homeskillet/internal/version"
 )
 
 // fakeDownloader serves files from memory in place of curl.
@@ -120,6 +123,12 @@ func TestSelfArguments(t *testing.T) {
 		{args: []string{"use", "0.1.1"}, sub: "use", operand: "v0.1.1"},
 		{args: []string{"self", "use", "v0.1.1"}, sub: "use", operand: "v0.1.1"},
 		{args: []string{"self", "releases"}, sub: "releases"},
+		{args: []string{"list"}, sub: "list"},
+		{args: []string{"list", "--prefix", "/opt/hs"}, sub: "list"},
+		{args: []string{"list-remote"}, sub: "releases"},
+		{args: []string{"list-remote", "--home", "/tmp/h"}, sub: "releases"},
+		{args: []string{"list", "extra"}, err: "unexpected arguments"},
+		{args: []string{"list-remote", "--force"}, err: "--force applies only to link"},
 		{args: []string{"use"}, err: "self use needs a version"},
 		{args: []string{"self", "update", "a", "b"}, err: "unexpected arguments"},
 		{args: []string{"update", "--force"}, err: "--force applies only to link"},
@@ -161,6 +170,17 @@ func TestSelfReleases(t *testing.T) {
 	// the latest release page skips it and so does update.
 	if want := "v0.4.0\tpre-release\nv0.2.0\tnewest\nv0.1.1\t-\n"; output != want {
 		t.Errorf("releases = %q, want %q", output, want)
+	}
+	// list-remote is the same command, and list is self list.
+	for alias, same := range map[string]string{"list-remote": "releases", "list": "list"} {
+		want, err := invoke("self", "", home, same)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got bytes.Buffer
+		if err := Run(context.Background(), []string{alias, "--home", home}, strings.NewReader(""), &got, &got); err != nil || got.String() != want {
+			t.Errorf("%s = %q, %v; want %q, as self %s gives", alias, got.String(), err, want, same)
+		}
 	}
 	useDownloader(t, fakeDownloader{files: map[string][]byte{releasesAPI: []byte(`[]`)}})
 	if output, err := invoke("self", "", home, "releases"); err != nil || !strings.Contains(output, "no releases published") {
@@ -264,7 +284,7 @@ func TestSelfUpdate(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(versionDir, "homeskillet"), []byte("#!/bin/sh\n"), 0o700); err != nil {
 		t.Fatal(err)
 	}
-	if output, err := invoke("self", "", home, "update"); err != nil || !strings.Contains(output, "unchanged\tv9.9.9\talready installed; homeskillet self use v9.9.9 runs it") {
+	if output, err := invoke("self", "", home, "update"); err != nil || !strings.Contains(output, "unchanged\tv9.9.9\talready installed; homeskillet use v9.9.9 runs it") {
 		t.Errorf("update of an installed version: %q, %v", output, err)
 	}
 }
@@ -448,4 +468,96 @@ func TestCurlOptions(t *testing.T) {
 			}
 		}
 	}
+}
+
+// installVersions installs a stand-in program as each of versions in home's
+// default layout, and returns the layout.
+func installVersions(t *testing.T, home string, versions ...string) install.Layout {
+	t.Helper()
+	layout, err := selfLayout(invocation{}, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := filepath.Join(t.TempDir(), "homeskillet")
+	if err := os.WriteFile(program, []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, v := range versions {
+		if err := layout.Install(program, version.Info{Version: v}, false, nil); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return layout
+}
+
+func TestUpdateFollowsLatest(t *testing.T) {
+	requireUnix(t)
+	requireSymlinks(t)
+	_, home := repository(t)
+	t.Setenv("HOME", home)
+	layout := installVersions(t, home, "v9.9.8", "v9.9.9")
+	if err := layout.Use("v9.9.8", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	useDownloader(t, fakeDownloader{target: releaseTags + "v9.9.9"})
+
+	// install VERSION and update VERSION install and leave a pin alone.
+	for _, args := range [][]string{{"install", "9.9.9"}, {"update", "9.9.9"}} {
+		output, err := invoke("self", "", home, args...)
+		if err != nil || !strings.Contains(output, "unchanged\tv9.9.9") {
+			t.Errorf("%q: %q, %v", args, output, err)
+		}
+	}
+	if state, err := layout.Inspect(); err != nil || state.Following || state.Current != "v9.9.8" {
+		t.Fatalf("after install and update with a version: %+v, %v", state, err)
+	}
+
+	// A dry run says it would follow latest, and changes nothing.
+	output, err := invoke("self", "", home, "update", "--dry-run")
+	if err != nil || !strings.Contains(output, "current\tlatest (v9.9.9)") {
+		t.Errorf("dry run: %q, %v", output, err)
+	}
+	if state, _ := layout.Inspect(); state.Following {
+		t.Error("the dry run followed latest")
+	}
+
+	// update with no version follows latest again, and says how to go back.
+	output, err = invoke("self", "", home, "update")
+	if err != nil || !strings.Contains(output, "current\tlatest (v9.9.9)") || !strings.Contains(output, "to go back, run homeskillet use v9.9.8") {
+		t.Errorf("update: %q, %v", output, err)
+	}
+	if state, err := layout.Inspect(); err != nil || !state.Following || state.Current != "v9.9.9" {
+		t.Errorf("after update: %+v, %v", state, err)
+	}
+	// Already there: nothing to do.
+	if output, err := invoke("self", "", home, "update"); err != nil || !strings.HasPrefix(output, "unchanged\tv9.9.9\talready installed\n") {
+		t.Errorf("update again: %q, %v", output, err)
+	}
+}
+
+func TestInstallUnpublished(t *testing.T) {
+	_, home := repository(t)
+	useDownloader(t, missingDownloader{})
+	_, err := invoke("self", "", home, "install", "0.4.0")
+	if err == nil || !strings.Contains(err.Error(), "v0.4.0 is not published on GitHub") || !strings.Contains(err.Error(), "homeskillet list-remote") {
+		t.Errorf("install of an unpublished version: %v", err)
+	}
+}
+
+// missingDownloader answers every download with GitHub's 404.
+type missingDownloader struct{}
+
+func (missingDownloader) get(context.Context, string, string) error {
+	return describeFailure("downloading x", exitStatus22(), "curl: (22) The requested URL returned error: 404")
+}
+
+func (missingDownloader) redirect(context.Context, string) (string, error) { return "", nil }
+
+// exitStatus22 returns the error a command exiting with status 22 gives, as
+// curl --fail does for an HTTP error.
+func exitStatus22() error {
+	if runtime.GOOS == "windows" {
+		return exec.CommandContext(context.Background(), "cmd", "/c", "exit 22").Run()
+	}
+	return exec.CommandContext(context.Background(), "sh", "-c", "exit 22").Run()
 }

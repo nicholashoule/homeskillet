@@ -217,6 +217,9 @@ type Options struct {
 	// tab-separated line per outcome to Output, the form scripts parse; the
 	// CLI's terminal view supplies its own.
 	Report func(outcome string, plan Plan) error
+	// builtin marks steps homeskillet itself defines, run by RunBuiltin:
+	// there is no repository to check or run them in, so they run in Home.
+	builtin bool
 }
 
 // report writes outcome for plan the way scripts parse it, one tab-separated
@@ -243,6 +246,76 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 			return err
 		}
 	}
+	opts.builtin = false
+	return run(ctx, plans, opts)
+}
+
+// PrepareBuiltin reports the state of steps that homeskillet itself defines,
+// such as installing Git with winget for homeskillet prepare, rather than a
+// repository. Their commands are part of homeskillet, so the repository
+// rules do not apply; the home must still be private, as for Prepare, since
+// the steps run with HOME set to it and a Creates path found there would
+// mark one done. Built-in steps have no inputs, which need a repository.
+func PrepareBuiltin(steps []config.Step, home string) ([]Plan, error) {
+	if err := trust.CheckLocation(home); err != nil {
+		return nil, err
+	}
+	if err := trust.CheckDirectory(home); err != nil {
+		return nil, err
+	}
+	plans := make([]Plan, 0, len(steps))
+	for i := range steps {
+		// A repository's steps are validated when the manifest is read;
+		// these are checked here, so an empty command can never reach
+		// execute, which runs a command's first word.
+		empty := len(steps[i].Run) == 0 || slices.ContainsFunc(steps[i].Run, func(command []string) bool { return len(command) == 0 || command[0] == "" })
+		if hasInputs(steps[i]) || empty {
+			return nil, fmt.Errorf("built-in step %s must have commands, none empty, and no inputs", steps[i].Name)
+		}
+		plan, err := stepState(steps[i], "", home, record{})
+		if err != nil {
+			return nil, err
+		}
+		plans = append(plans, plan)
+	}
+	return plans, nil
+}
+
+// RunBuiltin offers and runs steps PrepareBuiltin prepared exactly as Run
+// does a repository's: each pending one is shown as it will run and runs
+// only once approved, with no as the default answer, or under Yes. They run
+// in Home, which opts.Repo must leave empty, since there is no repository.
+func RunBuiltin(ctx context.Context, plans []Plan, opts Options) error {
+	if opts.Repo != "" {
+		return errors.New("built-in steps run in the home, not a repository")
+	}
+	if err := trust.CheckLocation(opts.Home); err != nil {
+		return err
+	}
+	opts.builtin = true
+	return run(ctx, plans, opts)
+}
+
+// dir returns where opts runs steps: the repository, or for built-in steps
+// the home.
+func (opts Options) dir() string {
+	if opts.builtin {
+		return opts.Home
+	}
+	return opts.Repo
+}
+
+// label names a step in errors: a setup step, or for built-in steps, which
+// setup does not run, a step.
+func (opts Options) label() string {
+	if opts.builtin {
+		return "step"
+	}
+	return "setup step"
+}
+
+// run is Run and RunBuiltin once their options are checked.
+func run(ctx context.Context, plans []Plan, opts Options) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -283,13 +356,17 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 			}
 			continue
 		}
-		if err := errors.Join(trust.CheckTree(opts.Repo), trust.CheckDirectory(opts.Home)); err != nil {
+		var checked error
+		if !opts.builtin {
+			checked = trust.CheckTree(opts.Repo)
+		}
+		if err := errors.Join(checked, trust.CheckDirectory(opts.Home)); err != nil {
 			return fmt.Errorf("before setup step %s: %w", plan.Step.Name, err)
 		}
 		if err := opts.Report(string(Pending), *plan); err != nil {
 			return err
 		}
-		if err := Describe(opts.Output, *plan, opts.Repo); err != nil {
+		if err := Describe(opts.Output, *plan, opts.dir()); err != nil {
 			return err
 		}
 		if !opts.Yes {
@@ -305,7 +382,7 @@ func Run(ctx context.Context, plans []Plan, opts Options) error {
 			}
 		}
 		if err := execute(ctx, plan.Step, opts); err != nil {
-			return fmt.Errorf("setup step %s: %w", plan.Step.Name, err)
+			return fmt.Errorf("%s %s: %w", opts.label(), plan.Step.Name, err)
 		}
 		// The fingerprint taken before the step ran, of what was approved:
 		// inputs changed meanwhile offer it again next time.
@@ -396,15 +473,17 @@ func executeCommand(ctx context.Context, command []string, opts Options) error {
 	cmd := exec.CommandContext(ctx, program, command[1:]...) //nolint:gosec // G204: running the step the user just reviewed and approved is the purpose
 	// argv[0] stays the name the user reviewed, not the resolved path.
 	cmd.Args[0] = command[0]
-	cmd.Dir = opts.Repo
+	cmd.Dir = opts.dir()
 	// Later entries win, so these replace any inherited values, on Windows
 	// whatever their case, such as Path for PATH.
 	cmd.Env = append(os.Environ(),
 		"HOME="+opts.Home,
 		"HOMESKILLET_HOME="+opts.Home,
-		"HOMESKILLET_REPO="+opts.Repo,
 		"PATH="+path,
 	)
+	if !opts.builtin {
+		cmd.Env = append(cmd.Env, "HOMESKILLET_REPO="+opts.Repo)
+	}
 	// Windows programs find the profile through USERPROFILE; HOME, which
 	// Windows does not set, is for Git and other programs from Unix.
 	if runtime.GOOS == "windows" {

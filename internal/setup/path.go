@@ -51,6 +51,13 @@ func searchPath(home string) string {
 	return path
 }
 
+// Provided returns where the program name is installed for steps run with
+// HOME set to home, or "": the lookup a step's Provides gets (see provided),
+// for checks such as homeskillet prepare's.
+func Provided(name, home string) string {
+	return provided(name, home)
+}
+
 // provided returns where the program a step's Provides names is installed,
 // or "" if it is not: on the step's search path (see searchPath) or in
 // Homebrew's bin directories. Nothing is run; this only looks for a program.

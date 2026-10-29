@@ -23,13 +23,13 @@ On a machine without homeskillet, Go builds and installs a release in one comman
 and Windows alike:
 
 ```sh
-go run github.com/nicholashoule/homeskillet@latest self install     # or @v0.3.0 for that release
+go run github.com/nicholashoule/homeskillet@latest install     # or @v0.3.1 for that release
 ```
 
 Go fetches the tag's source through its module proxy and, with Go's default settings, checks it against the public
 checksum database, `sum.golang.org`, before building, so there is no download to check by hand. What it builds is that
 version compiled by your Go, not the release's binary, and `version` shows no commit. It is for a first install only:
-where any version is installed, such a build's `self install` refuses, changing nothing, since from then on homeskillet
+where any version is installed, such a build's `install` refuses, changing nothing, since from then on homeskillet
 manages its versions itself, with `homeskillet update` and `homeskillet install VERSION` ([Updating](#updating)).
 
 ## Downloading a Release
@@ -45,13 +45,13 @@ curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64" && curl -fsSLO --pr
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
 gh attestation verify homeskillet-linux-amd64 --repo OWNER/homeskillet   # optional: that the release workflow built it
 chmod +x homeskillet-linux-amd64
-./homeskillet-linux-amd64 self install
+./homeskillet-linux-amd64 install
 ```
 
 With the GitHub CLI, `gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern
 SHA256SUMS` fetches the same two files.
 
-`self install` installs the downloaded binary as `make install` installs a build (see [Versions and
+`install` installs the downloaded binary as `make install` installs a build (see [Versions and
 Updates](#versions-and-updates)); delete the download afterward. From then on, [`homeskillet update`](#updating) does
 the downloading and checking. Release builds are reproducible: building the tag with the Go release the workflow used
 gives the same `SHA256SUMS` ([release.md](release.md#tagging)).
@@ -59,16 +59,21 @@ gives the same `SHA256SUMS` ([release.md](release.md#tagging)).
 ## Updating
 
 ```sh
-homeskillet update                    # install the newest release, if it is not installed
+homeskillet update                    # install the newest release if needed, and run it
 homeskillet update --dry-run          # download and check it, but change nothing
-homeskillet install 0.3.0             # install that release; update 0.3.0 does the same
-homeskillet self releases             # the published releases, and which are installed
-homeskillet use 0.3.0                 # run it; update's closing note names the version to go back to
+homeskillet list-remote               # the published releases, and which are installed
+homeskillet list                      # the installed versions, and which one runs
+homeskillet install 0.3.1             # install that release, without changing which one runs
+homeskillet use 0.3.1                 # run that version, pinned; use latest follows the newest again
 ```
 
-`install` with a version and `update` with one are the same: each takes only a release's version, three numbers such as
-`0.3.0` or `v0.3.0`, and refuses anything else, a pre-release such as `v0.4.0-rc.1` included, before it downloads.
-Without a version, `install` installs the running build instead, as for a first install.
+`update` without a version always leaves the newest release running: it installs it when it is missing, and when you
+had pinned a version with `use`, it follows `latest` again, as `homeskillet use latest` would, then names the version
+that ran before so you can go back. `install` with a version, and `update` with one, install that release and leave
+which version runs as it was. Either takes only a release's version, three numbers such as `0.3.1` or `v0.3.1`, and
+refuses anything else, a pre-release such as `v0.4.0-rc.1` included, before it downloads; a version that is not
+published says so and points to `list-remote`. Without a version, `install` installs the running build instead, as for
+a first install.
 
 `update` asks GitHub which release is newest, downloads the release's `SHA256SUMS` and the binary for this machine into
 a private directory under the [data directory](#data-directory), checks the binary against the listed SHA-256, checks
@@ -105,9 +110,10 @@ The check against `SHA256SUMS` proves the download arrived intact, not who publi
 repository also carry signed build provenance, which `gh attestation verify` checks (see [Downloading a
 Release](#downloading-a-release)); `update` does not check it yet.
 
-`update`, `install`, and `use` are the same as `self update`, `self install`, and `self use`; versions may be written
-with or without their leading `v`. Pinning a version runs that version's own command, so a version from before 0.3.0
-has no `use`; `homeskillet self use latest` works from any version and is the way back. A development build, whose
+`update`, `install`, `use`, `list`, and `list-remote` are the same as `self update`, `self install`, `self use`, `self
+list`, and `self releases`; versions may be written with or without their leading `v`. Pinning a version runs that
+version's own command, so a version from before 0.3.0 has no `use`, and one from before 0.4.0 no `list` or
+`list-remote`; `homeskillet self use latest` works from any version and is the way back. A development build, whose
 version is a pseudo-version or `+dirty`, can update to a release too; the release then ranks as `latest` only if its
 version is higher.
 
@@ -184,23 +190,23 @@ default data directory, on Linux and macOS (Windows keeps `current` as a file in
   command never disappears or runs a half-written file.
 
 ```sh
-homeskillet self list                 # versions, roles, and recorded build details
-homeskillet self releases             # published releases, newest first, and which are installed
-homeskillet self use previous         # roll back; pins that version
-homeskillet self use v0.0.1           # pin any installed version
-homeskillet self use latest           # follow the newest again
+homeskillet list                      # versions, roles, and recorded build details
+homeskillet list-remote               # published releases, newest first, and which are installed
+homeskillet use previous              # roll back; pins that version
+homeskillet use v0.0.1                # pin any installed version
+homeskillet use latest                # follow the newest again
 homeskillet self remove v0.0.1        # delete a version you no longer need
-homeskillet self install --dry-run    # preview; the self commands all take it
+homeskillet install --dry-run         # preview; every version command takes it
 ```
 
-A pinned version stays pinned when you install another; `self install` says so. If the pinned version's directory is
-deleted by hand, the command dangles; `self list` says so, and `homeskillet self use latest` repairs it. `self remove`
-refuses the version the command runs and the one running at the moment. An installed version is never rewritten:
-installing the same version with different contents is refused, except for `+dirty` builds, which name no exact build.
-Rebuilding a release from the same commit, with the same Go and platform, differs only in its build time, so it counts
-as already installed and the installed binary stays. A clean build ranks above a `+dirty` build of the same version, so
-`latest` keeps naming the release. If `~/.local/bin/homeskillet` already exists and is not homeskillet's link, such as a
-binary from `go install`, install stops and asks you to move it aside.
+A pinned version stays pinned when you install another; `install` says so, and `update` follows `latest` again. If the
+pinned version's directory is deleted by hand, the command dangles; `list` says so, and `homeskillet use latest` repairs
+it. `self remove` refuses the version the command runs and the one running at the moment. An installed version is never
+rewritten: installing the same version with different contents is refused, except for `+dirty` builds, which name no
+exact build. Rebuilding a release from the same commit, with the same Go and platform, differs only in its build time,
+so it counts as already installed and the installed binary stays. A clean build ranks above a `+dirty` build of the same
+version, so `latest` keeps naming the release. If `~/.local/bin/homeskillet` already exists and is not homeskillet's
+link, such as a binary from `go install`, install stops and asks you to move it aside.
 
 ## Data Directory
 

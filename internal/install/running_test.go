@@ -26,6 +26,11 @@ func TestAboutRunning(t *testing.T) {
 	if len(lines) != 2 {
 		t.Fatalf("reportRunning wrote %q", b.String())
 	}
+	// Versions before 0.4.0 named the self forms, and update reads what
+	// another version's install wrote.
+	lines = append(lines,
+		"pinned\tv0.3.0\trun homeskillet self use latest to follow the newest version",
+		"note\tv0.3.1 still runs because it is latest; homeskillet self use v0.3.0 runs v0.3.0")
 	for _, line := range lines {
 		if !AboutRunning(line) {
 			t.Errorf("not recognized: %q", line)
