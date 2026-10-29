@@ -27,17 +27,18 @@ import (
 // runUpdate installs the release inv.operand names, or the newest published
 // one, as self install would install a build; self install VERSION runs it
 // too. Without a version, update also leaves the newest release running,
-// following latest again when a version was pinned (see followLatest). A version that is not a release, such as v0.3.0-rc.1 or v0.3, is
-// refused before anything else happens (see release). The release's
-// SHA256SUMS and the binary for this machine's platform are downloaded (see
+// following latest again when a version was pinned (see followLatest). A
+// version that is not a release, such as v0.3.0-rc.1 or v0.3, is refused
+// before anything else happens (see release). The release's SHA256SUMS and
+// the binary for this machine's platform are downloaded (see
 // downloadRelease) into a private directory under the data directory (see
 // stagingDir), the binary is checked against the listed SHA-256, and, unless
 // this is a dry run, checked to report that version and then run to install
 // itself with self install, with the same --home, --prefix, --data-dir, and
 // --allow-root, so the version it records is its own. The version that was
 // running stays installed, and the closing note says how to run it again
-// when what runs has changed. A version already installed is left as it
-// is: installed versions are never rewritten.
+// when what runs has changed. A version already installed is left as it is:
+// installed versions are never rewritten.
 //
 // A dry run stops after the download and the check: it runs nothing it
 // downloaded, so what it changes does not depend on the download honoring

@@ -64,7 +64,7 @@ func hintFor(err error) string {
 	if errors.As(err, &step) {
 		again := "run setup again, naming " + step.Step + " to run only it"
 		if step.Builtin {
-			again = "run homeskillet prepare again"
+			again = "run " + selfName() + " prepare again"
 		}
 		if errors.Is(err, setup.ErrNotFound) {
 			return "install the program, or put its directory on PATH, then " + again

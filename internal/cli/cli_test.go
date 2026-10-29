@@ -557,6 +557,8 @@ func TestMain(m *testing.M) {
 	if err := os.Unsetenv(dataDirVariable); err != nil {
 		panic(err)
 	}
+	// Advice names homeskillet, not the test binary (see selfName).
+	selfName = func() string { return "homeskillet" }
 	// GitHub's Windows runners run tests elevated, the counterpart of root,
 	// which every command refuses. The rules under test are the same either
 	// way, and TestRefusesRoot covers the refusal itself.

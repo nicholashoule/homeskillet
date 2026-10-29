@@ -229,7 +229,7 @@ func (o prepareOutput) overview(items []item, home string, platform config.Platf
 	}
 	pendingHeading := "Pending (%d): shown in full and asked about before each runs"
 	if inv.yes {
-		pendingHeading = "Pending (%d): shown in full; --yes asks only about Developer Mode and winget's repair"
+		pendingHeading = "Pending (%d): shown in full; --yes asks only about winget's repair, and does not open Settings"
 	}
 	v := &view{}
 	for _, g := range []struct{ state, heading string }{
@@ -310,7 +310,7 @@ func (o prepareOutput) closing(os, home string, items []item, dryRun bool) error
 	}
 	fmt.Fprintf(&text, "Not ready: %s %s still needed.", list(named...), verb)
 	if !dryRun {
-		fmt.Fprintf(&text, " Run homeskillet prepare again once %s in place.", pronoun)
+		fmt.Fprintf(&text, " Run %s prepare again once %s in place.", selfName(), pronoun)
 	}
 	text.WriteString("\n")
 	if _, err := io.WriteString(o.w, text.String()); err != nil {
