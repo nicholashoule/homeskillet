@@ -8,6 +8,13 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 
 ## [Unreleased]
 
+## [0.4.0]
+
+homeskillet now gets a fresh machine ready and manages its own versions like a version manager: `homeskillet prepare`
+checks for what it needs, such as Developer Mode and Git on Windows, and offers what is missing, each only once you
+approve; `list` and `list-remote` show the versions installed and published; and `update` always leaves the newest
+release running. Failures are one line and a hint, with `--verbose` for the whole error.
+
 ### Added
 
 - `homeskillet prepare` gets a machine ready before a repository is cloned: on Windows it checks Developer Mode, Git,
@@ -34,40 +41,18 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
   as `setup` does, and neither adds a `ran` line after a step's own output; scripts still get one line per item and
   outcome.
 
-## [0.3.1]
-
-A small follow-up to 0.3.0, so that `homeskillet update` has a newer release to move to, and says when one is, with
-checked install steps for Windows and for Go.
-
-### Added
-
-- At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available that you
-  have not installed, checked at most once a day and shown at most once a day; exporting
-  `HOMESKILLET_UPDATE_CHECK=off` turns it off ([docs/install.md](docs/install.md#updating)).
-- `homeskillet install 0.3.0` installs that release, downloaded and checked as `homeskillet update 0.3.0` does; both
-  accept only a release's version ([docs/install.md](docs/install.md#updating)).
-
-### Changed
-
-- The install guide says that pinning a version runs that version's own command, so one from before 0.3.0 has no
-  `use`, and that `homeskillet self use latest` works from any version ([docs/install.md](docs/install.md#updating)).
-- The Windows install steps check the download against the release's `SHA256SUMS` in PowerShell and run it only if it
-  matches, instead of leaving the comparison to the eye ([docs/windows.md](docs/windows.md#installing)).
-- On a machine without homeskillet, with Go 1.24 or newer,
-  `go run github.com/nicholashoule/homeskillet@latest self install` builds a release from source and installs it, on
-  Linux, macOS, and Windows, with nothing to check by hand. Such a build installs only there: once any version is
-  installed, homeskillet manages its versions itself ([docs/install.md](docs/install.md#building-and-installing)).
-
 ## Earlier Releases
 
 Each release keeps its notes on its GitHub Release; see [all
 releases](https://github.com/nicholashoule/homeskillet/releases).
 
+- [0.3.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.3.1): the note that a newer release is available,
+  `install VERSION`, and checked install steps for Windows and Go.
 - [0.3.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.3.0): `homeskillet update`, `self releases`, the
   `update`, `install`, and `use` commands, and the website.
 - [0.2.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.2.0): native Windows and WSL support, `bootstrap.json`,
   `check`, and `backups`.
 - [0.1.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.1.1): the first release, for Linux and macOS.
 
-[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.3.1...HEAD
-[0.3.1]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.3.1
+[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.4.0
