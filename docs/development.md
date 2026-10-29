@@ -120,11 +120,12 @@ releases, which leaves the comment behind.
 
 ## Binary Size
 
-A build is about three MiB; `make build && ls -l bin/homeskillet` measures it. Builds pass `-trimpath` and `-ldflags "-s -w"`, which drops the symbol table and DWARF data
-(about a third of the binary) while keeping function names and lines in panics, and set `CGO_ENABLED=0` for a static
-binary. Code avoids packages that cost more than they do here: `regexp` (about 260 KiB) gave way to small validators,
-SHA-256 (about 150 KiB, with Go's FIPS module) to a byte comparison, and `debug/buildinfo` (about 370 KiB, with its
-executable-format readers) to the `build.json` record install writes. To check what a change links in:
+A build is about three MiB; `make build && ls -l bin/homeskillet` measures it. Builds pass `-trimpath` and `-ldflags "-s
+-w"`, which drops the symbol table and DWARF data (about a third of the binary) while keeping function names and lines
+in panics, and set `CGO_ENABLED=0` for a static binary. Code avoids packages that cost more than they do here: `regexp`
+(about 260 KiB) gave way to small validators, SHA-256 (about 150 KiB, with Go's FIPS module) to a byte comparison, and
+`debug/buildinfo` (about 370 KiB, with its executable-format readers) to the `build.json` record install writes. To
+check what a change links in:
 
 ```sh
 go list -deps . | grep -E '^(regexp|crypto|debug/|net)'   # expect no output
@@ -175,16 +176,13 @@ gopher in `site/images/` is the Go project's own file, Renee French's design und
 which the page credits.
 
 `make site` runs [tools/site](../tools/site), the site's only check: the page is bounded in size, declares a title, a
-language, a viewport, and a description, every link or source relative to it is a file under `site/`, and no link uses
-plain HTTP. `make check` includes it. The Pages workflow runs the same check, on pull requests that touch the site as
-well as on `main`, and on `main` goes on to deploy and then fetches the page until it is served with the site's title.
-It cannot enable Pages itself, which needs a personal token, so when Pages is off, as after unpublishing the site, it
-fails with the setting to change rather than the action's generic error. Deployments are never cancelled midway; a
-second push waits for the first. Pushing a change to `site/` to `main` runs
-[.github/workflows/pages.yml](../.github/workflows/pages.yml), which uploads the directory and deploys it to GitHub
-Pages at `https://<owner>.github.io/homeskillet/`. The workflow needs Pages enabled once in the repository settings
-with "GitHub Actions" as the source. The page links to the documents in `docs/` on GitHub rather than copying them, so
-each fact stays in one place.
+language, a viewport, and a description, every link or source relative to it is a file inside `site/`, since nothing
+else is published, and no link uses plain HTTP or runs script. `make check` includes it. The Pages workflow runs the
+same check on pull requests that touch the site and on `main`, where it goes on to deploy and then fetches the page
+until it matches `site/index.html` byte for byte. It cannot enable Pages itself, which needs a personal token, so when
+Pages is off, as after unpublishing the site, it fails with the setting to change rather than the action's generic
+error. Deployments are never cancelled midway; a second push waits for the first, and pull request checks never wait on,
+or cancel, a deployment.
 
 ## Working With Both Repositories
 
