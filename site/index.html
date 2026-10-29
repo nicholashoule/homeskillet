@@ -276,8 +276,9 @@ homeskillet use previous      # go back</code></pre>
         <tr><th>Environment</th><th>Notes</th></tr>
         <tr><td>Linux</td><td>Any distribution. Tested.</td></tr>
         <tr><td>macOS</td><td>bash or zsh. Cross-compiled, not yet tested natively.</td></tr>
-        <tr><td>Windows 10 and 11</td><td>Native, x64 and Arm64, from PowerShell. Linking needs Developer Mode.</td></tr>
-        <tr><td>WSL</td><td>The Linux build inside the distribution, or <code>homeskillet wsl</code> from Windows to link a repository's <code>home/wsl/</code> there.</td></tr>
+        <tr><td>Windows 10 and 11</td><td>Native, x64 and Arm64: your PowerShell profile and other Windows dotfiles. Linking needs Developer Mode.</td></tr>
+        <tr><td>WSL</td><td>Your WSL home, with the Linux build inside the distribution, or from Windows with <code>homeskillet wsl</code>.</td></tr>
+        <tr><td>Windows and WSL</td><td>Both, from one repository: <code>home/</code> for Windows and <code>home/wsl/</code> for the distribution, each side with its own install and record of links.</td></tr>
         <tr><td>Containers</td><td>Running as root needs <code>--allow-root</code> and a repository root owns; or run as a regular user.</td></tr>
       </table>
     </div>

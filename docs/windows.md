@@ -1,9 +1,11 @@
 # Windows
 
 homeskillet runs natively on Windows 10 and 11, on x64 and Arm64, from PowerShell or any other shell. Inside WSL it is a
-Linux program, as on any other Linux. This page covers everything that differs on Windows: what is supported, how to set
-Windows up, how to lay out a repository for it, and how Windows and WSL work side by side. The rest of the documentation
-applies as written.
+Linux program, as on any other Linux. You choose what it manages: only your PowerShell profile and other Windows
+dotfiles; only your WSL home; or both, from one repository, with `home/` for Windows and `home/wsl/` for the
+distribution, each side with its own install and record of links. This page covers everything that differs on
+Windows: what is supported, how to set Windows up, how to lay out a repository for it, and how Windows and WSL work
+side by side. The rest of the documentation applies as written.
 
 ## What Is Supported
 

@@ -24,6 +24,10 @@ shell is.
 | WSL | The Linux build inside the distribution, with the repository on its Linux file system, not `/mnt/c`. From Windows, or a WSL shell, `homeskillet wsl` links a repository's `home/wsl/` there ([docs/windows.md](docs/windows.md#windows-and-wsl-together)). |
 | Containers | Running as root needs `--allow-root` and a repository root owns, so a bind mount from the host is refused; or run as a regular user ([docs/safety.md](docs/safety.md#ownership)). |
 
+On Windows, choose what homeskillet manages: your PowerShell profile and other Windows dotfiles, natively; your WSL
+home, from inside the distribution or from Windows with `homeskillet wsl`; or both from one repository, with `home/`
+for Windows and `home/wsl/` for the distribution ([docs/windows.md](docs/windows.md#what-is-supported)).
+
 ## Install
 
 Download the latest release for your system, check it, and let it install itself under `~/.local`:
