@@ -64,11 +64,25 @@ project's releases on GitHub, over HTTPS, with the system's own `curl` and hashi
 often as you like, and a `--dry-run` downloads and checks without running or installing anything.
 
 At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available, such as
-`note  v0.3.1 is available; homeskillet update installs it`. It is meant to stay out of the way: GitHub is asked at
-most once a day, the line is shown at most once a day, the check runs alongside the command with a two-second limit so
-it never slows or fails one, nothing is written unless the [data directory](#data-directory) already exists, and a dry
-run, `--quiet`, a script, or a development build never checks. To turn it off, put `HOMESKILLET_UPDATE_CHECK=off` in
-your shell startup file.
+`note  v0.3.1 is available; homeskillet update installs it`. It is meant to stay out of the way:
+
+- GitHub is asked at most once a day, and the line is shown at most once a day, recorded in `update.json` in the [data
+  directory](#data-directory). A failed check counts, so an offline machine asks again tomorrow.
+- The check runs alongside the command, so it costs nothing on a fast network and adds at most two seconds, once a day,
+  on a slow one. It never makes a command fail.
+- Nothing is written unless the data directory already exists. A dry run, `--quiet`, a script or pipe, a development
+  build, and the commands `homeskillet wsl` runs in a distribution never check.
+- A newer release you have installed is not announced, so pinning an older version on purpose stays quiet.
+
+To turn it off, export the variable from your shell startup file, or set it in your PowerShell profile:
+
+```sh
+export HOMESKILLET_UPDATE_CHECK=off        # ~/.bashrc or ~/.zshrc
+```
+
+```powershell
+$env:HOMESKILLET_UPDATE_CHECK = 'off'      # $PROFILE
+```
 
 The check against `SHA256SUMS` proves the download arrived intact, not who published it. Releases from the public
 repository also carry signed build provenance, which `gh attestation verify` checks (see [Downloading a
@@ -76,8 +90,9 @@ Release](#downloading-a-release)); `update` does not check it yet.
 
 `update`, `install`, and `use` are the same as `self update`, `self install`, and `self use`; versions may be written
 with or without their leading `v`. Pinning a version runs that version's own command, so a version from before 0.3.0
-has no `use`; `homeskillet self use latest` works from any version and is the way back. A development build, whose version is a pseudo-version or `+dirty`, can update to a
-release too; the release then ranks as `latest` only if its version is higher.
+has no `use`; `homeskillet self use latest` works from any version and is the way back. A development build, whose
+version is a pseudo-version or `+dirty`, can update to a release too; the release then ranks as `latest` only if its
+version is higher.
 
 ## Shell Completion
 
@@ -174,7 +189,8 @@ binary from `go install`, install stops and asks you to move it aside.
 
 homeskillet keeps its own files in one data directory: the installed versions (see [Versions and
 Updates](#versions-and-updates)), `links.json`, a record of the links it made, `setup.json`, a record of the setup steps
-with `inputs` that ran ([manifest.md](manifest.md#steps-that-install-from-a-list)), and `backups/`, the files `link
+with `inputs` that ran ([manifest.md](manifest.md#steps-that-install-from-a-list)), `update.json`, when it last asked
+GitHub for the newest release and showed the note about it ([Updating](#updating)), and `backups/`, the files `link
 --force` moved aside, each at its path in home with the Unix time appended. homeskillet deletes a backup only when you
 purge it, after it shows each one and you approve ([usage.md](usage.md#conflicts-and-backups)). The default is
 `~/.local/share/homeskillet`. Backups are moved there by renaming, so a data directory on another file system than home

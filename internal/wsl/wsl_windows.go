@@ -103,7 +103,7 @@ func find(name string) (string, error) {
 func (r Runner) command(ctx context.Context, args ...string) *exec.Cmd {
 	full := append([]string{"--distribution", r.distribution, "--cd", "~", "--exec"}, args...)
 	cmd := exec.CommandContext(ctx, r.program, full...) //nolint:gosec // G204: wsl.exe from the system directory; --exec passes args to the program as they are
-	cmd.Env = append(os.Environ(), "WSL_UTF8=1")
+	cmd.Env = environment(os.Environ())
 	return cmd
 }
 

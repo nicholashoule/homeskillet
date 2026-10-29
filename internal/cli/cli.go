@@ -178,10 +178,12 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if err := trust.CheckLocation(home); err != nil {
 		return fmt.Errorf("home: %w", err)
 	}
-	// The check for a newer release runs alongside the command and its
-	// note, if any, follows the output of a command that succeeded.
+	// The check for a newer release runs alongside the command. Its note, if
+	// any, follows the output of a command that succeeded; after one that
+	// failed, it is only let finish, so its answer is kept for next time.
 	check := startUpdateCheck(ctx, inv, home, output)
 	if err := runWithHome(ctx, inv, home, input, output, diagnostics); err != nil {
+		check.wait()
 		return err
 	}
 	return check.print(output)

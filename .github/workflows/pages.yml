@@ -19,13 +19,6 @@ on:
 permissions:
   contents: read
 
-# One deployment at a time. A deployment in progress is never cancelled, as
-# Pages recommends, so a quick second push waits rather than leaving a
-# half-finished deployment.
-concurrency:
-  group: pages
-  cancel-in-progress: false
-
 jobs:
   check:
     name: Check the site
@@ -61,6 +54,13 @@ jobs:
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
+    # One deployment at a time, never cancelled midway, as Pages recommends.
+    # The group is on this job, not the workflow, because a group holds one
+    # pending run and a new one cancels it: pull request checks in the same
+    # group would cancel a deployment of main that was waiting its turn.
+    concurrency:
+      group: pages-deploy
+      cancel-in-progress: false
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -74,8 +74,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if ! gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type >"$RUNNER_TEMP/pages" 2>/dev/null; then
-            echo "::error::GitHub Pages is not enabled for $GITHUB_REPOSITORY. In Settings > Pages, set Source to \"GitHub Actions\", then rerun this workflow."
+          if ! gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type >"$RUNNER_TEMP/pages" 2>"$RUNNER_TEMP/pages-error"; then
+            # Only a 404 means Pages is off; anything else, such as a rate
+            # limit or an outage, is reported as GitHub gave it.
+            if grep -q 'HTTP 404' "$RUNNER_TEMP/pages-error"; then
+              echo "::error::GitHub Pages is not enabled for $GITHUB_REPOSITORY. In Settings > Pages, set Source to \"GitHub Actions\", then rerun this workflow."
+            else
+              echo "::error::Could not read the Pages settings: $(cat "$RUNNER_TEMP/pages-error")"
+            fi
             exit 1
           fi
           if [[ $(cat "$RUNNER_TEMP/pages") != workflow ]]; then
@@ -93,17 +99,21 @@ jobs:
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
 
       # The deployment reports success before the CDN serves it everywhere,
-      # so the page is fetched with retries, and must carry the site's title.
+      # so the page is fetched with retries until it is byte for byte the
+      # page just deployed; any earlier version would pass a looser check.
+      # Twelve tries of at most 20 seconds each: four minutes in all.
       - name: Check that the page is served
         env:
           PAGE_URL: ${{ steps.deployment.outputs.page_url }}
         run: |
+          want=$(sha256sum site/index.html | cut -d' ' -f1)
           for attempt in $(seq 1 12); do
-            if curl -fsSL --proto '=https' --max-time 30 "$PAGE_URL" | grep -q '<title>homeskillet</title>'; then
+            got=$(curl -fsSL --proto '=https' --max-time 10 -H 'Cache-Control: no-cache' "$PAGE_URL" | sha256sum | cut -d' ' -f1)
+            if [[ $got == "$want" ]]; then
               echo "served: $PAGE_URL"
               exit 0
             fi
             sleep 10
           done
-          echo "::error::$PAGE_URL did not serve the site within two minutes of deploying"
+          echo "::error::$PAGE_URL did not serve the page just deployed within four minutes"
           exit 1

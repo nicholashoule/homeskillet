@@ -14,9 +14,9 @@ A small follow-up to 0.3.0, so that `homeskillet update` has a newer release to 
 
 ### Added
 
-- At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available, checked
-  at most once a day and shown at most once a day; `HOMESKILLET_UPDATE_CHECK=off` turns it off
-  ([docs/install.md](docs/install.md#updating)).
+- At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available that you
+  have not installed, checked at most once a day and shown at most once a day; exporting
+  `HOMESKILLET_UPDATE_CHECK=off` turns it off ([docs/install.md](docs/install.md#updating)).
 
 ### Changed
 

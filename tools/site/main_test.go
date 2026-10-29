@@ -43,3 +43,49 @@ func TestCheck(t *testing.T) {
 		t.Error("a missing site passed")
 	}
 }
+
+func TestCheckReference(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "site")
+	for _, name := range []string{filepath.Join(dir, "images", "a b.svg"), filepath.Join(dir, "index.html"), filepath.Join(root, "outside.txt")} {
+		if err := os.MkdirAll(filepath.Dir(name), 0o700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(name, nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for ref, want := range map[string]string{
+		"":                              "",
+		"#install":                      "",
+		"https://example.com/":          "",
+		"mailto:someone@example.com":    "",
+		"tel:+15550100":                 "",
+		"data:image/svg+xml,%3Csvg/%3E": "",
+		"images/a%20b.svg":              "",
+		"images/a%20b.svg#frag":         "",
+		"index.html?x=1":                "",
+		"http://example.com/":           "plain HTTP",
+		"HTTP://example.com/":           "plain HTTP",
+		"javascript:alert(1)":           "javascript:",
+		"//example.com/x.js":            "protocol-relative",
+		"/docs/":                        "absolute path",
+		"../outside.txt":                "outside",
+		"images/../../outside.txt":      "outside",
+		"images/missing.png":            "not in",
+		"images/%zz.svg":                "percent-encoded",
+	} {
+		got := checkReference(dir, ref)
+		if want == "" && got != "" || want != "" && !strings.Contains(got, want) {
+			t.Errorf("checkReference(%q) = %q, want %q", ref, got, want)
+		}
+	}
+}
+
+func TestReferences(t *testing.T) {
+	html := `<a href="a.html"><img SRC='b.png'><link href=c.css><div data-src="not-me"></div>`
+	got := strings.Join(references(html), " ")
+	if want := "a.html c.css b.png"; got != want {
+		t.Errorf("references = %q, want %q", got, want)
+	}
+}

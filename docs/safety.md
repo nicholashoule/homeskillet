@@ -213,7 +213,8 @@ published it; the release workflow is what stands behind that ([release.md](rele
 
 The once-a-day check behind the "is available" note asks only where GitHub's latest-release page leads, over HTTPS,
 and sends nothing about you or your machine; it runs only for a release build, at a terminal, when the data directory
-exists, and `HOMESKILLET_UPDATE_CHECK=off` turns it off ([install.md](install.md#updating)).
+exists, and exporting `HOMESKILLET_UPDATE_CHECK=off` turns it off ([install.md](install.md#updating)). Its record is
+read only from a data directory that passes the ownership rules, so another account cannot plant a note.
 
 ## System Directories
 

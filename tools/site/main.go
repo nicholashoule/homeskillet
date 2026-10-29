@@ -1,8 +1,10 @@
 // Command site checks the website in site/ before it is published, for make
 // site and the Pages workflow: the page exists, is bounded in size, declares a
-// title, a language, and a viewport, every link or source it names relative
-// to itself is a file under site/, and no link uses plain HTTP. The site is
-// hand-written HTML with no build step, so this is the only check it gets.
+// title, a language, a viewport, and a description, every link or source it
+// names relative to itself is a file inside site/, and no link uses plain
+// HTTP or runs script. The site is hand-written HTML with no build step, so
+// this is the only check it gets. It is a development tool, not linked into
+// homeskillet, so it may use net/url.
 //
 // Usage: go run ./tools/site [DIR], where DIR defaults to site.
 package main
@@ -10,6 +12,7 @@ package main
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -65,45 +68,117 @@ func check(dir string) ([]string, error) {
 		}
 	}
 	for _, ref := range references(html) {
-		switch {
-		case strings.HasPrefix(ref, "http://"):
-			problems = append(problems, "plain HTTP link: "+ref)
-		case strings.HasPrefix(ref, "https://"), strings.HasPrefix(ref, "#"), strings.HasPrefix(ref, "mailto:"), ref == "":
-		case strings.HasPrefix(ref, "//") || strings.HasPrefix(ref, "/"):
-			problems = append(problems, "absolute path, which breaks under a project page's prefix: "+ref)
-		default:
-			local, _, _ := strings.Cut(ref, "#")
-			local, _, _ = strings.Cut(local, "?")
-			if _, err := os.Stat(filepath.Join(dir, filepath.FromSlash(local))); errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: a reference from the page, looked up only under the site directory
-				problems = append(problems, "references a file that is not in "+dir+": "+ref)
-			} else if err != nil {
-				problems = append(problems, err.Error())
-			}
+		if problem := checkReference(dir, ref); problem != "" {
+			problems = append(problems, problem)
 		}
 	}
 	return problems, nil
 }
 
-// references returns the value of every href and src attribute in html, in
-// order. The page is hand-written, so a plain scan for the quoted attribute
-// is enough; a parser would need a module outside the standard library.
+// checkReference returns the problem with one reference from the page, or
+// "". Links to other sites must use HTTPS; any other URL scheme, such as
+// mailto: or data:, is left alone. Everything else names a file, which must
+// be inside dir, since only dir is published, and must exist.
+func checkReference(dir, ref string) string {
+	ref = strings.TrimSpace(ref)
+	lower := strings.ToLower(ref)
+	switch {
+	case ref == "", strings.HasPrefix(ref, "#"):
+		return ""
+	case strings.HasPrefix(lower, "http:"):
+		return "plain HTTP link: " + ref
+	case strings.HasPrefix(lower, "javascript:"):
+		return "javascript: link, which runs code when followed: " + ref
+	case strings.HasPrefix(ref, "//"):
+		return "protocol-relative link, which may load over plain HTTP: " + ref
+	case hasScheme(ref):
+		return ""
+	case strings.HasPrefix(ref, "/"):
+		return "absolute path, which breaks under a project page's prefix: " + ref
+	}
+	local, _, _ := strings.Cut(ref, "#")
+	local, _, _ = strings.Cut(local, "?")
+	decoded, err := url.PathUnescape(local)
+	if err != nil {
+		return "badly percent-encoded reference: " + ref
+	}
+	path := filepath.Join(dir, filepath.FromSlash(decoded))
+	if rel, err := filepath.Rel(dir, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "references a file outside " + dir + ", which is not published: " + ref
+	}
+	if _, err := os.Stat(path); errors.Is(err, os.ErrNotExist) { //nolint:gosec // G703: a reference from the page, checked above to stay under the site directory
+		return "references a file that is not in " + dir + ": " + ref
+	} else if err != nil {
+		return err.Error()
+	}
+	return ""
+}
+
+// hasScheme reports whether ref starts with a URL scheme, such as https: or
+// data:: a letter, then letters, digits, +, -, or ., then a colon, all before
+// any /, ?, or #.
+func hasScheme(ref string) bool {
+	for i, r := range ref {
+		switch {
+		case r == ':':
+			return i > 0
+		case 'a' <= r && r <= 'z', 'A' <= r && r <= 'Z':
+		case i > 0 && ('0' <= r && r <= '9' || r == '+' || r == '-' || r == '.'):
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// references returns the value of every href and src attribute in html:
+// written in any case, quoted with either quote or not at all. The page is
+// hand-written, so a scan for the attribute is enough; an HTML parser would
+// need a module outside the standard library. An attribute counts only after
+// whitespace, so data-src is not src.
 func references(html string) []string {
+	lower := strings.ToLower(html)
 	var refs []string
-	for _, attribute := range []string{`href="`, `src="`} {
-		rest := html
-		for {
-			i := strings.Index(rest, attribute)
+	for _, name := range []string{"href=", "src="} {
+		for at := 0; ; {
+			i := strings.Index(lower[at:], name)
 			if i < 0 {
 				break
 			}
-			rest = rest[i+len(attribute):]
-			end := strings.IndexByte(rest, '"')
-			if end < 0 {
-				break
+			start := at + i + len(name)
+			at = start
+			if before := at - len(name) - 1; before < 0 || !isSpace(html[before]) {
+				continue
 			}
-			refs = append(refs, rest[:end])
-			rest = rest[end:]
+			value, next := attributeValue(html, start)
+			refs = append(refs, value)
+			at = next
 		}
 	}
 	return refs
+}
+
+// attributeValue returns the attribute value that starts at html[start],
+// quoted or not, and where scanning resumes.
+func attributeValue(html string, start int) (string, int) {
+	if start >= len(html) {
+		return "", start
+	}
+	if quote := html[start]; quote == '"' || quote == '\'' {
+		end := strings.IndexByte(html[start+1:], quote)
+		if end < 0 {
+			return html[start+1:], len(html)
+		}
+		return html[start+1 : start+1+end], start + 2 + end
+	}
+	end := start
+	for end < len(html) && !isSpace(html[end]) && html[end] != '>' {
+		end++
+	}
+	return html[start:end], end
+}
+
+// isSpace reports whether b is HTML whitespace.
+func isSpace(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r' || b == '\f'
 }

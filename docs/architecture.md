@@ -143,7 +143,9 @@ otherwise. `install.New` resolves the prefix's existing directories, then:
   one. `update`, `install`, and `use` are the same commands without `self`, rewritten in `takeCommand`.
 - The note that a newer release is available (`startUpdateCheck`, in `notice.go`) runs the same latest-release lookup
   alongside `status`, `link`, `unlink`, and `setup` at a terminal, once a day, recorded in `update.json` in the data
-  directory, and is collected after the command's output with a short limit, so it never slows or fails a command.
+  directory, and is collected after the command's output, at most two seconds after the command started, so it never
+  fails a command and slows one only on a slow network, once a day. The note is recorded as shown only once it is
+  printed, and `homeskillet wsl` turns it off in the distribution through `WSLENV`.
 
 Like `link.Prepare`, each command checks everything before changing anything, and dry runs stop after the checks.
 
@@ -232,7 +234,8 @@ Like `link.Prepare`, each command checks everything before changing anything, an
   target may be inside it.
 - Configuration must be unlinked before the configuration clone is moved.
 
-Files homeskillet parses are read with size limits: 1 MiB for each manifest and 64 KiB for a `build.json`; a copy sent
+Files homeskillet parses are read with size limits: 1 MiB for each manifest, 64 KiB for a `build.json`, 4 KiB for
+`update.json`, and, for `update`, 64 KiB for a release's `SHA256SUMS` and 64 MiB for a build; a copy sent
 to WSL is bounded in size and in files too (package mirror). Exported functions treat a nil output writer as discarding
 and a nil context as `context.Background`.
 
