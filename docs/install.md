@@ -27,12 +27,16 @@ against. In the commands below, `OWNER` is the GitHub account that hosts homeski
 [windows.md](windows.md#installing).
 
 ```sh
-gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS   # the latest release
+base=https://github.com/OWNER/homeskillet/releases/latest/download
+curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64" && curl -fsSLO --proto '=https' "$base/SHA256SUMS"
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
 gh attestation verify homeskillet-linux-amd64 --repo OWNER/homeskillet   # optional: that the release workflow built it
 chmod +x homeskillet-linux-amd64
 ./homeskillet-linux-amd64 self install
 ```
+
+With the GitHub CLI, `gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern
+SHA256SUMS` fetches the same two files.
 
 `self install` installs the downloaded binary as `make install` installs a build (see [Versions and
 Updates](#versions-and-updates)); delete the download afterward. From then on, [`homeskillet update`](#updating) does
@@ -64,7 +68,8 @@ repository also carry signed build provenance, which `gh attestation verify` che
 Release](#downloading-a-release)); `update` does not check it yet.
 
 `update`, `install`, and `use` are the same as `self update`, `self install`, and `self use`; versions may be written
-with or without their leading `v`. A development build, whose version is a pseudo-version or `+dirty`, can update to a
+with or without their leading `v`. Pinning a version runs that version's own command, so a version from before 0.3.0
+has no `use`; `homeskillet self use latest` works from any version and is the way back. A development build, whose version is a pseudo-version or `+dirty`, can update to a
 release too; the release then ranks as `latest` only if its version is higher.
 
 ## Shell Completion
