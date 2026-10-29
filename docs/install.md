@@ -27,12 +27,16 @@ against. In the commands below, `OWNER` is the GitHub account that hosts homeski
 [windows.md](windows.md#installing).
 
 ```sh
-gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS   # the latest release
+base=https://github.com/OWNER/homeskillet/releases/latest/download
+curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64" && curl -fsSLO --proto '=https' "$base/SHA256SUMS"
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
 gh attestation verify homeskillet-linux-amd64 --repo OWNER/homeskillet   # optional: that the release workflow built it
 chmod +x homeskillet-linux-amd64
 ./homeskillet-linux-amd64 self install
 ```
+
+With the GitHub CLI, `gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern
+SHA256SUMS` fetches the same two files.
 
 `self install` installs the downloaded binary as `make install` installs a build (see [Versions and
 Updates](#versions-and-updates)); delete the download afterward. From then on, [`homeskillet update`](#updating) does
@@ -59,12 +63,20 @@ project's releases on GitHub, over HTTPS, with the system's own `curl` and hashi
 ([safety.md](safety.md#updating)). A version that is already installed is left as it is, so `update` is safe to run as
 often as you like, and a `--dry-run` downloads and checks without running or installing anything.
 
+At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available, such as
+`note  v0.3.1 is available; homeskillet update installs it`. It is meant to stay out of the way: GitHub is asked at
+most once a day, the line is shown at most once a day, the check runs alongside the command with a two-second limit so
+it never slows or fails one, nothing is written unless the [data directory](#data-directory) already exists, and a dry
+run, `--quiet`, a script, or a development build never checks. To turn it off, put `HOMESKILLET_UPDATE_CHECK=off` in
+your shell startup file.
+
 The check against `SHA256SUMS` proves the download arrived intact, not who published it. Releases from the public
 repository also carry signed build provenance, which `gh attestation verify` checks (see [Downloading a
 Release](#downloading-a-release)); `update` does not check it yet.
 
 `update`, `install`, and `use` are the same as `self update`, `self install`, and `self use`; versions may be written
-with or without their leading `v`. A development build, whose version is a pseudo-version or `+dirty`, can update to a
+with or without their leading `v`. Pinning a version runs that version's own command, so a version from before 0.3.0
+has no `use`; `homeskillet self use latest` works from any version and is the way back. A development build, whose version is a pseudo-version or `+dirty`, can update to a
 release too; the release then ranks as `latest` only if its version is higher.
 
 ## Shell Completion

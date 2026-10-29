@@ -24,19 +24,34 @@ shell is.
 | WSL | The Linux build inside the distribution, with the repository on its Linux file system, not `/mnt/c`. From Windows, or a WSL shell, `homeskillet wsl` links a repository's `home/wsl/` there ([docs/windows.md](docs/windows.md#windows-and-wsl-together)). |
 | Containers | Running as root needs `--allow-root` and a repository root owns, so a bind mount from the host is refused; or run as a regular user ([docs/safety.md](docs/safety.md#ownership)). |
 
+On Windows, choose what homeskillet manages: your PowerShell profile and other Windows dotfiles, natively; your WSL
+home, from inside the distribution or from Windows with `homeskillet wsl`; or both from one repository, with `home/`
+for Windows and `home/wsl/` for the distribution ([docs/windows.md](docs/windows.md#what-is-supported)).
+
 ## Install
 
-With Go 1.24 or newer, from this repository:
+Download the latest release for your system, check it, and let it install itself under `~/.local`:
 
 ```sh
-make install          # build, then install as a new version under ~/.local
-homeskillet version
+base=https://github.com/nicholashoule/homeskillet/releases/latest/download
+curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64" && curl -fsSLO --proto '=https' "$base/SHA256SUMS"
+grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
+chmod +x homeskillet-linux-amd64 && ./homeskillet-linux-amd64 self install
 ```
 
-Without Go, download a release and run its `self install` ([docs/install.md](docs/install.md#downloading-a-release); on
-Windows, [docs/windows.md](docs/windows.md#installing)). After that, `homeskillet update` installs the newest release
-from GitHub, checked against its `SHA256SUMS`, and `homeskillet use` with the old version rolls back
-([docs/install.md](docs/install.md#updating)).
+The other builds are `homeskillet-linux-arm64`, `homeskillet-darwin-amd64`, `homeskillet-darwin-arm64`, and on
+Windows the `.exe` files ([docs/windows.md](docs/windows.md#installing)). From then on, homeskillet keeps itself
+current:
+
+```sh
+homeskillet update            # install the newest release, keeping the one you have
+homeskillet self list         # installed versions, and which one runs
+homeskillet self releases     # published versions
+homeskillet use previous      # go back
+```
+
+With Go 1.24 or newer, `make install` from a clone builds and installs it instead
+([docs/install.md](docs/install.md)).
 
 ## Use
 

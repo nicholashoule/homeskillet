@@ -1,27 +1,55 @@
 # Pages: publish site/ as the repository's GitHub Pages site whenever main
-# changes it. The site is hand-written HTML with no build step, so the job only
-# uploads the directory. It needs Pages enabled in the repository settings with
-# "GitHub Actions" as the source, and a public repository or a plan that serves
-# Pages for private ones. See Website in docs/development.md.
+# changes it. The site is hand-written HTML with no build step, so the
+# workflow checks the page and the files it references (tools/site), uploads
+# the directory, deploys it, and checks that the page is served. A pull
+# request that touches the site gets the check alone. Pages must be enabled
+# once in the repository settings with "GitHub Actions" as the source; the
+# workflow cannot do that itself, so it says so plainly when it is not. See
+# Website in docs/development.md.
 name: Pages
 
 on:
   push:
     branches: [main]
-    paths: ["site/**", ".github/workflows/pages.yml"]
+    paths: ["site/**", "tools/site/**", ".github/workflows/pages.yml"]
+  pull_request:
+    paths: ["site/**", "tools/site/**", ".github/workflows/pages.yml"]
   workflow_dispatch:
 
 permissions:
   contents: read
 
-# One deployment at a time, and a newer one replaces a waiting one.
+# One deployment at a time. A deployment in progress is never cancelled, as
+# Pages recommends, so a quick second push waits rather than leaving a
+# half-finished deployment.
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
+  check:
+    name: Check the site
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Check the page and the files it references
+        run: go run ./tools/site
+
   deploy:
     name: Deploy
+    needs: check
+    # Pull requests only check; main and manual runs deploy.
+    if: github.event_name != 'pull_request'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     # A job's permissions replace the workflow's rather than add to them, so
@@ -40,6 +68,21 @@ jobs:
           # Nothing here pushes, so the token is not left in .git/config.
           persist-credentials: false
 
+      # The configure step fails with a generic message when Pages is off,
+      # as after unpublishing the site; this says what to do instead.
+      - name: Check that Pages is enabled
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if ! gh api "repos/$GITHUB_REPOSITORY/pages" --jq .build_type >"$RUNNER_TEMP/pages" 2>/dev/null; then
+            echo "::error::GitHub Pages is not enabled for $GITHUB_REPOSITORY. In Settings > Pages, set Source to \"GitHub Actions\", then rerun this workflow."
+            exit 1
+          fi
+          if [[ $(cat "$RUNNER_TEMP/pages") != workflow ]]; then
+            echo "::error::GitHub Pages is set to deploy from a branch, which publishes the repository root, not site/. In Settings > Pages, set Source to \"GitHub Actions\", then rerun this workflow."
+            exit 1
+          fi
+
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0
@@ -48,3 +91,19 @@ jobs:
 
       - id: deployment
         uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346 # v5.0.1
+
+      # The deployment reports success before the CDN serves it everywhere,
+      # so the page is fetched with retries, and must carry the site's title.
+      - name: Check that the page is served
+        env:
+          PAGE_URL: ${{ steps.deployment.outputs.page_url }}
+        run: |
+          for attempt in $(seq 1 12); do
+            if curl -fsSL --proto '=https' --max-time 30 "$PAGE_URL" | grep -q '<title>homeskillet</title>'; then
+              echo "served: $PAGE_URL"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "::error::$PAGE_URL did not serve the site within two minutes of deploying"
+          exit 1

@@ -50,7 +50,8 @@ var commandHelp = map[string]string{
 	"wsl": "On Windows, or from a WSL shell, act in a WSL distribution: install homeskillet's Linux build there, or run status, link, unlink, or setup " +
 		"there on a copy of a Windows clone, or on a clone in the distribution written / or ~ first",
 	"backups": "List the files link --force moved into a backup; backups purge deletes them after showing them and asking",
-	"update":  "Install the newest release of homeskillet from GitHub, or the VERSION given, checked against its SHA256SUMS, keeping the old one to go back to",
+	"update": "Install the newest release of homeskillet from GitHub, or the VERSION given, checked against its SHA256SUMS, keeping the old one to go back to. " +
+		"At a terminal, status, link, unlink, and setup end with a note when a newer release is available, checked once a day; HOMESKILLET_UPDATE_CHECK=off turns that off",
 	"install": "Install this build of homeskillet as a version of its own, and make it the one the command runs unless another is pinned",
 	"use":     "Run latest, previous, or the installed VERSION; latest follows new installs, a version stays pinned",
 	"self": "Install, update, list, switch, or remove versions of homeskillet. self update installs the newest release from GitHub, or the VERSION given, " +

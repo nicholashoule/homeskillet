@@ -211,6 +211,10 @@ copies and where it copies it:
 `SHA256SUMS` comes from the same release as the binary, so the check proves the download arrived intact, not who
 published it; the release workflow is what stands behind that ([release.md](release.md#tagging)).
 
+The once-a-day check behind the "is available" note asks only where GitHub's latest-release page leads, over HTTPS,
+and sends nothing about you or your machine; it runs only for a release build, at a terminal, when the data directory
+exists, and `HOMESKILLET_UPDATE_CHECK=off` turns it off ([install.md](install.md#updating)).
+
 ## System Directories
 
 homeskillet also refuses to work in system directories. The home directory, the repository, and the install prefix may

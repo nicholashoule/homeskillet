@@ -178,6 +178,19 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if err := trust.CheckLocation(home); err != nil {
 		return fmt.Errorf("home: %w", err)
 	}
+	// The check for a newer release runs alongside the command and its
+	// note, if any, follows the output of a command that succeeded.
+	check := startUpdateCheck(ctx, inv, home, output)
+	if err := runWithHome(ctx, inv, home, input, output, diagnostics); err != nil {
+		return err
+	}
+	return check.print(output)
+}
+
+// runWithHome runs inv against home, which has passed the location checks:
+// the commands on the home's own files (see runInHome), or else the ones on
+// a repository and the home.
+func runWithHome(ctx context.Context, inv invocation, home string, input io.Reader, output, diagnostics io.Writer) error {
 	if handled, err := runInHome(ctx, inv, home, input, output, diagnostics); handled {
 		return err
 	}
