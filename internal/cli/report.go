@@ -313,8 +313,10 @@ func (v *view) doneSteps(w io.Writer, plans []setup.Plan) error {
 
 // stepReporter returns a setup.Options.Report for a person at a terminal: a
 // step that turned out done during the run, after an earlier step did its
-// work, is said so, and each step that ran or was skipped gets a line. Steps
-// done before the run were listed by doneSteps and are not repeated.
+// work, is said so, and each step that is offered or skipped gets a line. A
+// step that ran gets none: its own output, just above, says what it did,
+// and a line after it would only repeat that. Steps done before the run were
+// listed by doneSteps and are not repeated.
 func (v *view) stepReporter(w io.Writer, plans []setup.Plan) func(outcome string, plan setup.Plan) error {
 	listed := map[string]bool{}
 	for i := range plans {
@@ -322,12 +324,24 @@ func (v *view) stepReporter(w io.Writer, plans []setup.Plan) func(outcome string
 			listed[plans[i].Step.Name] = true
 		}
 	}
+	offered := false
 	return func(outcome string, plan setup.Plan) error {
 		var err error
 		switch {
 		case outcome == string(setup.Done) && listed[plan.Step.Name]:
 		case outcome == string(setup.Done):
 			_, err = fmt.Fprintf(w, "done     %s  (%s, by an earlier step)\n", plan.Step.Name, setup.Detail(plan))
+		case outcome == "ran":
+		case outcome == string(setup.Pending):
+			// A blank line sets each step apart from the output of the one
+			// before it.
+			if offered {
+				_, err = fmt.Fprintln(w)
+			}
+			offered = true
+			if err == nil {
+				_, err = fmt.Fprintf(w, "%-8s %s\n", outcome, plan.Step.Name)
+			}
 		default:
 			_, err = fmt.Fprintf(w, "%-8s %s\n", outcome, plan.Step.Name)
 		}

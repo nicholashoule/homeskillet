@@ -305,14 +305,28 @@ func (opts Options) dir() string {
 	return opts.Repo
 }
 
-// label names a step in errors: a setup step, or for built-in steps, which
-// setup does not run, a step.
-func (opts Options) label() string {
-	if opts.builtin {
-		return "step"
-	}
-	return "setup step"
+// StepError is a step that failed when it ran, so a caller can say what to
+// do next without reading the message: the step's own output, just above,
+// says why it failed.
+type StepError struct {
+	Step string
+	// Builtin marks a step homeskillet defines (see RunBuiltin).
+	Builtin bool
+	Err     error
 }
+
+func (e *StepError) Error() string {
+	label := "setup step"
+	if e.Builtin {
+		label = "step"
+	}
+	return label + " " + e.Step + ": " + e.Err.Error()
+}
+
+func (e *StepError) Unwrap() error { return e.Err }
+
+// ErrNotFound is the error for a program a step names that is not on PATH.
+var ErrNotFound = errors.New("not found on PATH")
 
 // run is Run and RunBuiltin once their options are checked.
 func run(ctx context.Context, plans []Plan, opts Options) error {
@@ -382,7 +396,7 @@ func run(ctx context.Context, plans []Plan, opts Options) error {
 			}
 		}
 		if err := execute(ctx, plan.Step, opts); err != nil {
-			return fmt.Errorf("%s %s: %w", opts.label(), plan.Step.Name, err)
+			return &StepError{Step: plan.Step.Name, Builtin: opts.builtin, Err: err}
 		}
 		// The fingerprint taken before the step ran, of what was approved:
 		// inputs changed meanwhile offer it again next time.

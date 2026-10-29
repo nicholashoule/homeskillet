@@ -57,7 +57,7 @@ func lookPath(name, path string) (string, error) {
 			return candidate, nil
 		}
 	}
-	return "", fmt.Errorf("%q not found on PATH", name)
+	return "", fmt.Errorf("%q %w", name, ErrNotFound)
 }
 
 // documents returns the Documents folder in home, where a step's creates

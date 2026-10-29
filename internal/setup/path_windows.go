@@ -107,7 +107,7 @@ func lookPath(name, path string) (string, error) {
 			}
 		}
 	}
-	return "", fmt.Errorf("%q not found on PATH", name)
+	return "", fmt.Errorf("%q %w", name, ErrNotFound)
 }
 
 // PathExtensions returns the extensions Windows tries when a command is named

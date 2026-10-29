@@ -15,6 +15,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/nicholashoule/homeskillet/internal/config"
 )
 
 func TestWindowsSteps(t *testing.T) {
@@ -156,5 +158,75 @@ func TestWaitForEnter(t *testing.T) {
 	}
 	if err := waitForEnter(nil); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestPrepareView(t *testing.T) {
+	requireUnix(t)
+	_, home := repository(t)
+	platform := config.Platform{OS: "windows", Arch: "amd64"}
+	items := []item{
+		{id: developerModeStep, title: titles[developerModeStep], required: true, state: itemPending, detail: "turn it on in Settings, System, For developers"},
+		{id: "winget", title: "winget", state: itemDone, detail: `C:\Users\you\AppData\Local\Microsoft\WindowsApps\winget.exe`},
+		{id: "git", title: "Git", required: true, state: itemPending, detail: "winget install --id Git.Git"},
+		{id: "powershell", title: "PowerShell 7", state: itemMissing, detail: officialDownloads["powershell"]},
+	}
+	var output bytes.Buffer
+	out := prepareOutput{w: &output, person: true}
+	if err := out.overview(items, home, platform, invocation{command: "prepare", dryRun: true}); err != nil {
+		t.Fatal(err)
+	}
+	want := "homeskillet prepare\n  home:       " + home + "\n  platform:   windows/amd64\n  dry run:    nothing will change\n\n" +
+		"Pending (2): shown in full and asked about before each runs\n" +
+		"  Developer Mode  turn it on in Settings, System, For developers\n" +
+		"  Git             winget install --id Git.Git\n\n" +
+		"Missing (1): homeskillet cannot install these\n" +
+		"  PowerShell 7  https://github.com/PowerShell/PowerShell/releases\n\n" +
+		"Done (1)\n" +
+		"  winget  C:\\Users\\you\\AppData\\Local\\Microsoft\\WindowsApps\\winget.exe\n\n"
+	if output.String() != want {
+		t.Errorf("overview:\n%s\nwant:\n%s", output.String(), want)
+	}
+
+	// Git is not on PATH: not ready, said once, so main prints nothing more.
+	t.Setenv("PATH", t.TempDir())
+	output.Reset()
+	err := out.closing("linux", home, items, true)
+	if !Reported(err) || output.String() != "Dry run: nothing changed; prepare would offer 2 steps.\nNot ready: Git is still needed.\n" {
+		t.Errorf("dry run closing: %q, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := out.closing("linux", home, nil, false); !Reported(err) ||
+		output.String() != "Not ready: Git is still needed. Run homeskillet prepare again once it is in place.\n" {
+		t.Errorf("closing: %q, %v", output.String(), err)
+	}
+
+	// Git on PATH: ready.
+	bin := filepath.Join(t.TempDir(), "bin")
+	if err := os.Mkdir(bin, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bin, "git"), []byte("#!/bin/sh\n"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin)
+	output.Reset()
+	if err := out.closing("linux", home, nil, false); err != nil || output.String() != "Ready: homeskillet can clone and link a repository here.\n" {
+		t.Errorf("ready closing: %q, %v", output.String(), err)
+	}
+
+	// Outcomes as they happen: aligned, by title, for a person, who gets no
+	// line for what ran; by id, for a script, which gets every outcome.
+	output.Reset()
+	if err := out.outcome("skipped", "git", ""); err != nil || output.String() != "skipped  Git\n" {
+		t.Errorf("person outcome: %q, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := out.outcome("ran", "git", ""); err != nil || output.Len() != 0 {
+		t.Errorf("a person got a line for what ran: %q, %v", output.String(), err)
+	}
+	output.Reset()
+	if err := (prepareOutput{w: &output}).outcome("ran", "git", ""); err != nil || output.String() != "ran\tgit\n" {
+		t.Errorf("script outcome: %q, %v", output.String(), err)
 	}
 }

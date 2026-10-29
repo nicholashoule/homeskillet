@@ -64,6 +64,7 @@ value, as from an unset variable in `--home "$SCRATCH"`, is refused rather than 
 | `--home DIR` | Act on another home, such as a scratch one to try a repository in. |
 | `--platform OS[/ARCH]` | Act for another platform, such as `darwin` or `linux/arm64` ([manifest.md](manifest.md#platforms)). |
 | `--quiet` | Print nothing but errors; the exit status reports the result. Not for `setup`, whose steps must be shown. |
+| `--verbose` | On failure, show the whole error, not only its first line ([Output](#output)). |
 | `--force` | For `link`: move conflicting files into a backup, then link (see below). |
 | `--yes` | For `setup`: run every pending step without asking, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). For `backups purge`: delete every backup listed without asking. |
 | `--older-than AGE` | For `backups`: only backups moved more than `AGE` ago, such as `30d`. |
@@ -78,6 +79,10 @@ At a terminal, homeskillet says what it is running and where, groups files by wh
 and ends with what changed or what to do; after `link` and `status`, it also names any setup steps still pending. In a
 pipe or a script it prints one tab-separated line per file or step instead, a stable format to parse, such as
 `linked<TAB>/home/you/.bashrc -> /home/you/dotfiles/home/.bashrc`.
+
+A failure is one line saying what failed, with homeskillet's own advice on the lines after it, and a hint when the cause
+is one it recognizes: a setup step that failed or names a program not on `PATH`, a permission it lacks, or a full disk.
+Anything more, such as a second error from cleaning up, is left out and a line says so; `--verbose` shows it all.
 
 `status` and `link` exit nonzero when anything blocks linking: a file that is not homeskillet's link where a link should
 go, or a listed file the repository lacks. A linked file a shell would run in place of a command, such as

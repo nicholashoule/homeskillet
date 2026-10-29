@@ -15,6 +15,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
 
@@ -104,60 +105,245 @@ func gitAdvice(os string) string {
 	return "install it: sudo apt install git, sudo dnf install git, or sudo pacman -S git"
 }
 
-// runPrepare checks this machine and offers what is missing. A dry run, or a
-// script reading the output, gets one line per item: done, pending, or
-// missing, with what shows it or how to get it. It fails when something
-// required is still missing at the end, so a script can use it as a check;
-// PowerShell 7 is offered but not required.
-func runPrepare(ctx context.Context, inv invocation, home string, input io.Reader, output, diagnostics io.Writer) error {
-	platform, _ := host.Detect()
-	if platform.OS == "windows" {
-		if err := prepareDeveloperMode(ctx, inv, input, output); err != nil {
-			return err
+// An item is one thing prepare checks: Developer Mode, winget, Git, or
+// PowerShell 7. id names it in a script's lines, title for a person.
+type item struct {
+	id, title string
+	// required items must be in place for prepare to report ready.
+	required bool
+	// state is done, pending, offered once the checks are shown, or
+	// missing, which prepare cannot install.
+	state  string
+	detail string
+}
+
+// The states an item can be in, as a script reads them.
+const (
+	itemDone    = "done"
+	itemPending = "pending"
+	itemMissing = "missing"
+)
+
+// titles names the items for a person.
+var titles = map[string]string{developerModeStep: "Developer Mode", "winget": "winget", "git": "Git", "powershell": "PowerShell 7"}
+
+// assess checks each item for os, changing nothing.
+func assess(os, home string) []item {
+	found := func(id, program string, required bool, pending, missing string) item {
+		it := item{id: id, title: titles[id], required: required}
+		switch path := setup.Provided(program, home); {
+		case path != "":
+			it.state, it.detail = itemDone, displayPath(path)
+		case pending != "":
+			it.state, it.detail = itemPending, pending
+		default:
+			it.state, it.detail = itemMissing, missing
 		}
-		if err := prepareWindowsTools(ctx, inv, home, input, output, diagnostics); err != nil {
-			return err
+		return it
+	}
+	if os != "windows" {
+		return []item{found("git", "git", true, "", gitAdvice(os))}
+	}
+	developer := item{id: developerModeStep, title: titles[developerModeStep], required: true, state: itemDone, detail: "symlinks allowed"}
+	if host.ProbeSymlinks() != nil {
+		developer.state, developer.detail = itemPending, "turn it on in Settings, System, For developers"
+	}
+	steps := windowsSteps()
+	return []item{
+		developer,
+		found("winget", "winget", false, "register it, or repair it from the PowerShell Gallery", ""),
+		found("git", "git", true, setup.Quote(steps[0].Run[0]), ""),
+		found("powershell", "pwsh", false, setup.Quote(steps[1].Run[0]), ""),
+	}
+}
+
+// prepareOutput writes what prepare finds and does: for a person at a
+// terminal, a header, groups, and a closing sentence, as the other commands'
+// views do; for a script, one tab-separated line per item and outcome.
+type prepareOutput struct {
+	w      io.Writer
+	person bool
+}
+
+// outcome writes what just happened to one item, by its id: "skipped  Git"
+// for a person, "skipped\tgit" for a script, with detail after it when
+// given. A person gets no line for an item that ran: its own output says so,
+// and the closing sentence says whether everything is in place.
+func (o prepareOutput) outcome(state, id, detail string) error {
+	if o.person && state == "ran" {
+		return nil
+	}
+	if o.person {
+		line := fmt.Sprintf("%-8s %s", state, titles[id])
+		if detail != "" {
+			line += "  " + detail
 		}
-	} else if program := setup.Provided("git", home); program != "" {
-		if _, err := fmt.Fprintf(output, "done\tgit\t%s\n", displayPath(program)); err != nil {
-			return err
-		}
-	} else if _, err := fmt.Fprintf(output, "missing\tgit\t%s\n", gitAdvice(platform.OS)); err != nil {
+		_, err := fmt.Fprintln(o.w, line)
 		return err
 	}
-	missing := stillMissing(platform.OS, home)
-	if len(missing) > 0 {
-		return fmt.Errorf("not ready: missing %s", strings.Join(missing, " and "))
+	line := state + "\t" + id
+	if detail != "" {
+		line += "\t" + detail
 	}
-	_, err := fmt.Fprintln(output, "ready\tcan clone and link a repository")
+	_, err := fmt.Fprintln(o.w, line)
 	return err
 }
 
-// prepareWindowsTools offers the tools windowsSteps installs, through
-// winget, or says how to get winget when it is missing rather than offer
-// commands that would fail.
-func prepareWindowsTools(ctx context.Context, inv invocation, home string, input io.Reader, output, diagnostics io.Writer) error {
-	steps := windowsSteps()
-	options := setup.Options{Home: home, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics}
-	// winget may be installed but not yet registered, as just after a first
-	// sign-in, or need Microsoft's repair; each is offered in turn until
-	// winget is found, and when it is, the tools are offered in the same run.
-	if setup.Provided("winget", home) == "" && !inv.dryRun {
+// report is a setup.Options.Report for prepare's steps, named by step,
+// which is the item's id. A step's pending line, before it is shown and
+// asked about, is for a person; a script has the item's line already.
+func (o prepareOutput) report(outcome string, plan setup.Plan) error {
+	switch {
+	case outcome == string(setup.Pending) && !o.person:
+		return nil
+	case outcome == string(setup.Done):
+		return o.outcome(itemDone, plan.Step.Name, setup.Detail(plan)+", by an earlier step")
+	}
+	return o.outcome(outcome, plan.Step.Name, "")
+}
+
+// overview writes the checks before anything is offered: grouped for a
+// person, Pending first as setup's view orders them, or one line per item
+// for a script.
+func (o prepareOutput) overview(items []item, home string, platform config.Platform, inv invocation) error {
+	if !o.person {
+		for _, it := range items {
+			if err := o.outcome(it.state, it.id, it.detail); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	text := fmt.Sprintf("homeskillet prepare\n  %-11s %s\n  %-11s %s\n", "home:", displayPath(home), "platform:", platform)
+	if inv.dryRun {
+		text += fmt.Sprintf("  %-11s %s\n", "dry run:", "nothing will change")
+	}
+	if _, err := fmt.Fprintln(o.w, text); err != nil {
+		return err
+	}
+	pendingHeading := "Pending (%d): shown in full and asked about before each runs"
+	if inv.yes {
+		pendingHeading = "Pending (%d): shown in full; --yes asks only about Developer Mode and winget's repair"
+	}
+	v := &view{}
+	for _, g := range []struct{ state, heading string }{
+		{itemPending, pendingHeading},
+		{itemMissing, "Missing (%d): homeskillet cannot install these"},
+		{itemDone, "Done (%d)"},
+	} {
+		var entries [][2]string
+		for _, it := range items {
+			if it.state == g.state {
+				entries = append(entries, [2]string{it.title, it.detail})
+			}
+		}
+		if len(entries) > 0 {
+			if err := v.writeGroup(o.w, group{heading: fmt.Sprintf(g.heading, len(entries)), entries: entries}); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+// runPrepare checks this machine, shows what it found, and offers what is
+// pending, unless this is a dry run. It ends with ready, or with what is
+// still needed, and fails then, so a script can use it as a check;
+// PowerShell 7 is offered but not required.
+func runPrepare(ctx context.Context, inv invocation, home string, input io.Reader, output, diagnostics io.Writer) error {
+	platform, _ := host.Detect()
+	out := prepareOutput{w: output, person: terminal(output)}
+	items := assess(platform.OS, home)
+	if err := out.overview(items, home, platform, inv); err != nil {
+		return err
+	}
+	if platform.OS == "windows" && !inv.dryRun {
+		if err := offerWindows(ctx, inv, home, items, input, out, diagnostics); err != nil {
+			return err
+		}
+	}
+	return out.closing(platform.OS, home, items, inv.dryRun)
+}
+
+// closing ends prepare's output. A person reads a sentence: what a dry run
+// would offer, then whether the machine is ready, and if not, what is still
+// needed. A script reads "ready", or an error naming what is missing.
+func (o prepareOutput) closing(os, home string, items []item, dryRun bool) error {
+	missing := stillMissing(os, home)
+	if !o.person {
+		if len(missing) > 0 {
+			return fmt.Errorf("not ready: missing %s", strings.Join(missing, " and "))
+		}
+		_, err := fmt.Fprintln(o.w, "ready\tcan clone and link a repository")
+		return err
+	}
+	var text strings.Builder
+	if dryRun {
+		offered := 0
+		for _, it := range items {
+			if it.state == itemPending {
+				offered++
+			}
+		}
+		if offered > 0 {
+			fmt.Fprintf(&text, "Dry run: nothing changed; prepare would offer %s.\n", files(offered, "step"))
+		}
+	}
+	if len(missing) == 0 {
+		text.WriteString("Ready: homeskillet can clone and link a repository here.\n")
+		_, err := io.WriteString(o.w, text.String())
+		return err
+	}
+	named := make([]string, len(missing))
+	for i, id := range missing {
+		named[i] = titles[id]
+	}
+	verb, pronoun := "is", "it is"
+	if len(missing) > 1 {
+		verb, pronoun = "are", "they are"
+	}
+	fmt.Fprintf(&text, "Not ready: %s %s still needed.", list(named...), verb)
+	if !dryRun {
+		fmt.Fprintf(&text, " Run homeskillet prepare again once %s in place.", pronoun)
+	}
+	text.WriteString("\n")
+	if _, err := io.WriteString(o.w, text.String()); err != nil {
+		return err
+	}
+	// Explained above; main prints no more, but the status still fails.
+	return reportedError{errors.New("not ready")}
+}
+
+// offerWindows offers, in order, what assess found pending on Windows:
+// Developer Mode, then winget when it is missing, then the tools it
+// installs. When winget cannot be had, each tool's official download page
+// is named instead.
+func offerWindows(ctx context.Context, inv invocation, home string, items []item, input io.Reader, out prepareOutput, diagnostics io.Writer) error {
+	state := map[string]string{}
+	for _, it := range items {
+		state[it.id] = it.state
+	}
+	if state[developerModeStep] == itemPending && !inv.yes {
+		if err := prepareDeveloperMode(ctx, input, out); err != nil {
+			return err
+		}
+	}
+	options := setup.Options{Home: home, Yes: inv.yes, Input: input, Output: out.w, Errors: diagnostics, Report: out.report}
+	if state["winget"] == itemPending {
 		if err := bringWinget(ctx, home, options); err != nil {
 			return err
 		}
 	}
+	steps := windowsSteps()
 	if setup.Provided("winget", home) == "" {
-		if _, err := fmt.Fprintf(output, "missing\twinget\t%s\n", wingetMissing); err != nil {
+		if err := out.outcome(itemMissing, "winget", wingetMissing); err != nil {
 			return err
 		}
 		for i := range steps {
-			line := "missing\t" + steps[i].Name + "\t" + officialDownloads[steps[i].Name] + "\n"
-			if program := setup.Provided(steps[i].Provides, home); program != "" {
-				line = "done\t" + steps[i].Name + "\t" + displayPath(program) + "\n"
-			}
-			if _, err := io.WriteString(output, line); err != nil {
-				return err
+			if state[steps[i].Name] == itemPending {
+				if err := out.outcome(itemMissing, steps[i].Name, officialDownloads[steps[i].Name]); err != nil {
+					return err
+				}
 			}
 		}
 		return nil
@@ -166,14 +352,8 @@ func prepareWindowsTools(ctx context.Context, inv invocation, home string, input
 	if err != nil {
 		return err
 	}
-	if inv.dryRun {
-		for i := range plans {
-			if err := setup.List(output, plans[i]); err != nil {
-				return err
-			}
-		}
-		return nil
-	}
+	// Steps already done were shown in the overview; only the rest run.
+	plans = slices.DeleteFunc(plans, func(plan setup.Plan) bool { return plan.State == setup.Done })
 	return setup.RunBuiltin(ctx, plans, options)
 }
 
@@ -205,11 +385,7 @@ func bringWinget(ctx context.Context, home string, options setup.Options) error 
 		ran := false
 		way.Report = func(outcome string, plan setup.Plan) error {
 			ran = ran || outcome == "ran"
-			if outcome == string(setup.Done) {
-				return setup.List(options.Output, plan)
-			}
-			_, err := fmt.Fprintf(options.Output, "%s\t%s\n", outcome, plan.Step.Name)
-			return err
+			return options.Report(outcome, plan)
 		}
 		if err := setup.RunBuiltin(ctx, plans, way); err != nil {
 			if _, werr := fmt.Fprintf(options.Errors, "homeskillet: %v\n", err); werr != nil {
@@ -237,51 +413,42 @@ func waitFor(found func() bool, total, interval time.Duration) bool {
 	}
 }
 
-// prepareDeveloperMode checks that this process may make symlinks, which
-// Windows allows only in Developer Mode, and if not, offers to open the
-// Settings page that turns it on. Turning it on takes an administrator,
-// which homeskillet will not be, so the switch itself is the user's: once
-// they say it is on, it is checked again. Unattended, under --yes, the page
-// is not opened, since nobody is there to use it.
-func prepareDeveloperMode(ctx context.Context, inv invocation, input io.Reader, output io.Writer) error {
-	if host.ProbeSymlinks() == nil {
-		_, err := fmt.Fprintf(output, "done\t%s\tsymlinks allowed\n", developerModeStep)
-		return err
-	}
+// prepareDeveloperMode offers to open the Settings page that turns on
+// Developer Mode, which Windows requires before a process may make
+// symlinks. Turning it on takes an administrator, which homeskillet will not
+// be, so the switch itself is the user's: once they say it is on, it is
+// checked again.
+func prepareDeveloperMode(ctx context.Context, input io.Reader, out prepareOutput) error {
 	open, err := developerSettings()
 	if err != nil {
 		return err
 	}
-	if inv.dryRun || inv.yes {
-		_, err := fmt.Fprintf(output, "pending\t%s\tturn it on in Settings, System, For developers\n", developerModeStep)
+	if err := out.outcome(itemPending, developerModeStep, ""); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(output, "pending\t%s\n  needed for links; switching it on takes an administrator, so Settings opens for you to do it\n  run: %s\n",
-		developerModeStep, setup.Quote(open)); err != nil {
+	if _, err := fmt.Fprintf(out.w, "  needed for links; switching it on takes an administrator, so Settings opens for you to do it\n  run: %s\n", setup.Quote(open)); err != nil {
 		return err
 	}
-	approved, err := setup.Confirm(input, output, "Open Settings at For developers?")
+	approved, err := setup.Confirm(input, out.w, "Open Settings at For developers?")
 	if err != nil || !approved {
 		if err == nil {
-			_, err = fmt.Fprintf(output, "skipped\t%s\n", developerModeStep)
+			err = out.outcome("skipped", developerModeStep, "")
 		}
 		return err
 	}
 	if err := openSettings(ctx, open); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprint(output, "Turn on Developer Mode there, then press Enter. "); err != nil {
+	if _, err := fmt.Fprint(out.w, "Turn on Developer Mode there, then press Enter. "); err != nil {
 		return err
 	}
 	if err := waitForEnter(input); err != nil {
 		return err
 	}
-	outcome := "ran"
 	if host.ProbeSymlinks() != nil {
-		outcome = "skipped"
+		return out.outcome("skipped", developerModeStep, "still off")
 	}
-	_, err = fmt.Fprintf(output, "%s\t%s\n", outcome, developerModeStep)
-	return err
+	return out.outcome("ran", developerModeStep, "")
 }
 
 // waitForEnter reads input up to a newline or its end, a byte at a time, as
@@ -303,8 +470,8 @@ func waitForEnter(input io.Reader) error {
 	}
 }
 
-// stillMissing returns what os needs that is still missing, checked afresh:
-// Developer Mode and Git on Windows, Git elsewhere.
+// stillMissing returns the ids of what os needs that is still missing,
+// checked afresh: Developer Mode and Git on Windows, Git elsewhere.
 func stillMissing(os, home string) []string {
 	var missing []string
 	if os == "windows" && host.ProbeSymlinks() != nil {

@@ -102,8 +102,10 @@ type invocation struct {
 	prefix string
 	data   string // --data-dir
 	dryRun bool
-	root   bool // --allow-root
-	yes    bool
+	// verbose is --verbose: a failure is shown whole (see failure).
+	verbose bool
+	root    bool // --allow-root
+	yes     bool
 	// platform is --platform, the platform to act for instead of the
 	// detected one.
 	platform string
@@ -130,6 +132,17 @@ type wslOptions struct {
 // ctx means context.Background, a nil input answers no to every prompt, and
 // nil output or diagnostics discard what would be written there.
 func Run(ctx context.Context, args []string, input io.Reader, output, diagnostics io.Writer) error {
+	verbose := false
+	err := run(ctx, args, input, output, diagnostics, &verbose)
+	if err == nil || Reported(err) {
+		return err
+	}
+	return failure{err: err, verbose: verbose}
+}
+
+// run is Run before its error is presented (see failure); it sets verbose
+// once the command line says.
+func run(ctx context.Context, args []string, input io.Reader, output, diagnostics io.Writer, verbose *bool) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -143,6 +156,7 @@ func Run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	if err != nil || inv.command == "" {
 		return err
 	}
+	*verbose = inv.verbose
 	// Errors still reach main, which prints them; only results are dropped.
 	if inv.quiet {
 		output = io.Discard
@@ -467,20 +481,23 @@ func takeCommand(args []string) (string, []string, error) {
 	return "", nil, unknownCommand(command)
 }
 
-// unknownCommand says that word is not a command, in two short lines rather
-// than the whole list: the nearest command when word is likely a typo of it,
-// then where the list is, and how to write a repository instead, since a bare
-// word is never read as one (see isPath).
+// unknownCommand says that word is not a command, briefly: the nearest
+// command when word is likely a typo of it, or else where the commands are
+// listed. A bare word is never read as a repository (see isPath), so when a
+// directory by that name is here, the error also says how to name it.
 func unknownCommand(word string) error {
 	shown := word
 	if !config.Printable(shown) {
 		shown = strconv.Quote(shown)
 	}
-	guess := ""
+	message := fmt.Sprintf("'%s' is not a command; see 'homeskillet help'", shown)
 	if near := nearestCommand(word); near != "" {
-		guess = fmt.Sprintf("; did you mean %s?", near)
+		message = fmt.Sprintf("'%s' is not a command; did you mean '%s'?", shown, near)
 	}
-	return fmt.Errorf("unknown command %s%s\n  homeskillet help lists the commands; write a repository as a path, such as ./%s", shown, guess, shown)
+	if info, err := os.Stat(word); err == nil && info.IsDir() && config.Printable(word) { //nolint:gosec // G703: only whether a directory by the typed name exists, to word the error; nothing is read or acted on
+		message += fmt.Sprintf("\n  for the repository in %s, write it as a path: ./%s", word, word)
+	}
+	return errors.New(message)
 }
 
 // nearestCommand returns the command word is most likely a typo of: the one
@@ -577,6 +594,7 @@ func newFlags(inv *invocation) *flag.FlagSet {
 	// so the flag package writes nothing itself.
 	flags.SetOutput(io.Discard)
 	flags.BoolVar(&inv.dryRun, "dry-run", false, "Preview: change no files and run no setup steps")
+	flags.BoolVar(&inv.verbose, "verbose", false, "On failure, show the whole error, not only its first line")
 	flags.StringVar(&inv.home, "home", "", "Use `DIR` as the home directory (default: yours)")
 	flags.StringVar(&inv.repo, "repo", ".", "Use `DIR` as the repository, as if named after the command")
 	flags.StringVar(&inv.platform, "platform", "", "Act for `OS[/ARCH]`, such as darwin or linux/arm64 (default: this machine)")
