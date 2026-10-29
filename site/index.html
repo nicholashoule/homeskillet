@@ -256,18 +256,19 @@ curl -fsSLO --proto '=https' "$base/SHA256SUMS"
 grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
 chmod +x homeskillet-linux-amd64
 ./homeskillet-linux-amd64 self install</code></pre>
-      <p>From then on, homeskillet keeps itself current. Each version keeps its own copy, so going back is one command:</p>
+      <p>From then on, homeskillet manages its own versions. Each version keeps its own copy, so going back is one command:</p>
 <pre><code>homeskillet update            # install the newest release, keeping the one you have
+homeskillet install 0.3.0     # install that release
 homeskillet self list         # installed versions, and which one runs
 homeskillet self releases     # published versions
 homeskillet use previous      # go back</code></pre>
-      <p><code>update</code> checks each download against the release's <code>SHA256SUMS</code> before anything runs. Windows needs Developer Mode for symlinks; see the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md">Windows guide</a>.</p>
+      <p><code>update</code> checks each download against the release's <code>SHA256SUMS</code> before anything runs. Windows needs Developer Mode for symlinks; the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#installing">Windows guide</a> shows the same steps in PowerShell.</p>
 
       <div class="from-source">
         <img class="gopher" src="images/gopher.svg" width="52" height="71" alt="The Go gopher">
         <div>
           <h3>From source, with Go</h3>
-          <p>With Go 1.24 or newer, <code>make install</code> from a clone builds homeskillet and installs it the same way, as a version of its own. The build uses the standard library only, so there is nothing else to fetch.</p>
+          <p>With Go 1.24 or newer, on a machine without homeskillet, on Linux, macOS, or Windows, <code>go run github.com/nicholashoule/homeskillet@latest self install</code> builds the release from source and installs it the same way, as a version of its own, and <code>make install</code> does the same from a clone. The build uses the standard library only, so there is nothing else to fetch.</p>
         </div>
       </div>
 

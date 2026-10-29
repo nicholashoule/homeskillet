@@ -125,7 +125,10 @@ otherwise. `install.New` resolves the prefix's existing directories, then:
   highest and second-highest installed versions. `current` is created following `latest` if it is missing, and
   `bin/homeskillet` is created linking to `share/homeskillet/current/homeskillet` if it is missing. On Windows,
   `current` is a file, `latest` and `previous` are computed rather than linked, and `bin/homeskillet.exe` links to the
-  chosen version's program (`pointCommand`, [windows.md](windows.md#installing-homeskillet)).
+  chosen version's program (`pointCommand`, [windows.md](windows.md#installing-homeskillet)). A build Go made from a
+  downloaded module, as `go run module@version` makes one (`version.Info.Downloaded`, from the module checksum Go
+  records), installs only where no version is installed yet (`firstInstallOnly`). `self install VERSION` runs
+  `self update VERSION` instead.
 - `self use` points `current` at `latest` (follow) or at one version (pin). `previous` is resolved when the command
   runs, so a later install never changes a pin.
 - `self remove` deletes one version that is neither current nor the running program, after moving `latest` and

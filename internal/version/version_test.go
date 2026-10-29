@@ -4,6 +4,7 @@
 package version
 
 import (
+	"runtime/debug"
 	"slices"
 	"testing"
 )
@@ -102,6 +103,29 @@ func TestCurrent(t *testing.T) {
 	current := Current()
 	if current.Version == "" || current.Go == "" || current.Platform == "" {
 		t.Fatalf("missing build details: %+v", current)
+	}
+}
+
+func TestFromBuild(t *testing.T) {
+	base := Info{Version: Devel, Go: "go1.24.2", Platform: "linux/amd64"}
+	// go run and go install of module@version record the version and the
+	// module's checksum, and no commit.
+	downloaded := fromBuild(&debug.BuildInfo{Main: debug.Module{
+		Path: "github.com/nicholashoule/homeskillet", Version: "v0.3.0", Sum: "h1:U32nTApk6KwXbEj0i7PHrnjGD6M/7Zh/Oaf2dsmU6Wo=",
+	}}, base)
+	if downloaded.Version != "v0.3.0" || !downloaded.Downloaded || downloaded.Revision != "" {
+		t.Errorf("a downloaded module's build: %+v", downloaded)
+	}
+	// A build in a checkout records the commit, and no checksum.
+	checkout := fromBuild(&debug.BuildInfo{
+		Main:     debug.Module{Path: "github.com/nicholashoule/homeskillet", Version: "v0.3.0"},
+		Settings: []debug.BuildSetting{{Key: "vcs.revision", Value: "18031489ba7e"}, {Key: "vcs.modified", Value: "false"}},
+	}, base)
+	if checkout.Version != "v0.3.0" || checkout.Downloaded || checkout.Revision != "18031489ba7e" {
+		t.Errorf("a checkout's build: %+v", checkout)
+	}
+	if got := fromBuild(nil, base); got != base {
+		t.Errorf("no build details: %+v, want %+v", got, base)
 	}
 }
 

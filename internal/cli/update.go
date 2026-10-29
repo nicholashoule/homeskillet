@@ -25,8 +25,10 @@ import (
 )
 
 // runUpdate installs the release inv.operand names, or the newest published
-// one, as self install would install a build. The release's SHA256SUMS and
-// the binary for this machine's platform are downloaded (see
+// one, as self install would install a build; self install VERSION runs it
+// too. A version that is not a release, such as v0.3.0-rc.1 or v0.3, is
+// refused before anything else happens (see release). The release's
+// SHA256SUMS and the binary for this machine's platform are downloaded (see
 // downloadRelease) into a private directory under the data directory (see
 // stagingDir), the binary is checked against the listed SHA-256, and, unless
 // this is a dry run, checked to report that version and then run to install
@@ -40,17 +42,18 @@ import (
 // downloaded, so what it changes does not depend on the download honoring
 // --dry-run.
 func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home string, output, diagnostics io.Writer) error {
+	target := inv.operand
+	if target != "" && !release(target) {
+		return fmt.Errorf("%q is not a published version such as v0.2.0; only releases are downloaded", target)
+	}
 	from, err := newDownloader()
 	if err != nil {
 		return err
 	}
-	target := inv.operand
 	if target == "" {
 		if target, err = latestVersion(ctx, from); err != nil {
 			return err
 		}
-	} else if !release(target) {
-		return fmt.Errorf("%q is not a published version such as v0.2.0; self update installs releases only", target)
 	}
 	state, err := layout.Inspect()
 	if err != nil {

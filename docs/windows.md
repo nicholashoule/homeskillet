@@ -35,21 +35,33 @@ reached from Windows; and, inside WSL, a repository on a Windows drive under `/m
 
 ## Installing
 
-Download `homeskillet-windows-amd64.exe`, or `-arm64.exe` on Arm, and `SHA256SUMS` from the Releases page, then in
-PowerShell:
+In Windows PowerShell or PowerShell 7, from a folder of your own such as Downloads, fetch the build for your machine and
+the release's `SHA256SUMS`, and run the build's `self install` only if `SHA256SUMS` lists its SHA-256:
 
 ```powershell
-(Get-FileHash .\homeskillet-windows-amd64.exe -Algorithm SHA256).Hash  # compare with SHA256SUMS
-.\homeskillet-windows-amd64.exe self install
+$base = 'https://github.com/nicholashoule/homeskillet/releases/latest/download'
+$exe = 'homeskillet-windows-amd64.exe'   # homeskillet-windows-arm64.exe on Arm
+curl.exe -fsSLO --proto =https "$base/$exe"
+curl.exe -fsSLO --proto =https "$base/SHA256SUMS"
+$sum = (Get-FileHash $exe -Algorithm SHA256).Hash
+if ((Get-Content SHA256SUMS) -contains "$sum  $exe") { & ".\$exe" self install } else { Write-Error "$exe does not match SHA256SUMS; it was not run" }
 ```
 
-From a clone of this repository, with Go: `go build -o bin\homeskillet.exe .`, then `bin\homeskillet.exe self install`,
-or `make install` where GNU Make is installed ([development.md](development.md#on-windows)). Either way the command
-lands in `%USERPROFILE%\.local\bin\homeskillet.exe`, where uv and other installers put programs too. homeskillet says so
-if that directory is not on your Path; add it to your user Path in Settings (search for environment variables), and open
-a new terminal. After that, `homeskillet update` installs the newest release, with Windows's own `curl.exe` and
-`certutil.exe` to download and check it. [install.md](install.md) covers updating, versions, pinning, and removal, which
-work as on Linux and macOS.
+Write `curl.exe`, not `curl`, which Windows PowerShell takes for its own `Invoke-WebRequest`. The check and the run are
+one statement, so that even pasted line by line, a build that fails the check is never run. For a particular release,
+write `download/v0.3.0` in place of `latest/download`. Delete the two files afterward. The rest is homeskillet's own:
+`self install` refuses an elevated terminal and, without Developer Mode, stops before changing anything.
+
+With Go 1.24 or newer, on a machine without homeskillet,
+`go run github.com/nicholashoule/homeskillet@latest self install` builds the release from source and installs it, with
+nothing to check by hand ([install.md](install.md#building-and-installing)). From a clone of this repository:
+`go build -o bin\homeskillet.exe .`, then `bin\homeskillet.exe self install`, or `make install` where GNU Make is
+installed ([development.md](development.md#on-windows)). Every way, the command lands in
+`%USERPROFILE%\.local\bin\homeskillet.exe`, where uv and other installers put programs too. homeskillet says so if that
+directory is not on your Path; add it to your user Path in Settings (search for environment variables), and open a new
+terminal. After that, homeskillet manages its own versions: `homeskillet update` installs the newest release, and
+`homeskillet install 0.3.0` a particular one, with Windows's own `curl.exe` and `certutil.exe` to download and check
+it. [install.md](install.md) covers updating, versions, pinning, and removal, which work as on Linux and macOS.
 
 For tab completion in PowerShell 7.3 or later, add this to your profile:
 

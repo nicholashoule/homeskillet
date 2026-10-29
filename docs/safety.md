@@ -191,8 +191,11 @@ copies and where it copies it:
 
 ## Updating
 
-`homeskillet update` runs a program it just downloaded, so everything on the way to running it is checked:
+`homeskillet update`, and `homeskillet install VERSION`, which is the same, run a program just downloaded, so
+everything on the way to running it is checked:
 
+- The version must be a release's: three numbers, with or without a leading `v`, and no pre-release or build part.
+  Anything else is refused before curl is even looked for, so no other text reaches a URL.
 - It downloads only from this project's releases on GitHub, at URLs fixed in the binary, over HTTPS with TLS 1.2 or
   later, and never follows a redirect to plain HTTP. There is no option to download from elsewhere.
 - It uses the system's own `curl` and hashing tool (`sha256sum` or `shasum`; `certutil` on Windows) at their fixed
