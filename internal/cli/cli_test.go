@@ -528,7 +528,7 @@ func TestEmptyValues(t *testing.T) {
 	for _, args := range [][]string{
 		{"link", "--home", ""}, {"link", "--home="}, {"status", "--repo", ""}, {"status", "--data-dir", ""},
 		{"status", "--platform", ""}, {"self", "install", "--prefix", ""},
-		{"link", ""}, {"unlink", ".", ""}, {"unlink", "--repo", ".", ""}, {"self", "use", ""},
+		{"link", ""}, {"unlink", ".", ""}, {"unlink", "--repo", ".", ""}, {"self", "use", ""}, {"install", ""}, {"update", ""},
 	} {
 		if _, err := parse(args, new(bytes.Buffer)); err == nil || !strings.Contains(err.Error(), "empty") {
 			t.Errorf("%q: %v", args, err)

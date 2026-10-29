@@ -9,6 +9,7 @@ package cli
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -34,6 +35,14 @@ func runSelf(ctx context.Context, inv invocation, home string, output, diagnosti
 	case "list":
 		return listVersions(layout, output)
 	case "install":
+		// A version names a release, downloaded and checked as update does.
+		if inv.operand != "" {
+			err = runUpdate(ctx, inv, layout, home, output, diagnostics)
+			break
+		}
+		if err := firstInstallOnly(layout); err != nil {
+			return err
+		}
 		// The running program installs itself, so the version recorded in
 		// it and the bytes copied cannot disagree.
 		var executable string
@@ -64,6 +73,30 @@ func runSelf(ctx context.Context, inv invocation, home string, output, diagnosti
 		_, err = fmt.Fprintln(output, "dry run: nothing changed")
 	}
 	return err
+}
+
+// downloadedBuild reports whether the running program is a build Go made from
+// a module it downloaded, as go run module@version does (see
+// version.Info.Downloaded). Tests replace it.
+var downloadedBuild = func() bool { return version.Current().Downloaded }
+
+// firstInstallOnly refuses to install a build that Go made from a downloaded
+// module once any version is installed in layout. Such a build is a way onto a
+// new machine; after that, update and install VERSION install the binaries
+// releases publish, so that each installed version is its release's build.
+func firstInstallOnly(layout install.Layout) error {
+	if !downloadedBuild() {
+		return nil
+	}
+	state, err := layout.Inspect()
+	if err != nil {
+		return err
+	}
+	if len(state.Versions) > 0 {
+		return errors.New("homeskillet is already installed here, and a build from go run or go install is for a first install only;\n" +
+			"  homeskillet update installs the newest release, and homeskillet install VERSION a particular one; nothing has changed")
+	}
+	return nil
 }
 
 // selfLayout returns where the self commands keep installed versions: under

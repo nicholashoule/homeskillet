@@ -113,6 +113,9 @@ func TestSelfArguments(t *testing.T) {
 		{args: []string{"update", "--dry-run"}, sub: "update"},
 		{args: []string{"update", "0.3.0", "--prefix", "/opt/hs"}, sub: "update", operand: "v0.3.0"},
 		{args: []string{"install"}, sub: "install"},
+		{args: []string{"install", "0.3.1"}, sub: "install", operand: "v0.3.1"},
+		{args: []string{"self", "install", "v0.3.1", "--dry-run"}, sub: "install", operand: "v0.3.1"},
+		{args: []string{"install", "0.3.0", "0.3.1"}, err: "unexpected arguments"},
 		{args: []string{"use", "previous"}, sub: "use", operand: "previous"},
 		{args: []string{"use", "0.1.1"}, sub: "use", operand: "v0.1.1"},
 		{args: []string{"self", "use", "v0.1.1"}, sub: "use", operand: "v0.1.1"},
@@ -263,6 +266,114 @@ func TestSelfUpdate(t *testing.T) {
 	}
 	if output, err := invoke("self", "", home, "update"); err != nil || !strings.Contains(output, "unchanged\tv9.9.9\talready installed; homeskillet self use v9.9.9 runs it") {
 		t.Errorf("update of an installed version: %q, %v", output, err)
+	}
+}
+
+func TestSelfInstallVersion(t *testing.T) {
+	requireUnix(t)
+	_, home := repository(t)
+	// The stub runs as a command, so it must see only test directories.
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", t.TempDir())
+	log := filepath.Join(t.TempDir(), "install.log")
+	useDownloader(t, stubRelease(t, "v9.9.9", log))
+
+	// install VERSION downloads and checks that release as update does, and
+	// a dry run runs nothing it downloaded.
+	output, err := invoke("self", "", home, "install", "9.9.9", "--dry-run")
+	if err != nil || !strings.Contains(output, "install\tv9.9.9\twould be installed") {
+		t.Fatalf("dry run: %q, %v", output, err)
+	}
+	if _, err := os.Lstat(log); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the dry run ran the download: %v", err)
+	}
+	if output, err = invoke("self", "", home, "install", "9.9.9"); err != nil {
+		t.Fatalf("install 9.9.9: %q, %v", output, err)
+	}
+	if recorded, err := os.ReadFile(log); err != nil || string(recorded) != "self install --home="+home+"\n" {
+		t.Errorf("the download's self install ran with %q, %v", recorded, err)
+	}
+	if _, err := invoke("self", "", home, "install", "0.0.9"); err == nil || !strings.Contains(err.Error(), "does not match the release's SHA256SUMS") {
+		t.Errorf("a wrong checksum: %v", err)
+	}
+}
+
+// TestInstallRefusesOtherVersions checks that install and update take only a
+// release's version, and refuse anything else before they look for curl, let
+// alone download.
+func TestInstallRefusesOtherVersions(t *testing.T) {
+	_, home := repository(t)
+	saved := newDownloader
+	newDownloader = func() (downloader, error) {
+		t.Error("a downloader was made for a version that is not a release")
+		return fakeDownloader{}, nil
+	}
+	t.Cleanup(func() { newDownloader = saved })
+	for _, v := range []string{
+		"0.3", "v0.3", "1.2.3.4", "v0.3.1-rc.1", "0.3.1+build", "v01.2.3", "V0.3.1", "latest", "previous",
+		"v0.3.1 ", " v0.3.1", "v0.3.1\n", "../v0.3.1", "v0.3.1/../v0.3.0", "v0.3.1\x1b[2K", "-1.0.0",
+	} {
+		for _, command := range []string{"install", "update"} {
+			// After --, so that -1.0.0 is a version rather than an option.
+			err := Run(context.Background(), []string{"self", command, "--home", home, "--", v}, nil, nil, nil)
+			if err == nil || !strings.Contains(err.Error(), "is not a published version") {
+				t.Errorf("%s %q: %v", command, v, err)
+			}
+		}
+	}
+	if _, err := os.Lstat(filepath.Join(home, ".local")); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("a refused version wrote %s: %v", filepath.Join(home, ".local"), err)
+	}
+}
+
+// TestFirstInstallOnly checks that a build from go run or go install installs
+// itself only where no version is installed yet, while install VERSION and
+// other builds are unaffected.
+func TestFirstInstallOnly(t *testing.T) {
+	_, home := repository(t)
+	downloaded := true
+	saved := downloadedBuild
+	downloadedBuild = func() bool { return downloaded }
+	t.Cleanup(func() { downloadedBuild = saved })
+	useDownloader(t, fakeDownloader{})
+	const refusal = "for a first install only"
+
+	// With nothing installed, the rule lets it through, to the refusal of
+	// the test binary, which records no version.
+	if _, err := invoke("self", "", home, "install", "--dry-run"); err == nil || strings.Contains(err.Error(), refusal) ||
+		!strings.Contains(err.Error(), "cannot install version") {
+		t.Fatalf("a first install: %v", err)
+	}
+
+	layout, err := selfLayout(invocation{}, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	program := layout.Program("v9.9.9")
+	if err := os.MkdirAll(filepath.Dir(program), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(program, []byte("installed"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for _, args := range [][]string{{"install"}, {"install", "--dry-run"}} {
+		if _, err := invoke("self", "", home, args...); err == nil || !strings.Contains(err.Error(), refusal) ||
+			!strings.Contains(err.Error(), "homeskillet install VERSION") {
+			t.Errorf("%q with a version installed: %v", args, err)
+		}
+	}
+	if data, err := os.ReadFile(program); err != nil || string(data) != "installed" {
+		t.Errorf("the refusal changed the installed version: %q, %v", data, err)
+	}
+	// Installing a release by version is how versions are managed after
+	// that, so the rule does not apply; here the release is not served.
+	if _, err := invoke("self", "", home, "install", "9.9.8"); err == nil || strings.Contains(err.Error(), refusal) || !strings.Contains(err.Error(), "404") {
+		t.Errorf("install 9.9.8 from a downloaded build: %v", err)
+	}
+	// A build from a checkout, such as make install's, installs as before.
+	downloaded = false
+	if _, err := invoke("self", "", home, "install", "--dry-run"); err == nil || strings.Contains(err.Error(), refusal) {
+		t.Errorf("a checkout's build: %v", err)
 	}
 }
 

@@ -10,18 +10,27 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 
 ## [0.3.1]
 
-A small follow-up to 0.3.0, so that `homeskillet update` has a newer release to move to, and says when one is.
+A small follow-up to 0.3.0, so that `homeskillet update` has a newer release to move to, and says when one is, with
+checked install steps for Windows and for Go.
 
 ### Added
 
 - At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available that you
   have not installed, checked at most once a day and shown at most once a day; exporting
   `HOMESKILLET_UPDATE_CHECK=off` turns it off ([docs/install.md](docs/install.md#updating)).
+- `homeskillet install 0.3.0` installs that release, downloaded and checked as `homeskillet update 0.3.0` does; both
+  accept only a release's version ([docs/install.md](docs/install.md#updating)).
 
 ### Changed
 
 - The install guide says that pinning a version runs that version's own command, so one from before 0.3.0 has no
   `use`, and that `homeskillet self use latest` works from any version ([docs/install.md](docs/install.md#updating)).
+- The Windows install steps check the download against the release's `SHA256SUMS` in PowerShell and run it only if it
+  matches, instead of leaving the comparison to the eye ([docs/windows.md](docs/windows.md#installing)).
+- On a machine without homeskillet, with Go 1.24 or newer,
+  `go run github.com/nicholashoule/homeskillet@latest self install` builds a release from source and installs it, on
+  Linux, macOS, and Windows, with nothing to check by hand. Such a build installs only there: once any version is
+  installed, homeskillet manages its versions itself ([docs/install.md](docs/install.md#building-and-installing)).
 
 ## Earlier Releases
 

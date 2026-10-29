@@ -74,7 +74,7 @@ var (
 type invocation struct {
 	command string // one of commands
 	sub     string // for self, one of selfCommands
-	operand string // for self use, self update, and self remove, the version
+	operand string // for self use, self update, self install, and self remove, the version
 	repo    string
 	// repoGiven says the repository was named rather than defaulted (see
 	// openRepository).
@@ -399,7 +399,7 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		return invocation{}, misplaced
 	case empty != nil:
 		return invocation{}, empty
-	case (inv.sub == "use" || inv.sub == "remove" || inv.sub == "update" || inv.command == "completion") && len(operands) == 1:
+	case (slices.Contains([]string{"use", "remove", "update", "install"}, inv.sub) || inv.command == "completion") && len(operands) == 1:
 		inv.operand = operands[0]
 		if inv.command == "self" {
 			inv.operand = withV(inv.operand)
@@ -425,8 +425,8 @@ func parse(args []string, output io.Writer) (invocation, error) {
 }
 
 // withV returns a version written without its leading v, as 0.2.0, with it,
-// as self use, self update, and self remove name versions, and anything else
-// as it is.
+// as self use, self update, self install, and self remove name versions, and
+// anything else as it is.
 func withV(v string) string {
 	if !version.Valid(v) && version.Valid("v"+v) {
 		return "v" + v

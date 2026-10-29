@@ -56,6 +56,11 @@ type Info struct {
 	Go string `json:"go,omitempty"`
 	// Platform is the GOOS/GOARCH the binary was built for.
 	Platform string `json:"platform,omitempty"`
+	// Downloaded reports a build from a module Go downloaded and checked
+	// against its checksum, as go run and go install build module@v0.0.1,
+	// rather than from a checkout. It describes the running binary only, so
+	// it is not part of an installed version's record.
+	Downloaded bool `json:"-"`
 }
 
 // Current returns the running binary's Info.
@@ -75,10 +80,18 @@ func Current() Info {
 	return info
 }
 
+// fromBuild returns info with the details build records filled in, or info as
+// it is when build is nil.
 func fromBuild(build *debug.BuildInfo, info Info) Info {
+	if build == nil {
+		return info
+	}
 	if v := build.Main.Version; v != "" && v != Devel {
 		info.Version = v
 	}
+	// Go records the main module's checksum only when it downloaded the
+	// module; a build in a checkout has none.
+	info.Downloaded = build.Main.Sum != ""
 	var goos, goarch string
 	for _, setting := range build.Settings {
 		switch setting.Key {

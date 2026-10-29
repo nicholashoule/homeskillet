@@ -17,7 +17,7 @@ option.
 | `wsl` | On Windows, or from a WSL shell, act in a WSL distribution ([windows.md](windows.md#the-wsl-command)). |
 | `backups` | List the files `link --force` moved aside; `backups purge` deletes them once you approve ([Conflicts and Backups](#conflicts-and-backups)). |
 | `update` | Install the newest release from GitHub, or the version given, checked against its `SHA256SUMS`, keeping the old one ([install.md](install.md#updating)). |
-| `install`, `use` | Install this build as a version of its own; run `latest`, `previous`, or a version ([install.md](install.md#versions-and-updates)). |
+| `install`, `use` | Install this build as a version of its own, or with a version, that release as `update` does; run `latest`, `previous`, or a version ([install.md](install.md#versions-and-updates)). |
 | `self` | The same as `update`, `install`, and `use`, plus `self list`, `self releases`, and `self remove` ([install.md](install.md#versions-and-updates)). |
 | `version`, `completion`, `help` | Show the version, print a shell completion script ([install.md](install.md#shell-completion)), or show the help. |
 

@@ -40,18 +40,21 @@ chmod +x homeskillet-linux-amd64 && ./homeskillet-linux-amd64 self install
 ```
 
 The other builds are `homeskillet-linux-arm64`, `homeskillet-darwin-amd64`, `homeskillet-darwin-arm64`, and on
-Windows the `.exe` files ([docs/windows.md](docs/windows.md#installing)). From then on, homeskillet keeps itself
-current:
+Windows the `.exe` files, checked in PowerShell ([docs/windows.md](docs/windows.md#installing)). From then on,
+homeskillet manages its own versions:
 
 ```sh
 homeskillet update            # install the newest release, keeping the one you have
+homeskillet install 0.3.0     # install that release
 homeskillet self list         # installed versions, and which one runs
 homeskillet self releases     # published versions
 homeskillet use previous      # go back
 ```
 
-With Go 1.24 or newer, `make install` from a clone builds and installs it instead
-([docs/install.md](docs/install.md)).
+With Go 1.24 or newer, on a machine without homeskillet,
+`go run github.com/nicholashoule/homeskillet@latest self install` builds the release from source and installs it
+instead, on any system, and `make install` does the same from a clone
+([docs/install.md](docs/install.md#building-and-installing)).
 
 ## Use
 

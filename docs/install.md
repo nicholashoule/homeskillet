@@ -19,6 +19,19 @@ is not. `make install PREFIX=<dir>` installs under another prefix, and `make bui
 On Windows, see [windows.md](windows.md#installing); for WSL, `homeskillet wsl install` on Windows installs the Linux
 build in a distribution ([windows.md](windows.md#the-wsl-command)).
 
+On a machine without homeskillet, Go builds and installs a release in one command, without a clone, on Linux, macOS,
+and Windows alike:
+
+```sh
+go run github.com/nicholashoule/homeskillet@latest self install     # or @v0.3.0 for that release
+```
+
+Go fetches the tag's source through its module proxy and, with Go's default settings, checks it against the public
+checksum database, `sum.golang.org`, before building, so there is no download to check by hand. What it builds is that
+version compiled by your Go, not the release's binary, and `version` shows no commit. It is for a first install only:
+where any version is installed, such a build's `self install` refuses, changing nothing, since from then on homeskillet
+manages its versions itself, with `homeskillet update` and `homeskillet install VERSION` ([Updating](#updating)).
+
 ## Downloading a Release
 
 Each version tag publishes the static binaries `make cross` builds, for Linux, macOS, and Windows, on the repository's
@@ -48,10 +61,14 @@ gives the same `SHA256SUMS` ([release.md](release.md#tagging)).
 ```sh
 homeskillet update                    # install the newest release, if it is not installed
 homeskillet update --dry-run          # download and check it, but change nothing
-homeskillet update 0.2.0              # install that release instead
+homeskillet install 0.3.0             # install that release; update 0.3.0 does the same
 homeskillet self releases             # the published releases, and which are installed
-homeskillet use v0.2.0                # go back; update's closing note names the version
+homeskillet use 0.3.0                 # run it; update's closing note names the version to go back to
 ```
+
+`install` with a version and `update` with one are the same: each takes only a release's version, three numbers such as
+`0.3.0` or `v0.3.0`, and refuses anything else, a pre-release such as `v0.4.0-rc.1` included, before it downloads.
+Without a version, `install` installs the running build instead, as for a first install.
 
 `update` asks GitHub which release is newest, downloads the release's `SHA256SUMS` and the binary for this machine into
 a private directory under the [data directory](#data-directory), checks the binary against the listed SHA-256, checks

@@ -27,9 +27,10 @@ const usageLines = `  homeskillet [status|link|unlink] [REPOSITORY [FILE...]] [o
   homeskillet wsl status|link|unlink|setup [REPOSITORY [FILE...|STEP...]] [options]
   homeskillet backups [list|purge] [options]
   homeskillet update [VERSION] [options]
-  homeskillet install [options]
+  homeskillet install [VERSION] [options]
   homeskillet use latest|previous|VERSION [options]
-  homeskillet self install|list [options]
+  homeskillet self install [VERSION] [options]
+  homeskillet self list [options]
   homeskillet self update [VERSION] [options]
   homeskillet self releases [options]
   homeskillet self use latest|previous|VERSION [options]
@@ -53,8 +54,9 @@ var commandHelp = map[string]string{
 	"update": "Install the newest release of homeskillet from GitHub, or the VERSION given, checked against its SHA256SUMS, keeping the old one to go back to. " +
 		"At a terminal, status, link, unlink, and setup end with a note when a newer release is available, checked once a day; " +
 		"export HOMESKILLET_UPDATE_CHECK=off to turn that off",
-	"install": "Install this build of homeskillet as a version of its own, and make it the one the command runs unless another is pinned",
-	"use":     "Run latest, previous, or the installed VERSION; latest follows new installs, a version stays pinned",
+	"install": "Install this build of homeskillet as a version of its own, and make it the one the command runs unless another is pinned; " +
+		"with a VERSION, install that release from GitHub instead, as update does. A build from go run or go install installs only where none is yet",
+	"use": "Run latest, previous, or the installed VERSION; latest follows new installs, a version stays pinned",
 	"self": "Install, update, list, switch, or remove versions of homeskillet. self update installs the newest release from GitHub, or the VERSION given, " +
 		"checked against its SHA256SUMS, and keeps the old one to go back to with self use; self releases lists the releases there are",
 	"version": "Show the version and build details",
@@ -69,8 +71,8 @@ var argumentHelp = [][2]string{
 		"(default: the current directory, else the one linked into the home). Without a command, write it as a path: . or ./dotfiles"},
 	{"FILE", "Limits status, link, or unlink to this file or directory, named by link (.bashrc) or source (" +
 		config.HomeDir + "/.bashrc). Put -- before a name starting with -"},
-	{"VERSION", "An installed version, such as v0.1.1 or 0.1.1, for self use and self remove; self list shows them all. For self update, " +
-		"a published release to install instead of the newest; self releases shows them all"},
+	{"VERSION", "An installed version, such as v0.1.1 or 0.1.1, for self use and self remove; self list shows them all. For self update and self install, " +
+		"a published release to install, three numbers with no pre-release part; self releases shows them all"},
 }
 
 // optionGroups orders the options in help. The first group applies to several
