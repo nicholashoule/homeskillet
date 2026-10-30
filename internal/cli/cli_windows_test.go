@@ -91,3 +91,14 @@ func TestSetupDocumentsWindows(t *testing.T) {
 		t.Fatalf("setup --dry-run with the profile: %q, %v", output, err)
 	}
 }
+
+// TestPathAdvice checks that the note about Path gives a command to paste,
+// with the directory quoted so that PowerShell reads it as text.
+func TestPathAdvice(t *testing.T) {
+	got := pathAdvice(`C:\Users\o'brien\.local\bin`)
+	want := "add it to your Path in PowerShell with [Environment]::SetEnvironmentVariable('Path', " +
+		"[Environment]::GetEnvironmentVariable('Path', 'User') + ';' + 'C:\\Users\\o''brien\\.local\\bin', 'User'), then open a new terminal"
+	if got != want {
+		t.Errorf("pathAdvice:\n%s\nwant:\n%s", got, want)
+	}
+}

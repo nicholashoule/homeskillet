@@ -1,58 +1,53 @@
 # Installing and Updating
 
-How to install homeskillet, how it records its version, and how it keeps installed versions side by side.
-[development.md](development.md) covers building it for development.
-
-## Building and Installing
-
-With Go 1.24 or newer, from a clone of this repository:
-
-```sh
-make install          # build bin/homeskillet, then install it as a new version
-homeskillet version
-```
-
-`make install` runs the build's `self install`, which copies it into a directory of its own version in the [data
-directory](#data-directory) and points the `homeskillet` command in `~/.local/bin` at it (see [Versions and
-Updates](#versions-and-updates)). homeskillet says so when that directory is not on your `PATH`, as on macOS it usually
-is not. `make install PREFIX=<dir>` installs under another prefix, and `make build` alone leaves the binary in `bin/`.
-On Windows, see [windows.md](windows.md#installing); for WSL, `homeskillet wsl install` on Windows installs the Linux
-build in a distribution ([windows.md](windows.md#the-wsl-command)).
-
-On a machine without homeskillet, Go builds and installs a release in one command, without a clone, on Linux, macOS,
-and Windows alike:
-
-```sh
-go run github.com/nicholashoule/homeskillet@latest install     # or @v0.3.1 for that release
-```
-
-Go fetches the tag's source through its module proxy and, with Go's default settings, checks it against the public
-checksum database, `sum.golang.org`, before building, so there is no download to check by hand. What it builds is that
-version compiled by your Go, not the release's binary, and `version` shows no commit. It is for a first install only:
-where any version is installed, such a build's `install` refuses, changing nothing, since from then on homeskillet
-manages its versions itself, with `homeskillet update` and `homeskillet install VERSION` ([Updating](#updating)).
+How to install homeskillet from its official release, how it records its version, and how it keeps installed versions
+side by side. [Building from Source](#building-from-source), last, is for development or bringing homeskillet to another
+system; [development.md](development.md) covers the rest of development.
 
 ## Downloading a Release
 
 Each version tag publishes the static binaries `make cross` builds, for Linux, macOS, and Windows, on the repository's
 Releases page: one `homeskillet-<os>-<arch>` per platform, `.exe` for Windows, with a `SHA256SUMS` file to check them
-against. In the commands below, `OWNER` is the GitHub account that hosts homeskillet; on Windows, see
-[windows.md](windows.md#installing).
+against. The commands for each system download the latest release and run it only if `SHA256SUMS` lists its SHA-256.
+For a particular release, write `download/v0.4.0` in place of `latest/download`.
+
+### Linux
+
+For x64, as shown; on Arm (`uname -m` prints `aarch64`), write `homeskillet-linux-arm64` instead. The same goes for a
+WSL distribution, from a shell inside it, and for a container.
 
 ```sh
-base=https://github.com/OWNER/homeskillet/releases/latest/download
+base=https://github.com/nicholashoule/homeskillet/releases/latest/download
 curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64" && curl -fsSLO --proto '=https' "$base/SHA256SUMS"
-grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
-gh attestation verify homeskillet-linux-amd64 --repo OWNER/homeskillet   # optional: that the release workflow built it
-chmod +x homeskillet-linux-amd64
-./homeskillet-linux-amd64 install
+grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check && chmod +x homeskillet-linux-amd64 && ./homeskillet-linux-amd64 install
 ```
 
-With the GitHub CLI, `gh release download --repo OWNER/homeskillet --pattern homeskillet-linux-amd64 --pattern
-SHA256SUMS` fetches the same two files.
+### macOS
 
-`install` installs the downloaded binary as `make install` installs a build (see [Versions and
-Updates](#versions-and-updates)); delete the download afterward. From then on, [`homeskillet update`](#updating) does
+For Apple silicon, as shown; on an Intel Mac (`uname -m` prints `x86_64`), write `homeskillet-darwin-amd64` instead.
+
+```sh
+base=https://github.com/nicholashoule/homeskillet/releases/latest/download
+curl -fsSLO --proto '=https' "$base/homeskillet-darwin-arm64" && curl -fsSLO --proto '=https' "$base/SHA256SUMS"
+grep ' homeskillet-darwin-arm64$' SHA256SUMS | shasum -a 256 --check && chmod +x homeskillet-darwin-arm64 && ./homeskillet-darwin-arm64 install
+```
+
+### Windows
+
+In PowerShell, follow the steps in [windows.md](windows.md#installing). They pick the build for your PC and check it
+the same way, then run its `prepare`, which turns on Developer Mode, which links need, and offers Git and PowerShell 7,
+each only once you approve, before its `install`. To manage a WSL home too, install the Linux build in the
+distribution, or run `homeskillet wsl install` from Windows ([windows.md](windows.md#the-wsl-command)).
+
+### Checking Where a Build Came From
+
+Each check line chains the steps with `&&`, so a download that does not match is never made executable or run. To also
+check that the release workflow built it, run `gh attestation verify homeskillet-linux-amd64 --repo
+nicholashoule/homeskillet`, with the file you downloaded, before installing. With the GitHub CLI, `gh release download
+--repo nicholashoule/homeskillet --pattern homeskillet-linux-amd64 --pattern SHA256SUMS` fetches the same two files.
+
+`install` installs the downloaded binary as a version of its own (see [Versions and Updates](#versions-and-updates));
+delete the download afterward. From then on, [`homeskillet update`](#updating) does
 the downloading and checking. Release builds are reproducible: building the tag with the Go release the workflow used
 gives the same `SHA256SUMS` ([release.md](release.md#tagging)).
 
@@ -120,8 +115,7 @@ development build, whose version is a pseudo-version or `+dirty`, can update to 
 ## Shell Completion
 
 `homeskillet completion bash`, `zsh`, and `pwsh` print a completion script for commands, options, platforms, setup step
-names, and installed versions. Load it from your shell's startup file, so it always matches the installed version; for
-PowerShell, see [windows.md](windows.md#installing):
+names, and installed versions. Load it from your shell's startup file, so it always matches the installed version:
 
 ```sh
 # ~/.bashrc
@@ -129,6 +123,16 @@ command -v homeskillet >/dev/null && eval "$(homeskillet completion bash)"
 # ~/.zshrc, after compinit
 command -v homeskillet >/dev/null && eval "$(homeskillet completion zsh)"
 ```
+
+```powershell
+# PowerShell 7.3 or later, in your profile
+if (Get-Command homeskillet -ErrorAction SilentlyContinue) {
+    homeskillet completion pwsh | Out-String | Invoke-Expression
+}
+```
+
+Earlier versions of PowerShell drop the empty argument a completion passes for the word after a space. Where homeskillet
+offers nothing, PowerShell completes file names, as it does for any program.
 
 For zsh, the script may instead be saved as `_homeskillet` in a directory on `fpath`. The bash script works with bash
 3.2, which macOS ships, and later.
@@ -233,3 +237,34 @@ apart. `--data-dir` wins over `self --prefix`, which wins over the variable. The
 ownership and system-directory rules as everything else, and may not be inside the configuration repository, where the
 record would end up in Git. Use the same setting for every command, or homeskillet will look for its record in the wrong
 place.
+
+## Building from Source
+
+For developing homeskillet, or bringing it to another system; everyone else installs the official release
+([Downloading a Release](#downloading-a-release)), which is what `update` keeps current. With Go 1.24 or newer, from a
+clone of this repository:
+
+```sh
+make install          # build bin/homeskillet, then install it as a new version
+homeskillet version
+```
+
+`make install` runs the build's `self install`, which copies it into a directory of its own version in the [data
+directory](#data-directory) and points the `homeskillet` command in `~/.local/bin` at it (see [Versions and
+Updates](#versions-and-updates)). homeskillet says so when that directory is not on your `PATH`, as on macOS it usually
+is not. `make install PREFIX=<dir>` installs under another prefix, and `make build` alone leaves the binary in `bin/`.
+On Windows, see [windows.md](windows.md#installing); for WSL, `homeskillet wsl install` on Windows installs the Linux
+build in a distribution ([windows.md](windows.md#the-wsl-command)).
+
+On a machine without homeskillet, Go builds and installs a release in one command, without a clone, on Linux, macOS,
+and Windows alike:
+
+```sh
+go run github.com/nicholashoule/homeskillet@latest install     # or @v0.3.1 for that release
+```
+
+Go fetches the tag's source through its module proxy and, with Go's default settings, checks it against the public
+checksum database, `sum.golang.org`, before building, so there is no download to check by hand. What it builds is that
+version compiled by your Go, not the release's binary, and `version` shows no commit. It is for a first install only:
+where any version is installed, such a build's `install` refuses, changing nothing, since from then on homeskillet
+manages its versions itself, with `homeskillet update` and `homeskillet install VERSION` ([Updating](#updating)).

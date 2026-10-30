@@ -21,7 +21,9 @@ func runsAsRoot() bool {
 }
 
 // pathAdvice says how to put a directory on PATH.
-const pathAdvice = "add it in your shell startup file"
+func pathAdvice(string) string {
+	return "add it in your shell startup file"
+}
 
 // translator names what runs an amd64 build on Arm64 hardware. Of Linux and
 // macOS, only macOS detects it (see host.Detect): Rosetta 2.

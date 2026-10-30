@@ -3,6 +3,7 @@
 package cli
 
 import (
+	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -33,10 +34,17 @@ func runsElevated() bool {
 	return err != nil || elevated != 0
 }
 
-// pathAdvice says how to put a directory on PATH. Windows keeps each user's
-// PATH in the registry, which new terminals read; a profile that changes
-// $env:Path changes it only for PowerShell.
-const pathAdvice = "add it to your user Path in Settings (search for environment variables), then open a new terminal"
+// pathAdvice says how to put dir on PATH: the PowerShell command that adds it
+// to the user Path, ready to paste, since finding the setting in Settings is
+// where people get stuck. Windows keeps each user's Path in the registry,
+// which new terminals read; a profile that changes $env:Path changes it only
+// for PowerShell. dir goes in single quotes, any quote in it doubled, so
+// PowerShell reads it as text and expands nothing in it.
+func pathAdvice(dir string) string {
+	quoted := "'" + strings.ReplaceAll(dir, "'", "''") + "'"
+	return "add it to your Path in PowerShell with [Environment]::SetEnvironmentVariable('Path', " +
+		"[Environment]::GetEnvironmentVariable('Path', 'User') + ';' + " + quoted + ", 'User'), then open a new terminal"
+}
 
 // translator names what runs an x64 build on Arm64 hardware.
 func translator() string {

@@ -257,13 +257,12 @@
   <section id="install">
     <div class="wrap">
       <h2>Install</h2>
-      <p>Download the latest release for your platform, check it, and let it install itself as a versioned command under <code>~/.local</code>. Shown for Linux on x64; the other builds are <code>homeskillet-linux-arm64</code>, <code>homeskillet-darwin-amd64</code>, <code>homeskillet-darwin-arm64</code>, and the Windows <code>.exe</code> files.</p>
-<pre><code>base=https://github.com/nicholashoule/homeskillet/releases/latest/download
-curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64"
-curl -fsSLO --proto '=https' "$base/SHA256SUMS"
-grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
-chmod +x homeskillet-linux-amd64
-./homeskillet-linux-amd64 install</code></pre>
+      <p>Pick your system for its install commands. Each downloads the latest release, checks it against the release's <code>SHA256SUMS</code>, runs it only if it matches, and lets it install itself as a versioned command under <code>.local</code> in your home.</p>
+      <ul class="docs">
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/install.md#linux">Linux</a> <span>x64 or Arm, including WSL distributions and containers</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/install.md#macos">macOS</a> <span>Apple silicon or Intel</span></li>
+        <li><a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#installing">Windows</a> <span>in PowerShell, step by step: picks the build for your PC, and its <code>prepare</code> turns on Developer Mode and offers Git, each only once you approve</span></li>
+      </ul>
       <p>From then on, homeskillet manages its own versions. Each version keeps its own copy, so going back is one command:</p>
 <pre><code>homeskillet update            # install the newest release and run it, keeping the one you have
 homeskillet list              # installed versions, and which one runs
@@ -271,13 +270,13 @@ homeskillet list-remote       # published versions, and which are installed
 homeskillet install 0.3.1     # install that release, without changing which one runs
 homeskillet use 0.3.1         # run that version; use latest follows the newest again
 homeskillet remove 0.3.0      # delete a version you no longer need, unless it runs</code></pre>
-      <p><code>update</code> checks each download against the release's <code>SHA256SUMS</code> before anything runs. On Windows, the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#installing">Windows guide</a> shows the same steps in PowerShell, running the download's <code>prepare</code> first: it turns on Developer Mode, which links need, and installs Git and PowerShell 7 with winget, each only once you approve.</p>
+      <p><code>update</code> checks each download against the release's <code>SHA256SUMS</code> before anything runs.</p>
 
       <div class="from-source">
         <img class="gopher" src="images/gopher.svg" width="52" height="71" alt="The Go gopher">
         <div>
           <h3>From source, with Go</h3>
-          <p>With Go 1.24 or newer, on a machine without homeskillet, on Linux, macOS, or Windows, <code>go run github.com/nicholashoule/homeskillet@latest install</code> builds the release from source and installs it the same way, as a version of its own, and <code>make install</code> does the same from a clone. The build uses the standard library only, so there is nothing else to fetch.</p>
+          <p>For developing homeskillet, or bringing it to another system: with Go 1.24 or newer, <code>make install</code> builds a clone and installs it as a version of its own (<a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/install.md#building-from-source">building from source</a>). The build uses the standard library only, so there is nothing else to fetch.</p>
         </div>
       </div>
 

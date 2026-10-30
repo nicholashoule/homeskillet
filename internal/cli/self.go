@@ -60,7 +60,7 @@ func runSelf(ctx context.Context, inv invocation, home string, output, diagnosti
 		}
 		err = layout.Install(executable, version.Current(), inv.dryRun, output)
 		if err == nil && !onPath(layout.Bin) {
-			_, err = fmt.Fprintf(output, notOnPathLine, layout.Bin, pathAdvice)
+			_, err = fmt.Fprintf(output, notOnPathLine, layout.Bin, pathAdvice(layout.Bin))
 		}
 	case "update":
 		err = runUpdate(ctx, inv, layout, home, output, diagnostics)

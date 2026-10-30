@@ -45,6 +45,9 @@ anything, `info` gathers what a bug report needs, and one color standard shows w
 - `homeskillet help` is short: the commands, each in a line, and the options most of them take.
   `homeskillet help COMMAND`, `homeskillet COMMAND --help`, or `homeskillet self help` shows that command's usage, its
   arguments, and only the options it takes. A mistyped option points to that command's help.
+- Installing starts from your system: the README and the website link to each system's install commands, and the
+  Windows guide opens with numbered steps that pick the build for your PC. On Windows, when `.local\bin` is not on
+  your Path, `install` prints the PowerShell command that adds it ([docs/windows.md](docs/windows.md#installing)).
 - The note that a newer release is available reads as a sentence: `Note: v0.5.0 is available; homeskillet update
   installs it`.
 - `homeskillet help` and `homeskillet version` name the project's page, https://github.com/nicholashoule/homeskillet.
