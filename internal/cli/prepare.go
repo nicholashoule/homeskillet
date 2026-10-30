@@ -21,7 +21,9 @@ import (
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/host"
+	"github.com/nicholashoule/homeskillet/internal/link"
 	"github.com/nicholashoule/homeskillet/internal/setup"
+	"github.com/nicholashoule/homeskillet/internal/trust"
 )
 
 // findProgram is where prepare looks for a program, as a step's provides
@@ -130,10 +132,31 @@ const (
 	itemMissing = "missing"
 )
 
-// titles names the items for a person.
-var titles = map[string]string{developerModeStep: "Developer Mode", "winget": "winget", "git": "Git", "powershell": "PowerShell 7"}
+// homeStep names the check of the home's ownership in prepare's output.
+const homeStep = "home"
 
-// assess checks each item for os, changing nothing.
+// titles names the items for a person.
+var titles = map[string]string{homeStep: "Home", developerModeStep: "Developer Mode", "winget": "winget", "git": "Git", "powershell": "PowerShell 7"}
+
+// needs names, in the sentence that says what is still needed, the items
+// whose titles do not read as a need, such as the home.
+var needs = map[string]string{homeStep: "a home only you can change"}
+
+// homeItem checks the home as every command that links or installs there
+// does (see trust.CheckDirectory): owned by the user, and changeable by
+// nobody else, nor through any directory above it, such as C:\. homeskillet
+// cannot fix that itself, so it is never pending; when it fails, the error,
+// on one line, says why and who can fix it.
+func homeItem(home string) item {
+	it := item{id: homeStep, title: titles[homeStep], required: true, state: itemDone, detail: "only you can change it"}
+	if err := trust.CheckDirectory(home); err != nil {
+		it.state, it.detail = itemMissing, strings.ReplaceAll(err.Error(), "\n  ", "; ")
+	}
+	return it
+}
+
+// assess checks each item for os, changing nothing: the home first, since
+// everything else is only of use once it passes.
 func assess(os, home string) []item {
 	found := func(id, program string, required bool, pending, missing string) item {
 		it := item{id: id, title: titles[id], required: required}
@@ -147,8 +170,9 @@ func assess(os, home string) []item {
 		}
 		return it
 	}
+	private := homeItem(home)
 	if os != "windows" {
-		return []item{found("git", "git", true, "", gitAdvice(os))}
+		return []item{private, found("git", "git", true, "", gitAdvice(os))}
 	}
 	developer := item{id: developerModeStep, title: titles[developerModeStep], required: true, state: itemDone, detail: "symlinks allowed"}
 	if host.ProbeSymlinks() != nil {
@@ -156,6 +180,7 @@ func assess(os, home string) []item {
 	}
 	steps := windowsSteps()
 	return []item{
+		private,
 		developer,
 		found("winget", "winget", false, "register it, or repair it from the PowerShell Gallery", ""),
 		found("git", "git", true, setup.Quote(steps[0].Run[0]), ""),
@@ -235,7 +260,7 @@ func (o prepareOutput) overview(items []item, home string, platform config.Platf
 	v := &view{color: o.color}
 	for _, g := range []struct{ state, heading, style string }{
 		{itemPending, pendingHeading, styleAttention},
-		{itemMissing, "Missing (%d): homeskillet cannot install these", styleAttention},
+		{itemMissing, "Missing (%d): homeskillet cannot fix these itself", styleAttention},
 		{itemDone, "Done (%d)", styleGood},
 	} {
 		var entries [][2]string
@@ -254,8 +279,9 @@ func (o prepareOutput) overview(items []item, home string, platform config.Platf
 }
 
 // ready writes, for a person, that everything prepare checks is in place:
-// one line, then each item and what shows it, aligned.
-func (o prepareOutput) ready(items []item, platform config.Platform) error {
+// one line, then each item and what shows it, aligned, then what to do next
+// (see nextStep).
+func (o prepareOutput) ready(items []item, platform config.Platform, home string) error {
 	if _, err := fmt.Fprintf(o.w, "%s %s on %s\n", paint(o.color, styleHeading, "homeskillet prepare:"), paint(o.color, styleGood, "ready"), platform); err != nil {
 		return err
 	}
@@ -263,7 +289,45 @@ func (o prepareOutput) ready(items []item, platform config.Platform) error {
 	for _, it := range items {
 		rows = append(rows, []string{it.title, it.detail})
 	}
-	return writeTable(o.w, rows, nil)
+	if err := writeTable(o.w, rows, nil); err != nil {
+		return err
+	}
+	return o.next(home)
+}
+
+// next writes, for a person, what to do now that the machine is ready, when
+// anything is left (see nextStep).
+func (o prepareOutput) next(home string) error {
+	next := nextStep(home)
+	if next == "" {
+		return nil
+	}
+	_, err := fmt.Fprintf(o.w, "%s %s\n", paint(o.color, styleHeading, "Next:"), next)
+	return err
+}
+
+// nextStep says what to do once the machine is ready, so that prepare can be
+// run at any point and always ends with it: install homeskillet, when no
+// version is installed yet, as when what runs is the download; put the
+// directory it installs into on PATH, when it is not; or, with no repository
+// linked yet, start one. It is "" once a repository is linked.
+func nextStep(home string) string {
+	layout, err := selfLayout(invocation{}, home)
+	if err != nil {
+		return ""
+	}
+	if state, err := layout.Inspect(); err != nil || state.Current == "" {
+		return selfName() + " install installs homeskillet as a command that runs from any folder."
+	}
+	if !onPath(layout.Bin) {
+		return displayPath(layout.Bin) + " is not on PATH; " + pathAdvice(layout.Bin) + "."
+	}
+	if data, err := dataDir(invocation{}, home); err == nil {
+		if linked, err := link.Repositories(data, home); err == nil && len(linked) > 0 {
+			return ""
+		}
+	}
+	return "run homeskillet alone to see how to start a repository, or to link the one you have."
 }
 
 // runPrepare checks this machine, shows what it found, and offers what is
@@ -277,7 +341,7 @@ func runPrepare(ctx context.Context, inv invocation, home string, input io.Reade
 	// With everything in place there is nothing to offer or explain: one
 	// line says so, and what was checked follows.
 	if out.person && !slices.ContainsFunc(items, func(it item) bool { return it.state != itemDone }) {
-		return out.ready(items, platform)
+		return out.ready(items, platform, home)
 	}
 	if err := out.overview(items, home, platform, inv); err != nil {
 		return err
@@ -315,13 +379,18 @@ func (o prepareOutput) closing(os, home string, items []item, dryRun bool) error
 		}
 	}
 	if len(missing) == 0 {
-		text.WriteString(paint(o.color, styleGood, "Ready:") + " homeskillet can clone and link a repository here.\n")
-		_, err := io.WriteString(o.w, text.String())
-		return err
+		text.WriteString(paint(o.color, styleGood, "Ready:") + " this machine has everything homeskillet needs to clone and link a repository.\n")
+		if _, err := io.WriteString(o.w, text.String()); err != nil {
+			return err
+		}
+		return o.next(home)
 	}
 	named := make([]string, len(missing))
 	for i, id := range missing {
 		named[i] = titles[id]
+		if need, ok := needs[id]; ok {
+			named[i] = need
+		}
 	}
 	verb, pronoun := "is", "it is"
 	if len(missing) > 1 {
@@ -352,6 +421,21 @@ func offerWindows(ctx context.Context, inv invocation, home string, items []item
 		if err := prepareDeveloperMode(ctx, input, out); err != nil {
 			return err
 		}
+	}
+	// The installs run in the home (see setup.RunBuiltin), so none is
+	// offered while it fails its check. Each is said to be held back rather
+	// than left out, and the closing names what is still needed, so that
+	// prepare can be run again once the home is fixed.
+	if state[homeStep] != itemDone {
+		for _, id := range []string{"winget", "git", "powershell"} {
+			if state[id] != itemPending {
+				continue
+			}
+			if err := out.outcome("skipped", id, "held back: it would run in your home, which fails the check above"); err != nil {
+				return err
+			}
+		}
+		return nil
 	}
 	options := setup.Options{Home: home, Yes: inv.yes, Input: input, Output: out.w, Errors: diagnostics, Report: out.report}
 	if state["winget"] == itemPending {
@@ -442,7 +526,7 @@ func waitFor(found func() bool, total, interval time.Duration) bool {
 // Developer Mode, which Windows requires before a process may make
 // symlinks. Turning it on takes an administrator, which homeskillet will not
 // be, so the switch itself is the user's: once they say it is on, it is
-// checked again.
+// checked again (see awaitDeveloperMode).
 func prepareDeveloperMode(ctx context.Context, input io.Reader, out prepareOutput) error {
 	open, err := developerSettings()
 	if err != nil {
@@ -464,14 +548,32 @@ func prepareDeveloperMode(ctx context.Context, input io.Reader, out prepareOutpu
 	if err := openSettings(ctx, open); err != nil {
 		return err
 	}
+	return awaitDeveloperMode(input, out, host.ProbeSymlinks)
+}
+
+// awaitDeveloperMode waits for Enter while the user switches Developer Mode
+// on, then checks it with probe. Windows asks them to confirm the switch, so
+// Enter can come before it takes effect: while it is still off, they are
+// asked whether to check again, no being the default answer, rather than
+// left to start prepare over.
+func awaitDeveloperMode(input io.Reader, out prepareOutput, probe func() error) error {
 	if _, err := fmt.Fprint(out.w, "Turn on Developer Mode there, then press Enter. "); err != nil {
 		return err
 	}
 	if err := waitForEnter(input); err != nil {
 		return err
 	}
-	if host.ProbeSymlinks() != nil {
-		return out.outcome("skipped", developerModeStep, "still off")
+	for probe() != nil {
+		if _, err := fmt.Fprintln(out.w, "Developer Mode is still off: switch it on in Settings, and answer Yes when Windows asks."); err != nil {
+			return err
+		}
+		again, err := setup.Confirm(input, out.w, "Check again?")
+		if err != nil {
+			return err
+		}
+		if !again {
+			return out.outcome("skipped", developerModeStep, "still off")
+		}
 	}
 	return out.outcome("ran", developerModeStep, "")
 }
@@ -496,9 +598,13 @@ func waitForEnter(input io.Reader) error {
 }
 
 // stillMissing returns the ids of what os needs that is still missing,
-// checked afresh: Developer Mode and Git on Windows, Git elsewhere.
+// checked afresh: a home that passes its check, then Developer Mode and Git
+// on Windows, Git elsewhere.
 func stillMissing(os, home string) []string {
 	var missing []string
+	if trust.CheckDirectory(home) != nil {
+		missing = append(missing, homeStep)
+	}
 	if os == "windows" && host.ProbeSymlinks() != nil {
 		missing = append(missing, developerModeStep)
 	}

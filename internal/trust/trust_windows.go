@@ -17,10 +17,14 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strconv"
+	"strings"
 	"sync"
 	"syscall"
 	"unsafe"
+
+	"github.com/nicholashoule/homeskillet/internal/host"
 )
 
 // Access rights, from winnt.h. Names for files and directories share bits:
@@ -186,16 +190,60 @@ func (d descriptor) check(path string, rights uint32) error {
 		case sidCreatorOwner, sidCreatorGroup, sidOwnerRights:
 			continue
 		}
-		return writableError(path, entry.sid)
+		return writableError(path, entry.sid, entry.mask)
 	}
 	return nil
 }
 
-// writableError reports a path that someone untrusted may change. Folders
-// created at the root of a drive, such as C:\src, let every signed-in user
-// change what is in them, while a profile directory lets only its user.
-func writableError(path, sid string) error {
-	return fmt.Errorf("%s is writable by %s; keep it under your user profile, which only you can change, or remove that permission", printable(path), account(sid))
+// permissionsGuide is where docs/windows.md explains what the checks here
+// accept, for an error the user cannot fix by moving a folder.
+const permissionsGuide = "https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#ownership-and-permissions"
+
+// profile is the current user's profile directory, found once, or "" when
+// Windows cannot say where it is.
+var profile = sync.OnceValue(func() string {
+	path, err := host.Profile.Path()
+	if err != nil || !filepath.IsAbs(path) {
+		return ""
+	}
+	return filepath.Clean(path)
+})
+
+// writableError reports a path that someone untrusted may change, given the
+// access mask of the entry that lets them. Folders created at the root of a
+// drive, such as C:\src, let every signed-in user change what is in them,
+// while a profile directory lets only its user, hence the advice to keep
+// files under it. That advice cannot help with a directory above the
+// profile, such as C:\, which every check of a file in the profile passes
+// through: only an administrator can change it. The error says so, and
+// names the permission as a folder's Security tab does, so that what the
+// user reports can be matched with what icacls shows.
+func writableError(path, sid string, mask uint32) error {
+	if home := profile(); home == "" || !Within(path, home) || strings.EqualFold(path, home) {
+		return fmt.Errorf("%s is writable by %s; keep it under your user profile, which only you can change, or remove that permission", printable(path), account(sid))
+	}
+	return fmt.Errorf("%s holds your profile and is writable by %s (%s), so homeskillet trusts nothing in your profile\n"+
+		"  only an administrator can change that: icacls %s shows who may do what, and %s what homeskillet accepts",
+		printable(path), account(sid), permission(mask), printable(path), permissionsGuide)
+}
+
+// permission names mask as a folder's Security tab does when it holds one of
+// the basic permissions that allow changes, or else as special permissions.
+func permission(mask uint32) string {
+	const (
+		fullControl = 0x1f01ff // FILE_ALL_ACCESS
+		modify      = 0x1301bf // Write, Read & execute, and DELETE
+		write       = fileWriteData | fileAppendData | fileWriteEA | fileWriteAttributes
+	)
+	switch {
+	case mask&genericAll != 0 || mask&fullControl == fullControl:
+		return "Full control"
+	case mask&modify == modify:
+		return "Modify"
+	case mask&genericWrite != 0 || mask&write == write:
+		return "Write"
+	}
+	return "special permissions"
 }
 
 // account returns the name of the account sid identifies, such as

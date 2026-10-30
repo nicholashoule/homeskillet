@@ -13,8 +13,20 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 homeskillet's output reads better at a terminal: `help` is short, with each command's own help one command away,
 version lists line up, `update`, `use`, and `remove` say what happened in a sentence, `init` asks before it creates
 anything, `info` gathers what a bug report needs, and one color standard shows what is done and what still needs doing.
+Starting out is guided: `homeskillet` alone shows how to begin, `prepare` can be run again until everything is in
+place and then says what to do next, and the Windows install lines leave `homeskillet` ready to run.
 
 ### Added
+
+- `homeskillet` alone, at a terminal with no repository here and none linked yet, shows how to start, step by step:
+  `prepare`, `install` when you ran the download, `init` or `git clone`, where files go, and `link`, each ready to
+  copy ([docs/usage.md](docs/usage.md#the-repository)).
+- `homeskillet init ~/dotfiles` creates `~/dotfiles` when it does not exist yet, with any missing directories above it,
+  as part of what it shows and asks about ([docs/manifest.md](docs/manifest.md#creating-one)).
+- `prepare` checks your home first, as every command that links or installs there does. When it fails, as when `C:\`
+  lets other users change it, `prepare` says why and who can fix it, holds back only the installs that would run
+  there, and still offers the rest, so you can run it again as each thing is fixed
+  ([docs/windows.md](docs/windows.md#preparing-windows)).
 
 - `homeskillet remove VERSION...` deletes installed versions, one or several at once, as `self remove` does. It checks
   every one before deleting any, and refuses the one that runs.
@@ -30,6 +42,21 @@ anything, `info` gathers what a bug report needs, and one color standard shows w
 
 ### Changed
 
+- The Windows install lines put `.local\bin` on your Path, for that window and new ones, so `homeskillet` runs at once,
+  delete the downloads, and say when homeskillet is not installed yet because `prepare` or `install` stopped. They
+  download with PowerShell's own `Invoke-WebRequest` where `curl.exe` is missing, and the steps say how to tell
+  PowerShell from Command Prompt and switch ([docs/windows.md](docs/windows.md#installing)).
+- `prepare` ends, when everything is in place, by saying that the machine has what homeskillet needs, and what to do
+  next: install homeskillet when you ran the download, put `.local\bin` on PATH, or, with nothing linked yet, run
+  `homeskillet` alone to start.
+- On Windows, when Developer Mode is still off after you press Enter, as when Windows has not finished switching it
+  on, `prepare` asks whether to check again instead of going on without it.
+- On Windows, when a directory above your profile, such as `C:\`, lets other users change it, the error says that only
+  an administrator can fix it, names the permission, such as Modify, and how to see it with `icacls`, instead of
+  advising you to move your files under your profile
+  ([docs/windows.md](docs/windows.md#ownership-and-permissions)).
+- Advice in errors names homeskillet as you ran it, such as `.\homeskillet-windows-amd64.exe` before it is installed,
+  so it works as written.
 - `homeskillet init` shows what it would create and asks before creating it; scripts pass `--yes`. It refuses your home
   directory itself, and as before never replaces a file or directory
   ([docs/manifest.md](docs/manifest.md#creating-one)).

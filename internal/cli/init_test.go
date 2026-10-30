@@ -268,6 +268,45 @@ func TestInitAsks(t *testing.T) {
 	}
 }
 
+func TestInitCreatesRepository(t *testing.T) {
+	// Someone with no dotfiles yet names a directory that does not exist,
+	// perhaps below another that does not either: init creates both, as
+	// part of what it shows and asks about.
+	root := filepath.Dir(emptyRepository(t))
+	repo := filepath.Join(root, "projects", "dotfiles")
+	output, err := initialize(repo, "--dry-run")
+	if err != nil || !strings.Contains(output, "would create\t"+repo+"\n") || !strings.Contains(output, "would create\t"+filepath.Join(repo, config.HomeDir)+"\n") {
+		t.Fatalf("dry run: %q, %v", output, err)
+	}
+	if exists(filepath.Join(root, "projects")) {
+		t.Fatal("the dry run created the repository")
+	}
+	var declined bytes.Buffer
+	if err := Run(context.Background(), []string{"init", repo}, strings.NewReader("n\n"), &declined, &declined); err == nil || exists(filepath.Join(root, "projects")) {
+		t.Fatalf("declined, yet created, or no error for a script: %v", err)
+	}
+	output, err = initialize(repo)
+	if err != nil {
+		t.Fatalf("%q, %v", output, err)
+	}
+	for _, created := range []string{filepath.Join(root, "projects"), repo, filepath.Join(repo, config.HomeDir), filepath.Join(repo, config.FileName)} {
+		if !strings.Contains(output, "created\t"+created+"\n") {
+			t.Errorf("%s not reported in %q", created, output)
+		}
+	}
+	if _, err := config.Load(repo); err != nil {
+		t.Fatal(err)
+	}
+	// A path that exists but is no directory is not created over.
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initialize(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("init over a file: %v", err)
+	}
+}
+
 func TestInitRefusesHome(t *testing.T) {
 	// The home directory itself is never made a repository.
 	repo := emptyRepository(t)

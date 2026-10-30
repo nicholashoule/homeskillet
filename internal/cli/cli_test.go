@@ -985,7 +985,8 @@ func TestDefaultRepository(t *testing.T) {
 	// linked yet: the error says how to name one.
 	t.Chdir(elsewhere)
 	err := Run(context.Background(), []string{"link", "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
-	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "name one: homeskillet link") {
+	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "name one: homeskillet link") ||
+		!strings.Contains(err.Error(), "start one with homeskillet init") {
 		t.Fatalf("nothing recorded: %v", err)
 	}
 	err = Run(context.Background(), []string{"link", home, "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))

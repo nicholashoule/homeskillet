@@ -14,6 +14,9 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
+	"slices"
+	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/host"
@@ -34,11 +37,14 @@ import (
 // (see config.FileNames), so it never replaces one or adds to one, refuses a
 // directory that another user could write to, as the manifest decides what
 // runs, and refuses the home directory itself, which is no place for a
-// repository. It shows what it would create and creates it only once
-// approved, with no as the default answer, or under --yes; with --dry-run it
-// only shows it.
+// repository. A repository directory that does not exist yet is created, with
+// any missing directories above it, as when someone with no dotfiles yet runs
+// homeskillet init ~/dotfiles, but only inside a directory that passes the
+// same checks (see trust.CheckCreatable). It shows what it would create and
+// creates it only once approved, with no as the default answer, or under
+// --yes; with --dry-run it only shows it.
 func runInit(inv invocation, input io.Reader, output io.Writer) error {
-	repo, err := canonicalDirectory(inv.repo)
+	repo, createRepo, err := initRepository(inv.repo)
 	if err != nil {
 		return fmt.Errorf("repository: %w", err)
 	}
@@ -49,46 +55,24 @@ func runInit(inv invocation, input io.Reader, output io.Writer) error {
 	// with a manifest and a home/ inside it; that is never what is meant.
 	if home, err := os.UserHomeDir(); err == nil {
 		if home, err := canonicalDirectory(home); err == nil && trust.SamePath(home, repo) {
-			return fmt.Errorf("%s is your home directory, which is no place for a repository\n  name a directory for it, as in homeskillet init ~/dotfiles; nothing was created", repo)
+			return fmt.Errorf("%s is your home directory, which is no place for a repository\n  name a directory for it, as in %s init ~/dotfiles; nothing was created", repo, selfName())
 		}
 	}
 	path := filepath.Join(repo, config.FileName)
 	exists := fmt.Errorf("%s already exists; init never replaces it", path)
-	// Checked first for a clear error before anything is created; the write
-	// itself refuses a manifest that appears after this (see safefile.Create).
-	for _, name := range config.FileNames() {
-		existing := filepath.Join(repo, name)
-		if _, err := os.Lstat(existing); err == nil {
-			return fmt.Errorf("%s already exists; init only starts a repository that has no manifest", existing)
-		} else if !errors.Is(err, fs.ErrNotExist) {
-			return err
-		}
-	}
-	if err := trust.CheckRepository(repo); err != nil {
-		return err
-	}
-	createHome, err := homeToCreate(repo)
+	createHome, err := checkInitTarget(repo, createRepo)
 	if err != nil {
 		return err
 	}
-	detected, _ := host.Detect()
-	platform := detected.OS
-	if inv.platform != "" {
-		chosen, err := config.ParsePlatform(inv.platform)
-		if err != nil {
-			return fmt.Errorf("--platform: %w", err)
-		}
-		platform = chosen.String()
-	}
-	quoted, err := json.Marshal(platform)
+	platform, manifest, err := starterManifest(inv.platform)
 	if err != nil {
 		return err
 	}
-	manifest := fmt.Sprintf("{\n  \"platforms\": [%s],\n  \"setup\": []\n}\n", quoted)
 	home := filepath.Join(repo, config.HomeDir)
 
 	person := terminal(output)
-	if err := showInitPlan(output, person, repo, home, path, platform, manifest, createHome); err != nil {
+	plan := initPlan{repo: repo, home: home, manifest: path, platform: platform, createRepo: createRepo, createHome: createHome}
+	if err := showInitPlan(output, person, plan, manifest); err != nil {
 		return err
 	}
 	if inv.dryRun {
@@ -102,13 +86,30 @@ func runInit(inv invocation, input io.Reader, output io.Writer) error {
 	if approved, err := approveInit(inv, input, output, person); err != nil || !approved {
 		return err
 	}
+	// created lists the directories made here, outermost first, so that a
+	// failure removes them again, innermost first; each was empty when made.
+	created, err := makeRepository(repo, createRepo)
+	undo := func(err error) error {
+		for _, dir := range slices.Backward(created) {
+			if removeErr := os.Remove(dir); removeErr != nil {
+				return errors.Join(err, removeErr)
+			}
+		}
+		return err
+	}
+	if err != nil {
+		return undo(err)
+	}
 	if createHome {
 		// Private, as every directory homeskillet creates is.
 		if err := os.Mkdir(home, 0o700); err != nil {
-			return err
+			return undo(err)
 		}
-		if !person {
-			if _, err := fmt.Fprintf(output, "created\t%s\n", home); err != nil {
+		created = append(created, home)
+	}
+	if !person {
+		for _, dir := range created {
+			if _, err := fmt.Fprintf(output, "created\t%s\n", dir); err != nil {
 				return err
 			}
 		}
@@ -121,15 +122,14 @@ func runInit(inv invocation, input io.Reader, output io.Writer) error {
 		err = exists
 	}
 	if err != nil {
-		// Leave the repository as it was: home/ was empty when made here.
-		if createHome {
-			err = errors.Join(err, os.Remove(home))
-		}
-		return err
+		// Leave everything as it was.
+		return undo(err)
 	}
 	if person {
-		_, err = fmt.Fprintf(output, "%s %s. Put your dotfiles under %s, then run homeskillet link %s.\n",
-			paint(colorFor(output).on, styleGood, "Created"), displayPath(path), displayPath(home), displayPath(repo))
+		self, color := selfName(), colorFor(output).on
+		_, err = fmt.Fprintf(output, "%s %s. Put your dotfiles under %s, placed as they are in your home, then preview the links with %s and make them with %s.\n",
+			paint(color, styleGood, "Created"), displayPath(path), displayPath(home),
+			paint(color, styleName, self+" link "+copyableRepo(repo)+" --dry-run"), paint(color, styleName, self+" link "+copyableRepo(repo)))
 		return err
 	}
 	_, err = fmt.Fprintf(output, "created\t%s\nnote\tfiles under %s/ are found without a list; add setup steps under \"setup\"\n", path, config.HomeDir)
@@ -155,25 +155,38 @@ func approveInit(inv invocation, input io.Reader, output io.Writer, person bool)
 	return false, errors.New("nothing was created: init asks before it creates anything; pass --yes to create without asking")
 }
 
+// initPlan is what init would create: the repository directory when it does
+// not exist yet, its home directory when that does not, and the manifest.
+type initPlan struct {
+	repo, home, manifest, platform string
+	createRepo, createHome         bool
+}
+
 // showInitPlan shows what init would create before it asks: for a person,
 // each path and what it is for, and the starter manifest; for a script, a
 // line per path and the manifest.
-func showInitPlan(output io.Writer, person bool, repo, home, path, platform, manifest string, createHome bool) error {
+func showInitPlan(output io.Writer, person bool, plan initPlan, manifest string) error {
 	if !person {
 		text := ""
-		if createHome {
-			text += fmt.Sprintf("would create\t%s\n", home)
+		if plan.createRepo {
+			text += fmt.Sprintf("would create\t%s\n", plan.repo)
 		}
-		_, err := fmt.Fprintf(output, "%swould write\t%s\n%s", text, path, manifest)
+		if plan.createHome {
+			text += fmt.Sprintf("would create\t%s\n", plan.home)
+		}
+		_, err := fmt.Fprintf(output, "%swould write\t%s\n%s", text, plan.manifest, manifest)
 		return err
 	}
 	color := colorFor(output).on
 	var rows [][]string
-	if createHome {
-		rows = append(rows, []string{displayPath(home) + string(filepath.Separator), "the directory your dotfiles are linked from"})
+	if plan.createRepo {
+		rows = append(rows, []string{displayPath(plan.repo) + string(filepath.Separator), "the repository, a new directory"})
 	}
-	rows = append(rows, []string{displayPath(path), "platforms: " + platform + "; no setup steps yet"})
-	if _, err := fmt.Fprintf(output, "%s\n  repository: %s\n\n%s\n", paint(color, styleHeading, "homeskillet init"), displayPath(repo),
+	if plan.createHome {
+		rows = append(rows, []string{displayPath(plan.home) + string(filepath.Separator), "the directory your dotfiles are linked from"})
+	}
+	rows = append(rows, []string{displayPath(plan.manifest), "platforms: " + plan.platform + "; no setup steps yet"})
+	if _, err := fmt.Fprintf(output, "%s\n  repository: %s\n\n%s\n", paint(color, styleHeading, "homeskillet init"), displayPath(plan.repo),
 		paint(color, styleHeading+styleAttention, fmt.Sprintf("Creates (%d)", len(rows)))); err != nil {
 		return err
 	}
@@ -182,6 +195,117 @@ func showInitPlan(output io.Writer, person bool, repo, home, path, platform, man
 	}
 	_, err := fmt.Fprintln(output)
 	return err
+}
+
+// checkInitTarget checks, before init shows or creates anything, where it
+// would create: for a repository still to be created, the directory it would
+// be made in, since whatever init creates is only as safe as that; for one
+// that exists, that it has no manifest yet and passes the ownership rules. It
+// reports whether home/ is to be created.
+func checkInitTarget(repo string, createRepo bool) (createHome bool, err error) {
+	if createRepo {
+		return true, trust.CheckCreatable(repo)
+	}
+	// Checked first for a clear error before anything is created; the write
+	// itself refuses a manifest that appears after this (see safefile.Create).
+	for _, name := range config.FileNames() {
+		existing := filepath.Join(repo, name)
+		if _, err := os.Lstat(existing); err == nil {
+			return false, fmt.Errorf("%s already exists; init only starts a repository that has no manifest", existing)
+		} else if !errors.Is(err, fs.ErrNotExist) {
+			return false, err
+		}
+	}
+	if err := trust.CheckRepository(repo); err != nil {
+		return false, err
+	}
+	return homeToCreate(repo)
+}
+
+// starterManifest returns the platform init writes, this machine's operating
+// system unless chosen, from --platform, names another, and the starter
+// manifest that names it.
+func starterManifest(chosen string) (platform, manifest string, err error) {
+	detected, _ := host.Detect()
+	platform = detected.OS
+	if chosen != "" {
+		parsed, err := config.ParsePlatform(chosen)
+		if err != nil {
+			return "", "", fmt.Errorf("--platform: %w", err)
+		}
+		platform = parsed.String()
+	}
+	quoted, err := json.Marshal(platform)
+	if err != nil {
+		return "", "", err
+	}
+	return platform, fmt.Sprintf("{\n  \"platforms\": [%s],\n  \"setup\": []\n}\n", quoted), nil
+}
+
+// initRepository returns the canonical path of the repository init was
+// named, and whether it is still to be created. A path that does not exist
+// is canonical once the symlinks in the part that does are resolved (see
+// trust.Canonical); anything else that is not a directory, such as a file or
+// a dangling symlink, is an error, as for every other command.
+func initRepository(named string) (repo string, create bool, err error) {
+	repo, err = canonicalDirectory(named)
+	if !errors.Is(err, fs.ErrNotExist) {
+		return repo, false, err
+	}
+	expanded, err := expandHome(named)
+	if err != nil {
+		return "", false, err
+	}
+	abs, err := filepath.Abs(expanded)
+	if err != nil {
+		return "", false, err
+	}
+	if _, err := os.Lstat(abs); !errors.Is(err, fs.ErrNotExist) {
+		return "", false, fmt.Errorf("%s is not a directory", named)
+	}
+	repo, err = trust.Canonical(abs)
+	return repo, true, err
+}
+
+// makeRepository creates repo, when create says it does not exist yet, with
+// the directories above it that do not exist either, each private, and
+// returns those it made, outermost first. It checks the result as every
+// repository is checked, so a directory made where the checks fail is
+// reported, for the caller to remove.
+func makeRepository(repo string, create bool) ([]string, error) {
+	if !create {
+		return nil, nil
+	}
+	var missing []string
+	for dir := repo; ; dir = filepath.Dir(dir) {
+		if _, err := os.Lstat(dir); err == nil {
+			break
+		} else if !errors.Is(err, fs.ErrNotExist) || filepath.Dir(dir) == dir {
+			return nil, err
+		}
+		missing = append(missing, dir)
+	}
+	slices.Reverse(missing)
+	var created []string
+	for _, dir := range missing {
+		if err := os.Mkdir(dir, 0o700); err != nil {
+			return created, err
+		}
+		created = append(created, dir)
+	}
+	return created, trust.CheckRepository(repo)
+}
+
+// copyableRepo returns repo as it can be pasted into a shell after init: as
+// copyable makes it on Windows, and quoted wherever displayPath quotes it.
+func copyableRepo(repo string) string {
+	if runtime.GOOS == "windows" {
+		return copyable(repo)
+	}
+	if strings.ContainsAny(repo, " '\"\\$`!&;|<>()*?[]{}~#") {
+		return "'" + strings.ReplaceAll(repo, "'", `'\''`) + "'"
+	}
+	return displayPath(repo)
 }
 
 // homeToCreate reports whether repo has no home directory, which init then

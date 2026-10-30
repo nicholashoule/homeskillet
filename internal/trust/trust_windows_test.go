@@ -87,6 +87,46 @@ func TestSharedAncestorMayLetOthersAddEntries(t *testing.T) {
 	}
 }
 
+func TestWritableErrorAboveProfile(t *testing.T) {
+	home := profile()
+	if home == "" || filepath.Dir(home) == home {
+		t.Skip("Windows does not say where the profile is")
+	}
+	const modify = 0x1301bf
+	// S-1-5-11 is Authenticated Users. A directory above the profile cannot
+	// be avoided, so the error says who can change it and how to look.
+	above := filepath.Dir(home)
+	text := writableError(above, "S-1-5-11", modify).Error()
+	for _, want := range []string{above + " holds your profile", "(Modify)", "administrator", "icacls " + above, permissionsGuide} {
+		if !strings.Contains(text, want) {
+			t.Errorf("above the profile, %q is missing from:\n%s", want, text)
+		}
+	}
+	// The profile itself and folders in it get the advice to keep files
+	// under the profile, as do folders elsewhere.
+	for _, path := range []string{home, filepath.Join(home, "dotfiles"), filepath.Join(filepath.VolumeName(home)+`\`, "src")} {
+		if text := writableError(path, "S-1-5-11", modify).Error(); !strings.Contains(text, "keep it under your user profile") {
+			t.Errorf("%s: %s", path, text)
+		}
+	}
+}
+
+func TestPermission(t *testing.T) {
+	for mask, want := range map[uint32]string{
+		0x1f01ff:                      "Full control",
+		genericAll:                    "Full control",
+		0x1301bf:                      "Modify",
+		0x100116:                      "Write",
+		genericWrite:                  "Write",
+		fileDeleteChild:               "special permissions",
+		fileAppendData | deleteAccess: "special permissions",
+	} {
+		if got := permission(mask); got != want {
+			t.Errorf("permission(%#x) = %q, want %q", mask, got, want)
+		}
+	}
+}
+
 func TestJunctionsRefused(t *testing.T) {
 	dir := root(t)
 	target, junction := filepath.Join(dir, "target"), filepath.Join(dir, "tree", "junction")

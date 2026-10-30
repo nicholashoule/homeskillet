@@ -115,7 +115,7 @@ func argumentHelp(command string) [][2]string {
 	case "setup":
 		return [][2]string{repository, step}
 	case "init":
-		return [][2]string{{"REPOSITORY", "The directory to start a repository in, which has no manifest yet (default: the current directory)"}}
+		return [][2]string{{"REPOSITORY", "The directory to start a repository in, which has no manifest yet, created if it does not exist (default: the current directory)"}}
 	case "check":
 		return [][2]string{repository}
 	case "wsl":

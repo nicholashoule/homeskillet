@@ -119,9 +119,12 @@ type invocation struct {
 	// repoGiven says the repository was named rather than defaulted (see
 	// openRepository).
 	repoGiven bool
-	force     bool // --force: move conflicts aside, then link
-	quiet     bool // --quiet: print nothing but errors
-	dryRun    bool
+	// bare says neither a command nor a repository was typed, only options
+	// if anything, so status is the default (see startGuide).
+	bare   bool
+	force  bool // --force: move conflicts aside, then link
+	quiet  bool // --quiet: print nothing but errors
+	dryRun bool
 	// verbose is --verbose: a failure is shown whole (see failure).
 	verbose bool
 	root    bool // --allow-root
@@ -235,6 +238,13 @@ func runWithHome(ctx context.Context, inv invocation, home string, input io.Read
 		return err
 	}
 	repo, manifest, remembered, err := openRepository(inv, home)
+	// homeskillet alone, with nothing to act on, is someone finding out
+	// what it does, often just after downloading it: a person gets how to
+	// start rather than an error, and a script still gets the error.
+	var nothing nothingLinked
+	if errors.As(err, &nothing) && inv.bare && terminal(output) {
+		return startGuide(output, home)
+	}
 	if err != nil {
 		return err
 	}
@@ -389,6 +399,7 @@ func parse(args []string, output io.Writer) (invocation, error) {
 	if inv.command, inv.typed, args, err = takeCommand(args); err != nil {
 		return invocation{}, err
 	}
+	inv.bare = !named
 	switch inv.command {
 	case "help":
 		return parseHelp(args, output)
@@ -809,20 +820,26 @@ func openRepository(inv invocation, home string) (repo string, manifest config.M
 	if data, dataErr := dataDir(inv, home); dataErr == nil {
 		recorded, _ = link.Repositories(data, home)
 	}
+	// Advice names homeskillet as it was run, so that it works as written
+	// before homeskillet is installed, when the first run is the download.
+	self := selfName()
 	if inv.repoGiven {
 		if len(recorded) == 0 {
-			return "", config.Manifest{}, false, fmt.Errorf("%w\n  that is the home directory; name a repository instead: homeskillet %s /path/to/dotfiles", err, inv.command)
+			return "", config.Manifest{}, false, fmt.Errorf("%w\n  that is the home directory; name a repository instead: %s %s /path/to/dotfiles", err, self, inv.command)
 		}
 		var choices strings.Builder
 		choices.WriteString("\n  that is the home directory; name the repository linked into it instead:")
 		for _, recordedRepo := range recorded {
-			fmt.Fprintf(&choices, "\n    homeskillet %s %s", inv.command, recordedRepo)
+			fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, recordedRepo)
 		}
 		return "", config.Manifest{}, false, fmt.Errorf("%w%s", err, choices.String())
 	}
 	switch len(recorded) {
 	case 0:
-		return "", config.Manifest{}, false, fmt.Errorf("%w\n  name one: homeskillet %s /path/to/dotfiles", err, inv.command)
+		// Nothing linked yet is where everyone starts, so say how to.
+		return "", config.Manifest{}, false, nothingLinked{fmt.Errorf("%w\n  name one: %s %s /path/to/dotfiles\n"+
+			"  nothing is linked yet: clone your dotfiles repository and name the clone, or start one with %s init /path/to/dotfiles",
+			err, self, inv.command, self)}
 	case 1:
 		repo, manifest, err = loadRepository(recorded[0])
 		if err != nil {
@@ -833,7 +850,7 @@ func openRepository(inv invocation, home string) (repo string, manifest config.M
 	var choices strings.Builder
 	fmt.Fprintf(&choices, "\n  several repositories are linked into %s; name one:", home)
 	for _, recordedRepo := range recorded {
-		fmt.Fprintf(&choices, "\n    homeskillet %s %s", inv.command, recordedRepo)
+		fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, recordedRepo)
 	}
 	return "", config.Manifest{}, false, fmt.Errorf("%w%s", err, choices.String())
 }

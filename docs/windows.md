@@ -9,38 +9,39 @@ this page covers what else differs on Windows, and the rest of the documentation
 ## Installing
 
 1. Open **PowerShell** from the Start menu as yourself. Do not choose **Run as administrator**: homeskillet refuses an
-   elevated terminal.
+   elevated terminal. The lines below are PowerShell, so check the prompt: PowerShell's starts with `PS`, as in
+   `PS C:\Users\you>`. If yours is `C:\Users\you>` alone, the window is Command Prompt; type `powershell`, press Enter,
+   and the same window runs PowerShell.
 2. Paste these lines. They download the build for your PC and the release's `SHA256SUMS` into your Downloads folder,
-   and only if the build's SHA-256 is listed there, run its `prepare` and then its `install`:
+   and only if the build's SHA-256 is listed there, run its `prepare` and then its `install`. If either stops, a
+   warning says that homeskillet is not installed yet; deal with what it said, and paste the lines again:
 
    ```powershell
    cd $HOME\Downloads
    $exe = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64') { 'homeskillet-windows-arm64.exe' } else { 'homeskillet-windows-amd64.exe' }
    $base = 'https://github.com/nicholashoule/homeskillet/releases/latest/download'
-   curl.exe -fsSLO --proto =https "$base/$exe"
-   curl.exe -fsSLO --proto =https "$base/SHA256SUMS"
-   $sum = (Get-FileHash $exe -Algorithm SHA256).Hash
-   if ((Get-Content SHA256SUMS) -contains "$sum  $exe") { & ".\$exe" prepare; if ($LASTEXITCODE -eq 0) { & ".\$exe" install } } else { Write-Error "$exe does not match SHA256SUMS; it was not run" }
+   $bin = "$HOME\.local\bin"; $installed = $false
+   foreach ($file in $exe, 'SHA256SUMS') { Remove-Item $file -ErrorAction SilentlyContinue; if (Get-Command curl.exe -ErrorAction SilentlyContinue) { curl.exe -fsSLO --proto =https "$base/$file" } else { & { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest "$base/$file" -OutFile $file -UseBasicParsing } } }
+   if ((Test-Path $exe, SHA256SUMS) -notcontains $false -and (Get-Content SHA256SUMS) -contains "$((Get-FileHash $exe -Algorithm SHA256).Hash)  $exe") { & ".\$exe" prepare; if ($LASTEXITCODE -eq 0) { if (($env:Path -split ';') -notcontains $bin) { $env:Path += ";$bin" }; & ".\$exe" install; $installed = $LASTEXITCODE -eq 0 } } else { Write-Error "$exe did not download, or does not match SHA256SUMS; it was not run" }
+   if ($installed) { $userPath = [Environment]::GetEnvironmentVariable('Path', 'User'); if (($userPath -split ';') -notcontains $bin) { [Environment]::SetEnvironmentVariable('Path', ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';'), 'User') }; Remove-Item $exe, SHA256SUMS; homeskillet version } else { Write-Warning 'homeskillet is not installed yet: deal with what it said above, then paste these lines again' }
    ```
 
 3. Answer `prepare`'s questions. Each fix is shown first and runs only if you type `y`. For Developer Mode, which
    Windows requires before a program may make links, it opens Settings at For developers: switch it on there, approve
-   the administrator prompt, and come back; `prepare` checks again. It then offers Git, and PowerShell 7, from winget.
-   Once it says `ready`, `install` runs.
-4. If `install` says that `.local\bin` is not on PATH, add it to your Path, once:
-
-   ```powershell
-   [Environment]::SetEnvironmentVariable('Path', [Environment]::GetEnvironmentVariable('Path', 'User') + ";$HOME\.local\bin", 'User')
-   ```
-
-5. Close PowerShell and open it again, so it reads the new Path, then check that `homeskillet version` runs. Delete the
-   two downloads: `Remove-Item $HOME\Downloads\homeskillet-windows-*.exe, $HOME\Downloads\SHA256SUMS`.
+   the administrator prompt, and come back; `prepare` checks again, and while it is still off, asks whether to check
+   once more. It then offers Git, and PowerShell 7, from winget. Once it says `ready`, `install` runs.
+4. Once `install` finishes, the last line puts `.local\bin` on your Path, for this window and every new one, deletes
+   the two downloads, and runs `homeskillet version` to show that the command works. Then run `homeskillet` alone: with
+   no repository yet, it shows how to start one, or to link the one you have.
 
 Write `curl.exe`, not `curl`, which Windows PowerShell takes for `Invoke-WebRequest`, and for a particular release,
-`download/v0.4.0` for `latest/download`. The check and the run are one statement, so a build that fails the check is
-never run. If something stops you, [Before You Start](#before-you-start) and [Preparing Windows](#preparing-windows) say
-what each check needs and why. From then on, `homeskillet update` installs the newest release, checked with Windows's
-own `curl.exe` and `certutil.exe`; [install.md](install.md) covers versions, pinning, and removal.
+`download/v0.4.0` for `latest/download`. Windows 11, and Windows 10 since version 1803, include `curl.exe`; on a Windows
+without it, the lines download with PowerShell's own `Invoke-WebRequest` instead, with TLS 1.2 turned on, which Windows
+PowerShell may otherwise not offer. The check and the run are one statement, so a build that fails the check, or did
+not download, is never run. If something stops you, [Before You Start](#before-you-start) and [Preparing
+Windows](#preparing-windows) say what each check needs and why. From then on, `homeskillet update` installs the newest
+release, checked with Windows's own `curl.exe` and `certutil.exe`; [install.md](install.md) covers versions, pinning,
+and removal.
 
 ### Building from Source
 
@@ -91,7 +92,8 @@ installed. It checks, in order:
 
 | Item | Needed for | When it is missing |
 |---|---|---|
-| Developer Mode | Links, and installing homeskillet itself | Offers to open Settings at For developers, waits while you switch it on, then checks again. Turning it on takes an administrator, so the switch is yours. |
+| Home | Everything: links go into it, homeskillet installs into it, and the installs below run in it | Your profile folder, and every folder above it, such as `C:\`, must pass the [ownership rules](#ownership-and-permissions). homeskillet cannot fix that itself, so `prepare` says why it fails and who can fix it, still offers Developer Mode, and holds back the installs below until it passes. |
+| Developer Mode | Links, and installing homeskillet itself | Offers to open Settings at For developers, waits while you switch it on, then checks again, and while it is still off, asks whether to check once more. Turning it on takes an administrator, so the switch is yours. |
 | winget | The two installs below | Offers, in turn until winget is found: registering it with Microsoft's `Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe`, as needed after a first sign-in, then waits a few seconds for Windows to finish; then Microsoft's repair, which installs the NuGet provider and the `Microsoft.WinGet.Client` module from the PowerShell Gallery for your account only and runs `Repair-WinGetPackageManager`, asked about even under `--yes`. Failing both, it names App Installer in the Microsoft Store, winget's GitHub releases, and each tool's official download page. |
 | Git | Cloning a repository | Offers `winget install --id Git.Git --exact --source winget` with the two `--accept-…-agreements` flags. winget checks the installer against its manifest's SHA-256, which is why homeskillet does not download installers itself. |
 | PowerShell 7 | Most Windows repositories' steps, and tab completion | Offers `winget install --id Microsoft.PowerShell` the same way. Not required: `prepare` is ready without it. |
@@ -101,9 +103,12 @@ Each offer is a step like a repository's setup steps: shown exactly, with the fo
 they run in your profile folder, which must pass the [ownership rules](#ownership-and-permissions). Installers that need
 an administrator ask through User Account Control; homeskillet itself never runs elevated. Under `--yes`, the installs
 run without asking, except winget's repair, which downloads code from the PowerShell Gallery, and Settings is not
-opened, since nobody is there to switch Developer Mode on. `prepare` ends with `ready` when Developer Mode and Git are
-in place, and otherwise names what is still missing and exits nonzero. On Linux and macOS it checks for Git and says how
-to install it, since that takes `sudo` or Apple's installer.
+opened, since nobody is there to switch Developer Mode on. `prepare` ends with `ready` when the home passes and
+Developer Mode and Git are in place, and otherwise names what is still missing and exits nonzero; run it again at any
+point, as each thing is fixed. Once ready, it says what to do next: install homeskillet, when what ran is the download;
+put `.local\bin` on your Path, when it is not; or, with nothing linked yet, run `homeskillet` alone, which shows how to
+start. On Linux and macOS it checks the home the same way, and for Git, and says how to install Git, since that takes
+`sudo` or Apple's installer.
 
 ## Configuring a Repository for Windows
 
@@ -241,7 +246,12 @@ saying who may do what. The rules stay those of the other systems, in Windows te
 - Rules that only deny, and rules that apply only to files created later, are ignored; an entry of a kind homeskillet
   cannot evaluate fails the check.
 
-The error names the account that may write, such as `BUILTIN\Users`.
+The error names the account that may write, such as `BUILTIN\Users`. When the directory is one above your profile, such
+as `C:\`, every check of a file in your profile passes through it, so moving the repository cannot help, and the error
+says so: it names the permission as a folder's Security tab does, such as Modify or Full control, and that only an
+administrator can change it. `icacls C:\` lists who may do what. As Windows sets it up, `C:\` lets
+`NT AUTHORITY\Authenticated Users` only create folders, shown as `(AD)`, and grants Modify only on what they create,
+shown as `(OI)(CI)(IO)(M)`, which passes.
 
 ### Junctions and Other Reparse Points
 

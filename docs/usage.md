@@ -42,9 +42,12 @@ homeskillet check ~/dotfiles
 
 The repository is the first argument after the command, or `--repo`. Left out, it is the current directory or, when that
 is not a repository, the one repository already linked into the home, so after the first `link`, `homeskillet link`
-alone works anywhere; with several linked, homeskillet lists them rather than choose. In place of a command, and after
-`setup`, where other words name steps, the repository must plainly be a path: `.`, `..`, or containing `/`, or on
-Windows `\` or a drive. A mistyped command is then never read as a directory: write `./dotfiles`, not `dotfiles`.
+alone works anywhere; with several linked, homeskillet lists them rather than choose. With none linked yet, as on a new
+machine, `homeskillet` run alone at a terminal shows how to start, step by step, from `prepare` to the first `link`,
+naming itself as you ran it, such as the download before it is installed; a script gets the error. In place of a
+command, and after `setup`, where other words name steps, the repository must plainly be a path: `.`, `..`, or
+containing `/`, or on Windows `\` or a drive. A mistyped command is then never read as a directory: write
+`./dotfiles`, not `dotfiles`.
 
 A path that starts with `~`, as `~/dotfiles`, means your home from any shell, `cmd` included. Keep the clone in a
 permanent place, since links point into it, and unlink before moving or deleting it.
