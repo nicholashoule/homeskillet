@@ -19,7 +19,7 @@ shell is.
 | Environment | Notes |
 |---|---|
 | Linux | Any distribution. Tested. |
-| macOS | bash or zsh. Cross-compiled, not yet tested natively. |
+| macOS | bash or zsh. Tested on macOS in CI. |
 | Windows 10 and 11 | Native, x64 and Arm64, from PowerShell. `homeskillet prepare` gets a fresh machine ready: Developer Mode, Git, and PowerShell 7, each only once you approve ([docs/windows.md](docs/windows.md#preparing-windows)). |
 | WSL | The Linux build inside the distribution, with the repository on its Linux file system, not `/mnt/c`. From Windows, or a WSL shell, `homeskillet wsl` links a repository's `home/wsl/` there ([docs/windows.md](docs/windows.md#windows-and-wsl-together)). |
 | Containers | Running as root needs `--allow-root` and a repository root owns, so a bind mount from the host is refused; or run as a regular user ([docs/safety.md](docs/safety.md#ownership)). |

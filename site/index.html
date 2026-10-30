@@ -270,7 +270,7 @@ homeskillet list              # installed versions, and which one runs
 homeskillet list-remote       # published versions, and which are installed
 homeskillet install 0.3.1     # install that release, without changing which one runs
 homeskillet use 0.3.1         # run that version; use latest follows the newest again</code></pre>
-      <p><code>update</code> checks each download against the release's <code>SHA256SUMS</code> before anything runs. Windows needs Developer Mode for symlinks; the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#installing">Windows guide</a> shows the same steps in PowerShell.</p>
+      <p><code>update</code> checks each download against the release's <code>SHA256SUMS</code> before anything runs. On Windows, the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#installing">Windows guide</a> shows the same steps in PowerShell, running the download's <code>prepare</code> first: it turns on Developer Mode, which links need, and installs Git and PowerShell 7 with winget, each only once you approve.</p>
 
       <div class="from-source">
         <img class="gopher" src="images/gopher.svg" width="52" height="71" alt="The Go gopher">
@@ -284,8 +284,8 @@ homeskillet use 0.3.1         # run that version; use latest follows the newest 
       <table>
         <tr><th>Environment</th><th>Notes</th></tr>
         <tr><td>Linux</td><td>Any distribution. Tested.</td></tr>
-        <tr><td>macOS</td><td>bash or zsh. Cross-compiled, not yet tested natively.</td></tr>
-        <tr><td>Windows 10 and 11</td><td>Native, x64 and Arm64: your PowerShell profile and other Windows dotfiles. Linking needs Developer Mode.</td></tr>
+        <tr><td>macOS</td><td>bash or zsh. Tested on macOS in CI.</td></tr>
+        <tr><td>Windows 10 and 11</td><td>Native, x64 and Arm64: your PowerShell profile and other Windows dotfiles. <code>homeskillet prepare</code> gets a fresh machine ready: Developer Mode, Git, and PowerShell 7.</td></tr>
         <tr><td>WSL</td><td>Your WSL home, with the Linux build inside the distribution, or from Windows with <code>homeskillet wsl</code>.</td></tr>
         <tr><td>Windows and WSL</td><td>Both, from one repository: <code>home/</code> for Windows and <code>home/wsl/</code> for the distribution, each side with its own install and record of links.</td></tr>
         <tr><td>Containers</td><td>Running as root needs <code>--allow-root</code> and a repository root owns; or run as a regular user.</td></tr>
@@ -305,8 +305,9 @@ homeskillet setup ~/dotfiles                  # offer each setup step
 homeskillet check ~/dotfiles                  # list every issue, or say it is valid
 homeskillet backups purge --older-than 30d    # delete old backups, after asking
 homeskillet unlink ~/dotfiles
+homeskillet prepare                           # check for Git and, on Windows, Developer Mode
 homeskillet update                            # install the newest release and run it</code></pre>
-      <p>After the first <code>link</code>, the repository may be left out anywhere. At a terminal the output is grouped for reading; in a script it is one tab-separated line per file, and the exit status reports the result.</p>
+      <p>After the first <code>link</code>, the repository may be left out anywhere. At a terminal the output is grouped for reading; in a script it is one tab-separated line per file, and the exit status reports the result. A failure is one line and a hint; <code>--verbose</code> shows all of it.</p>
     </div>
   </section>
 
