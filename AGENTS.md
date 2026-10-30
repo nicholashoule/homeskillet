@@ -47,7 +47,7 @@ file: the README, docs/, and this file describe the project, so keep them curren
 | `tools/release` | The release build both the release workflow and CI's dry run run (docs/release.md) |
 | `examples/` | Starter configuration repositories, one per system; `TestExamples` runs `check` on each |
 | `site/` | The website, one hand-written page GitHub Pages serves (docs/development.md) |
-| `.github/` | CI, release, and Pages workflows, Dependabot, repogov line limits, and Copilot instructions |
+| `.github/` | CI, release, and Pages workflows, the bug report template, Dependabot, repogov line limits, and Copilot instructions |
 | `CHANGELOG.md`, `SECURITY.md` | What changed for users, by release (the release notes come from it); how to report a vulnerability |
 
 `tools/xplat` is a byte-identical copy of `github.com/nicholashoule/go-webapp/tools/xplat`. Do not edit it here: change

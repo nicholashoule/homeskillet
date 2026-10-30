@@ -269,7 +269,8 @@ chmod +x homeskillet-linux-amd64
 homeskillet list              # installed versions, and which one runs
 homeskillet list-remote       # published versions, and which are installed
 homeskillet install 0.3.1     # install that release, without changing which one runs
-homeskillet use 0.3.1         # run that version; use latest follows the newest again</code></pre>
+homeskillet use 0.3.1         # run that version; use latest follows the newest again
+homeskillet remove 0.3.0      # delete a version you no longer need, unless it runs</code></pre>
       <p><code>update</code> checks each download against the release's <code>SHA256SUMS</code> before anything runs. On Windows, the <a href="https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#installing">Windows guide</a> shows the same steps in PowerShell, running the download's <code>prepare</code> first: it turns on Developer Mode, which links need, and installs Git and PowerShell 7 with winget, each only once you approve.</p>
 
       <div class="from-source">

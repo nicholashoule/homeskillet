@@ -178,7 +178,9 @@ network like any installer, so it is offered only when registering did not bring
 - `init` writes `bootstrap.json` only into a repository with no manifest under either name, not even as a symlink, never
   over one that appears while it runs, and refuses a repository directory another user could write to, since the
   manifest decides what runs. An existing `home/` must be a directory, or a symlink to one inside the repository, as
-  linking requires. It creates a missing `home/` private, and removes it again if writing the manifest fails.
+  linking requires. It creates a missing `home/` private, and removes it again if writing the manifest fails. It shows
+  what it would create and creates nothing until you approve, with no as the default, or pass `--yes`, and it refuses
+  the home directory itself as a repository.
 - `check` only reads: it applies the location, ownership, and manifest rules of the other commands, never runs a step,
   and never looks at a home. Like every other command, it refuses to run as root without `--allow-root`.
 - Shell completion only reads, as `status` and `self list` do: it never runs a setup step or writes a file. Running as

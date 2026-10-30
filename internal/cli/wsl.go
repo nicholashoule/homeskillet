@@ -79,14 +79,14 @@ func (b windowsBuild) valid() bool {
 func parseWSL(args []string, output io.Writer) (invocation, error) {
 	inv := invocation{command: "wsl", repo: ".", wsl: new(wslOptions)}
 	inv.sub, args = word(args, "")
+	if inv.sub == "help" {
+		return subcommandHelp("wsl", args, output)
+	}
 	if inv.sub == "" && slices.ContainsFunc(args, func(arg string) bool { return arg == "-h" || arg == "--help" }) {
-		return invocation{}, help(output, newFlags(new(invocation)))
+		return invocation{}, helpFor(output, "wsl")
 	}
 	if !slices.Contains(wslCommands, inv.sub) {
-		if inv.sub == "" {
-			return invocation{}, fmt.Errorf("wsl needs a command: %s", strings.Join(wslCommands, ", "))
-		}
-		return invocation{}, fmt.Errorf("unknown command wsl %s; use wsl %s", inv.sub, strings.Join(wslCommands, ", wsl "))
+		return invocation{}, unknownSubcommand("wsl", inv.sub, wslCommands)
 	}
 	known := newFlags(new(invocation))
 	var operands []string
@@ -102,11 +102,11 @@ func parseWSL(args []string, output io.Writer) (invocation, error) {
 		}
 		name, value, hasValue := strings.Cut(strings.TrimLeft(arg, "-"), "=")
 		if name == "h" || name == "help" {
-			return invocation{}, help(output, known)
+			return invocation{}, helpFor(output, "wsl")
 		}
 		f := known.Lookup(name)
 		if f == nil {
-			return invocation{}, fmt.Errorf("unknown option %s\n  run homeskillet --help to see the commands and options", arg)
+			return invocation{}, fmt.Errorf("unknown option %s\n  run homeskillet help wsl to see its options", arg)
 		}
 		boolean := isBool(f)
 		if !boolean && !hasValue {

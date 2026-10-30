@@ -115,13 +115,13 @@ func TestLifecycleWindows(t *testing.T) {
 	if got := runs(t, layout); got != "one" {
 		t.Fatalf("install changed a pinned command to %q", got)
 	}
-	if err := layout.Remove("v1.0.0", false, nil); err == nil {
+	if err := layout.Remove([]string{"v1.0.0"}, false, nil); err == nil {
 		t.Fatal("removed the pinned version")
 	}
 	if err := layout.Use(Latest, false, nil); err != nil || runs(t, layout) != "three" {
 		t.Fatalf("use latest: %v", err)
 	}
-	if err := layout.Remove("v1.0.0", false, nil); err != nil {
+	if err := layout.Remove([]string{"v1.0.0"}, false, nil); err != nil {
 		t.Fatalf("remove: %v", err)
 	}
 	if _, err := os.Stat(filepath.Dir(layout.Program("v1.0.0"))); err == nil {

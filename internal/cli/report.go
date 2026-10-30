@@ -44,6 +44,8 @@ type view struct {
 	// copyOf, when set, says in the header that the repository is a copy
 	// homeskillet wsl keeps (see describeCopy).
 	copyOf string
+	// color says headings may be bold (see colorFor).
+	color bool
 }
 
 // newView returns a view for output, or nil when output is not a terminal.
@@ -51,7 +53,7 @@ func newView(output io.Writer) *view {
 	if !terminal(output) {
 		return nil
 	}
-	return &view{}
+	return &view{color: colorFor(output).on}
 }
 
 // path returns p for display. Paths are shown in full, never with ~ for the
@@ -81,7 +83,7 @@ func (v *view) header(w io.Writer, command, repo string, remembered bool, home s
 	if remembered {
 		repository += "  (found from existing links)"
 	}
-	text := fmt.Sprintf("homeskillet %s\n  %-11s %s\n", command, "repository:", repository)
+	text := fmt.Sprintf("%s\n  %-11s %s\n", paint(v.color, styleHeading, "homeskillet "+command), "repository:", repository)
 	if v.copyOf != "" {
 		text += fmt.Sprintf("  %-11s %s\n", "copy of:", v.copyOf)
 	}
@@ -108,8 +110,11 @@ func Reported(err error) bool {
 }
 
 // group is one heading and its entries, each a path and an optional note.
+// style is the heading's color in the standard (see styleGood): good for
+// what is done or in place, attention for what is not yet, "" for neither.
 type group struct {
 	heading string
+	style   string
 	entries [][2]string
 }
 
@@ -124,12 +129,12 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 	var groups []group
 	// add appends a group titled with its count, then what it means:
 	// "Conflicts (3): not homeskillet's links, ...".
-	add := func(title string, plans []link.Plan, note func(link.Plan) string) {
+	add := func(title, style string, plans []link.Plan, note func(link.Plan) string) {
 		if len(plans) == 0 {
 			return
 		}
 		heading, meaning, _ := strings.Cut(title, ": ")
-		g := group{heading: fmt.Sprintf("%s (%d)", heading, len(plans))}
+		g := group{heading: fmt.Sprintf("%s (%d)", heading, len(plans)), style: style}
 		if meaning != "" {
 			g.heading += ": " + meaning
 		}
@@ -143,65 +148,78 @@ func (v *view) links(w io.Writer, command string, plans []link.Plan, applied, fo
 		groups = append(groups, g)
 	}
 	// would picks the heading for changes made or, in a dry run or a
-	// blocked run, changes that would be made.
+	// blocked run, changes that would be made; changed is its color: done,
+	// or still to do.
 	would := func(done, pending string) string {
 		if applied {
 			return done
 		}
 		return pending
 	}
+	changed := would(styleGood, styleAttention)
 	switch command {
 	case "unlink":
-		add(would("Unlinked", "Would unlink"), append(byState[link.Linked], byState[link.Orphaned]...), nil)
-		add(would("Skipped: not homeskillet's links", "Would skip: not homeskillet's links"), byState[link.Conflict], v.conflict)
+		add(would("Unlinked", "Would unlink"), changed, append(byState[link.Linked], byState[link.Orphaned]...), nil)
+		add(would("Skipped: not homeskillet's links", "Would skip: not homeskillet's links"), styleAttention, byState[link.Conflict], v.conflict)
 	default:
-		conflicts, describe := "Conflicts: not homeskillet's links, so never replaced without --force", v.conflict
+		conflicts, describe, style := "Conflicts: not homeskillet's links, so never replaced without --force", v.conflict, styleAttention
 		switch {
 		case force && applied:
-			conflicts = "Replaced: moved into the backup, then linked"
+			conflicts, style = "Replaced: moved into the backup, then linked", styleGood
 			describe = func(plan link.Plan) string { return "backup: " + v.path(moved[plan.Target]) }
 		case force:
 			conflicts = "Would replace: move into the backup, then link"
 		}
-		add(conflicts, byState[link.Conflict], describe)
-		add("Absent sources: listed, but not in the repository", byState[link.NoSource], func(plan link.Plan) string {
+		add(conflicts, style, byState[link.Conflict], describe)
+		add("Absent sources: listed, but not in the repository", styleAttention, byState[link.NoSource], func(plan link.Plan) string {
 			return "expected at " + v.path(plan.Source)
 		})
 		shadowing := slices.DeleteFunc(slices.Clone(plans), func(plan link.Plan) bool { return v.shadows[plan.Target] == "" })
-		add("Shadowing commands: a shell runs these first; link them only from a repository you trust", shadowing, func(plan link.Plan) string {
+		add("Shadowing commands: a shell runs these first; link them only from a repository you trust", styleAttention, shadowing, func(plan link.Plan) string {
 			return "instead of " + v.path(v.shadows[plan.Target])
 		})
-		removed := would("Removed: no longer in the repository", "Would remove: no longer in the repository")
+		removed, style := would("Removed: no longer in the repository", "Would remove: no longer in the repository"), changed
 		if command == "status" {
-			removed = "Orphaned: no longer in the repository; link or unlink removes them"
+			removed, style = "Orphaned: no longer in the repository; link or unlink removes them", styleAttention
 		}
-		add(removed, byState[link.Orphaned], nil)
+		add(removed, style, byState[link.Orphaned], nil)
 		pending := "Would link"
 		if command == "status" {
 			pending = "Not linked yet"
 		}
-		add(would("Linked", pending), byState[link.Missing], nil)
+		add(would("Linked", pending), changed, byState[link.Missing], nil)
 		// Links already in place are listed too, so every file in the
 		// repository is accounted for, whatever the command did.
 		already := "Already linked"
 		if command == "status" {
 			already = "Linked"
 		}
-		add(already, byState[link.Linked], nil)
+		add(already, styleGood, byState[link.Linked], nil)
 	}
 	for _, g := range groups {
 		if err := v.writeGroup(w, g); err != nil {
 			return err
 		}
 	}
-	text := summary(command, byState, applied, force) + "\n"
+	_, err := io.WriteString(w, v.closing(command, byState, applied, force))
+	return err
+}
+
+// closing returns the lines that end status, link, and unlink: the summary,
+// then for status and link, the setup steps still pending (see nextSetup).
+func (v *view) closing(command string, byState map[link.State][]link.Plan, applied, force bool) string {
+	text := summary(command, byState, applied, force, v.color) + "\n"
 	// Setup comes after linking; a blocked link has its own next step.
 	blocked := len(byState[link.NoSource]) > 0 || len(byState[link.Conflict]) > 0 && !force
-	if v.next != "" && !blocked {
-		text += v.next + "\n"
+	if v.next == "" || blocked {
+		return text
 	}
-	_, err := io.WriteString(w, text)
-	return err
+	// The steps still pending take the color of what needs doing; how to run
+	// them stays plain.
+	if pending, run, ok := strings.Cut(v.next, ". "); ok {
+		return text + paint(v.color, styleAttention, pending+".") + " " + run + "\n"
+	}
+	return text + paint(v.color, styleAttention, v.next) + "\n"
 }
 
 // nextSetup returns the line that ends link and status at a terminal when the
@@ -258,14 +276,14 @@ func (v *view) steps(w io.Writer, plans []setup.Plan, yes bool) error {
 		if len(entries) == 0 {
 			continue
 		}
-		heading := fmt.Sprintf("Done (%d)", len(entries))
+		heading, style := fmt.Sprintf("Done (%d)", len(entries)), styleGood
 		switch {
 		case state == setup.Pending && yes:
-			heading = fmt.Sprintf("Pending (%d): shown in full before each runs; --yes asks nothing", len(entries))
+			heading, style = fmt.Sprintf("Pending (%d): shown in full before each runs; --yes asks nothing", len(entries)), styleAttention
 		case state == setup.Pending:
-			heading = fmt.Sprintf("Pending (%d): shown in full and asked about before each runs", len(entries))
+			heading, style = fmt.Sprintf("Pending (%d): shown in full and asked about before each runs", len(entries)), styleAttention
 		}
-		groups = append(groups, group{heading: heading, entries: entries})
+		groups = append(groups, group{heading: heading, style: style, entries: entries})
 	}
 	for _, g := range groups {
 		if err := v.writeGroup(w, g); err != nil {
@@ -278,9 +296,9 @@ func (v *view) steps(w io.Writer, plans []setup.Plan, yes bool) error {
 	case len(plans) == 0:
 		closing = "No setup steps for this platform."
 	case pending == 0:
-		closing = "Nothing to do: " + files(len(plans), "step is", "steps are") + " done."
+		closing = paint(v.color, styleGood, "Nothing to do:") + " " + files(len(plans), "step is", "steps are") + " done."
 	default:
-		closing = "Dry run: nothing changed; setup would offer " + files(pending, "step") + "."
+		closing = dryRunLead(v.color) + " nothing changed; setup would offer " + files(pending, "step") + "."
 	}
 	_, err := fmt.Fprintln(w, closing)
 	return err
@@ -296,7 +314,7 @@ func (v *view) doneSteps(w io.Writer, plans []setup.Plan) error {
 		}
 	}
 	if len(entries) > 0 {
-		if err := v.writeGroup(w, group{heading: fmt.Sprintf("Done (%d)", len(entries)), entries: entries}); err != nil {
+		if err := v.writeGroup(w, group{heading: fmt.Sprintf("Done (%d)", len(entries)), style: styleGood, entries: entries}); err != nil {
 			return err
 		}
 	}
@@ -305,7 +323,7 @@ func (v *view) doneSteps(w io.Writer, plans []setup.Plan) error {
 		_, err := fmt.Fprintln(w, "No setup steps for this platform.")
 		return err
 	case len(entries) == len(plans):
-		_, err := fmt.Fprintln(w, "Nothing to do: "+files(len(plans), "step is", "steps are")+" done.")
+		_, err := fmt.Fprintln(w, paint(v.color, styleGood, "Nothing to do:")+" "+files(len(plans), "step is", "steps are")+" done.")
 		return err
 	}
 	return nil
@@ -330,7 +348,7 @@ func (v *view) stepReporter(w io.Writer, plans []setup.Plan) func(outcome string
 		switch {
 		case outcome == string(setup.Done) && listed[plan.Step.Name]:
 		case outcome == string(setup.Done):
-			_, err = fmt.Fprintf(w, "done     %s  (%s, by an earlier step)\n", plan.Step.Name, setup.Detail(plan))
+			_, err = fmt.Fprintf(w, "%s %s  (%s, by an earlier step)\n", paint(v.color, styleGood, "done    "), plan.Step.Name, setup.Detail(plan))
 		case outcome == "ran":
 		case outcome == string(setup.Pending):
 			// A blank line sets each step apart from the output of the one
@@ -340,10 +358,11 @@ func (v *view) stepReporter(w io.Writer, plans []setup.Plan) func(outcome string
 			}
 			offered = true
 			if err == nil {
-				_, err = fmt.Fprintf(w, "%-8s %s\n", outcome, plan.Step.Name)
+				_, err = fmt.Fprintf(w, "%s %s\n", paint(v.color, styleAttention, fmt.Sprintf("%-8s", outcome)), plan.Step.Name)
 			}
 		default:
-			_, err = fmt.Fprintf(w, "%-8s %s\n", outcome, plan.Step.Name)
+			// skipped: declined, so still to do.
+			_, err = fmt.Fprintf(w, "%s %s\n", paint(v.color, styleAttention, fmt.Sprintf("%-8s", outcome)), plan.Step.Name)
 		}
 		return err
 	}
@@ -357,7 +376,13 @@ func (v *view) writeGroup(w io.Writer, g group) error {
 	}
 	// Built whole, then written once, so the one write error is the only one.
 	var text strings.Builder
-	text.WriteString(g.heading + "\n")
+	// The heading's first words take its color; what it means stays plain.
+	head, meaning, explained := strings.Cut(g.heading, ": ")
+	text.WriteString(paint(v.color, styleHeading+g.style, head))
+	if explained {
+		text.WriteString(": " + meaning)
+	}
+	text.WriteString("\n")
 	for _, entry := range g.entries {
 		if entry[1] == "" {
 			text.WriteString("  " + entry[0] + "\n")
@@ -394,8 +419,9 @@ func (v *view) conflict(plan link.Plan) string {
 
 // summary is the closing line: what changed, or would, or why nothing did
 // and what to do. It always accounts for every file, so a run with nothing to
-// show still says why.
-func summary(command string, byState map[link.State][]link.Plan, applied, force bool) string {
+// show still says why. With color, its first words take the standard's color
+// for what they say.
+func summary(command string, byState map[link.State][]link.Plan, applied, force, color bool) string {
 	count := func(states ...link.State) int {
 		n := 0
 		for _, state := range states {
@@ -416,9 +442,9 @@ func summary(command string, byState map[link.State][]link.Plan, applied, force 
 		case unlinked+conflicts == 0:
 			return "Nothing to unlink."
 		case applied:
-			return "Done: " + list(counted(unlinked, "%d unlinked"), counted(conflicts, "%d skipped")) + "."
+			return paint(color, styleGood, "Done:") + " " + list(counted(unlinked, "%d unlinked"), counted(conflicts, "%d skipped")) + "."
 		default:
-			return "Dry run: nothing changed; unlink would " + list(counted(unlinked, "remove %d"), counted(conflicts, "skip %d")) + "."
+			return dryRunLead(color) + " nothing changed; unlink would " + list(counted(unlinked, "remove %d"), counted(conflicts, "skip %d")) + "."
 		}
 	}
 	if blocking > 0 {
@@ -427,9 +453,9 @@ func summary(command string, byState map[link.State][]link.Plan, applied, force 
 			fix = "Move the conflicting files aside, or rerun with --force to move them into a backup and link."
 		}
 		if command == "link" {
-			return "Nothing changed. " + fix
+			return paint(color, styleAttention, "Nothing changed.") + " " + fix
 		}
-		return "link would change nothing until these are resolved. " + fix
+		return paint(color, styleAttention, "link would change nothing until these are resolved.") + " " + fix
 	}
 	linked, removed := count(link.Missing), count(link.Orphaned)
 	if linked+replaced+removed == 0 {
@@ -437,15 +463,15 @@ func summary(command string, byState map[link.State][]link.Plan, applied, force 
 		case already == 0:
 			return "Nothing to link."
 		case command == "status":
-			return "Everything is linked: " + files(already, "file") + "."
+			return paint(color, styleGood, "Everything is linked:") + " " + files(already, "file") + "."
 		case applied:
-			return "Nothing to change: " + files(already, "file is", "files are") + " already linked."
+			return paint(color, styleGood, "Nothing to change:") + " " + files(already, "file is", "files are") + " already linked."
 		default:
-			return "Dry run: nothing would change; " + files(already, "file is", "files are") + " already linked."
+			return dryRunLead(color) + " nothing would change; " + files(already, "file is", "files are") + " already linked."
 		}
 	}
 	if applied {
-		text := "Done: " + list(counted(linked, "%d linked"), counted(replaced, "%d replaced (originals in the backup)"),
+		text := paint(color, styleGood, "Done:") + " " + list(counted(linked, "%d linked"), counted(replaced, "%d replaced (originals in the backup)"),
 			counted(removed, "%d removed"))
 		if already > 0 {
 			text += fmt.Sprintf("; %d already linked", already)
@@ -454,9 +480,9 @@ func summary(command string, byState map[link.State][]link.Plan, applied, force 
 	}
 	would := list(counted(linked, "link %d"), counted(replaced, "replace %d"), counted(removed, "remove %d"))
 	if command == "status" {
-		return "homeskillet link would " + would + "."
+		return paint(color, styleAttention, "homeskillet link would "+would+".")
 	}
-	return "Dry run: nothing changed; link would " + would + "."
+	return dryRunLead(color) + " nothing changed; link would " + would + "."
 }
 
 // counted formats n with format, or returns "" when n is zero, so list
@@ -493,4 +519,46 @@ func files(n int, singular string, plural ...string) string {
 		return fmt.Sprintf("%d %s", n, plural[0])
 	}
 	return fmt.Sprintf("%d %ss", n, singular)
+}
+
+// writeTable writes rows indented under a heading, each column padded to
+// its widest cell, by the width it shows (see visibleWidth), so the columns
+// line up however long a version is and whatever is painted; the last
+// column is not padded, and nothing trails a line. widths, when
+// given, are the columns' widths across several tables, so that groups one
+// after another line up too.
+func writeTable(w io.Writer, rows [][]string, widths []int) error {
+	if widths == nil {
+		widths = columnWidths(rows)
+	}
+	var text strings.Builder
+	for _, row := range rows {
+		var line strings.Builder
+		line.WriteString("  ")
+		for i, cell := range row {
+			line.WriteString(cell)
+			if i < len(row)-1 {
+				line.WriteString(strings.Repeat(" ", max(widths[i]-visibleWidth(cell), 0)+2))
+			}
+		}
+		text.WriteString(strings.TrimRight(line.String(), " ") + "\n")
+	}
+	_, err := io.WriteString(w, text.String())
+	return err
+}
+
+// columnWidths returns the widest cell of each column across tables.
+func columnWidths(tables ...[][]string) []int {
+	var widths []int
+	for _, rows := range tables {
+		for _, row := range rows {
+			for i, cell := range row {
+				if i >= len(widths) {
+					widths = append(widths, 0)
+				}
+				widths[i] = max(widths[i], visibleWidth(cell))
+			}
+		}
+	}
+	return widths
 }

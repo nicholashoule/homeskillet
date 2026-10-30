@@ -55,14 +55,14 @@ func runBackups(inv invocation, home string, input io.Reader, output io.Writer) 
 		return nil
 	}
 	if inv.dryRun {
-		_, err := fmt.Fprintf(output, "Dry run: nothing changed; purge would delete %s.\n", files(len(kept), "backup"))
+		_, err := fmt.Fprintf(output, "%s nothing changed; purge would delete %s.\n", dryRunLead(colorFor(output).on), files(len(kept), "backup"))
 		return err
 	}
 	if !inv.yes {
 		approved, err := setup.Confirm(input, output, fmt.Sprintf("Delete %s? A deleted backup cannot be restored.", files(len(kept), "backup")))
 		if err != nil || !approved {
 			if err == nil {
-				_, err = fmt.Fprintln(output, "Nothing deleted.")
+				_, err = fmt.Fprintln(output, paint(colorFor(output).on, styleAttention, "Nothing deleted."))
 			}
 			return err
 		}
@@ -75,14 +75,14 @@ func runBackups(inv invocation, home string, input io.Reader, output io.Writer) 
 		return err
 	}
 	if v != nil {
-		_, err = fmt.Fprintf(output, "Deleted %s.\n", files(len(kept), "backup"))
+		_, err = fmt.Fprintf(output, "%s %s.\n", paint(colorFor(output).on, styleGood, "Deleted"), files(len(kept), "backup"))
 	}
 	return err
 }
 
-// listBackups writes the backups: for a person, the data directory, each
-// backup with when it was moved and its size, and a closing line unless a
-// purge follows; for scripts, a line per backup: "backup", its path, the
+// listBackups writes the backups: for a person, where they are kept, each
+// one's place in the home, newest first, with when it was moved and its
+// size, and unless a purge follows, how to restore one; for scripts, a line per backup: "backup", its path, the
 // path it came from in the home, the Unix time it was moved, and its size.
 func listBackups(v *view, output io.Writer, data string, kept []link.Kept, purging bool) error {
 	if v == nil {
@@ -93,28 +93,36 @@ func listBackups(v *view, output io.Writer, data string, kept []link.Kept, purgi
 		_, err := io.WriteString(output, text.String())
 		return err
 	}
-	if _, err := fmt.Fprintf(output, "homeskillet backups\n  %-11s %s\n\n", "data:", v.path(data)); err != nil {
+	backups := filepath.Join(data, link.BackupDir)
+	if _, err := fmt.Fprintf(output, "%s\n  backups in: %s\n\n", paint(v.color, styleHeading, "homeskillet backups"), v.path(backups)); err != nil {
 		return err
 	}
 	if len(kept) == 0 {
 		_, err := fmt.Fprintln(output, "No backups.")
 		return err
 	}
-	g := group{heading: fmt.Sprintf("Backups (%d): files link --force moved aside; move one back to restore it", len(kept))}
-	for _, backup := range kept {
-		name, err := filepath.Rel(data, backup.Path)
-		if err != nil {
-			name = backup.Path
-		}
-		g.entries = append(g.entries, [2]string{v.path(name), backup.Moved.Format("2006-01-02 15:04") + ", " + byteSize(backup.Size)})
+	// Each is named by its place in the home, which is what a person looks
+	// for, newest first; the closing line says how to find its file.
+	rows := make([][]string, 0, len(kept))
+	for _, backup := range slices.Backward(kept) {
+		rows = append(rows, []string{v.path(backup.Original), backup.Moved.Format("2006-01-02 15:04"), byteSize(backup.Size)})
 	}
-	if err := v.writeGroup(output, g); err != nil {
+	if _, err := fmt.Fprintln(output, paint(v.color, styleHeading, fmt.Sprintf("Backups (%d)", len(kept)))); err != nil {
+		return err
+	}
+	if err := writeTable(output, rows, nil); err != nil {
 		return err
 	}
 	if purging {
-		return nil
+		_, err := fmt.Fprintln(output)
+		return err
 	}
-	_, err := fmt.Fprintf(output, "%s; homeskillet backups purge deletes them after asking.\n", files(len(kept), "backup"))
+	example, err := filepath.Rel(backups, kept[len(kept)-1].Path)
+	if err != nil {
+		example = filepath.Base(kept[len(kept)-1].Path)
+	}
+	_, err = fmt.Fprintf(output, "\nTo restore one, move it back from that folder, where its name ends in the time it was moved, as in %s.\n"+
+		"homeskillet backups purge deletes them after asking.\n", v.path(example))
 	return err
 }
 

@@ -206,3 +206,18 @@ func TestCheckView(t *testing.T) {
 		t.Errorf("issues in the view: %v, not reported", err)
 	}
 }
+
+func TestCheckNotARepository(t *testing.T) {
+	// A directory that is no configuration repository at all says so in a
+	// sentence, and how to go on, rather than listing it as an issue.
+	_, home := repository(t)
+	var output bytes.Buffer
+	manifest, issues := checkRepository(home)
+	err := (&view{}).check(&output, home, manifest, issues)
+	want := "homeskillet check\n  directory: " + home + "\n\n" +
+		"Not a configuration repository: " + home + " holds no home/ directory, bootstrap.json, or dotfiles.json.\n" +
+		"Name a repository, as in homeskillet check ~/dotfiles, or start one with homeskillet init ~/dotfiles.\n"
+	if !Reported(err) || output.String() != want {
+		t.Errorf("check of a directory that is no repository: %v\n%s\nwant:\n%s", err, output.String(), want)
+	}
+}

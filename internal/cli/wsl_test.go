@@ -27,8 +27,8 @@ func TestParseWSL(t *testing.T) {
 		forward []string
 		err     string
 	}{
-		{args: []string{"wsl"}, err: "wsl needs a command"},
-		{args: []string{"wsl", "bogus"}, err: "unknown command wsl bogus"},
+		{args: []string{"wsl"}, err: "'wsl' needs a command: install, status, link, unlink, or setup"},
+		{args: []string{"wsl", "bogus"}, err: "'wsl bogus' is not a command; 'wsl' takes"},
 		{args: []string{"wsl", "install", "--from", "bin/x", "--distribution", "Ubuntu", "--home", "~/scratch"},
 			sub: "install", repo: ".", forward: []string{"--home=./scratch"}},
 		{args: []string{"wsl", "install", "extra"}, err: "unexpected arguments"},

@@ -49,6 +49,7 @@ homeskillet list              # installed versions, and which one runs
 homeskillet list-remote       # published versions, and which are installed
 homeskillet install 0.3.1     # install that release, without changing which one runs
 homeskillet use 0.3.1         # run that version; use latest follows the newest again
+homeskillet remove 0.3.0      # delete a version you no longer need, unless it runs
 ```
 
 With Go 1.24 or newer, on a machine without homeskillet,
@@ -69,9 +70,10 @@ homeskillet check ~/dotfiles                  # list every issue, or say it is v
 homeskillet unlink ~/dotfiles
 ```
 
-After the first `link`, the repository may be left out anywhere. At a terminal the output is grouped for reading; in a
-script it is one tab-separated line per file. [docs/usage.md](docs/usage.md) covers every command and option, and
-`homeskillet help` lists them.
+After the first `link`, the repository may be left out anywhere. At a terminal the output is grouped for reading, in
+color where the terminal takes it (`NO_COLOR` turns that off, and `homeskillet term` says what it detects); in a script
+it is one tab-separated line per file. [docs/usage.md](docs/usage.md) covers every command and option, `homeskillet
+help` lists the commands, and `homeskillet help link` shows one in full.
 
 ## Configuring a Repository
 

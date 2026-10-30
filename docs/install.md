@@ -86,7 +86,7 @@ project's releases on GitHub, over HTTPS, with the system's own `curl` and hashi
 often as you like, and a `--dry-run` downloads and checks without running or installing anything.
 
 At a terminal, `status`, `link`, `unlink`, and `setup` end with one line when a newer release is available, such as
-`note  v0.3.1 is available; homeskillet update installs it`. It is meant to stay out of the way:
+`Note: v0.3.1 is available; homeskillet update installs it`. It is meant to stay out of the way:
 
 - GitHub is asked at most once a day, and the line is shown at most once a day, recorded in `update.json` in the [data
   directory](#data-directory). A failed check counts, so an offline machine asks again tomorrow.
@@ -110,12 +110,12 @@ The check against `SHA256SUMS` proves the download arrived intact, not who publi
 repository also carry signed build provenance, which `gh attestation verify` checks (see [Downloading a
 Release](#downloading-a-release)); `update` does not check it yet.
 
-`update`, `install`, `use`, `list`, and `list-remote` are the same as `self update`, `self install`, `self use`, `self
-list`, and `self releases`; versions may be written with or without their leading `v`. Pinning a version runs that
-version's own command, so a version from before 0.3.0 has no `use`, and one from before 0.4.0 no `list` or
-`list-remote`; `homeskillet self use latest` works from any version and is the way back. A development build, whose
-version is a pseudo-version or `+dirty`, can update to a release too; the release then ranks as `latest` only if its
-version is higher.
+`update`, `install`, `use`, `list`, `list-remote`, and `remove` are the same as `self update`, `self install`, `self
+use`, `self list`, `self releases`, and `self remove`; versions may be written with or without their leading `v`.
+Pinning a version runs that version's own command, so a version from before 0.3.0 has no `use`, and one from before
+0.4.0 no `list` or `list-remote`; `homeskillet self use latest` works from any version and is the way back. A
+development build, whose version is a pseudo-version or `+dirty`, can update to a release too; the release then ranks as
+`latest` only if its version is higher.
 
 ## Shell Completion
 
@@ -195,18 +195,20 @@ homeskillet list-remote               # published releases, newest first, and wh
 homeskillet use previous              # roll back; pins that version
 homeskillet use v0.0.1                # pin any installed version
 homeskillet use latest                # follow the newest again
-homeskillet self remove v0.0.1        # delete a version you no longer need
+homeskillet remove v0.0.1             # delete a version you no longer need
+homeskillet remove 0.1.0 0.2.0        # or several at once
 homeskillet install --dry-run         # preview; every version command takes it
 ```
 
 A pinned version stays pinned when you install another; `install` says so, and `update` follows `latest` again. If the
 pinned version's directory is deleted by hand, the command dangles; `list` says so, and `homeskillet use latest` repairs
-it. `self remove` refuses the version the command runs and the one running at the moment. An installed version is never
-rewritten: installing the same version with different contents is refused, except for `+dirty` builds, which name no
-exact build. Rebuilding a release from the same commit, with the same Go and platform, differs only in its build time,
-so it counts as already installed and the installed binary stays. A clean build ranks above a `+dirty` build of the same
-version, so `latest` keeps naming the release. If `~/.local/bin/homeskillet` already exists and is not homeskillet's
-link, such as a binary from `go install`, install stops and asks you to move it aside.
+it. `remove` refuses the version the command runs and the one running at the moment, and checks every version it is
+given before deleting any, so one it refuses leaves the others installed. An installed version is never rewritten:
+installing the same version with different contents is refused, except for `+dirty` builds, which name no exact build.
+Rebuilding a release from the same commit, with the same Go and platform, differs only in its build time, so it counts
+as already installed and the installed binary stays. A clean build ranks above a `+dirty` build of the same version, so
+`latest` keeps naming the release. If `~/.local/bin/homeskillet` already exists and is not homeskillet's link, such as a
+binary from `go install`, install stops and asks you to move it aside.
 
 ## Data Directory
 

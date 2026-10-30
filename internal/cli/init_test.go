@@ -44,8 +44,13 @@ func statusOf(repo, home string) (string, error) {
 	return output.String(), err
 }
 
+// initialize runs init with args, approving with --yes unless asked for a
+// dry run.
 func initialize(args ...string) (string, error) {
 	var output bytes.Buffer
+	if !slices.Contains(args, "--dry-run") {
+		args = append(args, "--yes")
+	}
 	err := Run(context.Background(), append([]string{"init"}, args...), nil, &output, &output)
 	return output.String(), err
 }
@@ -225,7 +230,7 @@ func TestInitRefusesUnusableHome(t *testing.T) {
 func TestInitArguments(t *testing.T) {
 	repo := emptyRepository(t)
 	for _, args := range [][]string{
-		{repo, "--home", repo}, {repo, "--force"}, {repo, "--yes"}, {repo, "--data-dir", repo}, {repo, "extra"},
+		{repo, "--home", repo}, {repo, "--force"}, {repo, "--data-dir", repo}, {repo, "extra"},
 	} {
 		if _, err := parse(append([]string{"init"}, args...), new(bytes.Buffer)); err == nil {
 			t.Errorf("init accepted %q", args)
@@ -236,4 +241,43 @@ func TestInitArguments(t *testing.T) {
 func exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+func TestInitAsks(t *testing.T) {
+	// Without --yes, init shows what it would create and asks; anything but
+	// yes creates nothing, and a script that gave no answer gets an error.
+	for _, test := range []struct {
+		answer  string
+		created bool
+		err     string
+	}{{"", false, "pass --yes"}, {"n\n", false, "pass --yes"}, {"y\n", true, ""}} {
+		repo := emptyRepository(t)
+		var output bytes.Buffer
+		err := Run(context.Background(), []string{"init", repo}, strings.NewReader(test.answer), &output, &output)
+		if test.err != "" && (err == nil || !strings.Contains(err.Error(), test.err)) || test.err == "" && err != nil {
+			t.Errorf("answer %q: %v", test.answer, err)
+		}
+		if !strings.Contains(output.String(), "would write\t"+filepath.Join(repo, config.FileName)) || !strings.Contains(output.String(), "Create these? [y/N]") {
+			t.Errorf("answer %q: the plan was not shown before asking:\n%s", test.answer, output.String())
+		}
+		_, statErr := os.Lstat(filepath.Join(repo, config.FileName))
+		_, homeErr := os.Lstat(filepath.Join(repo, config.HomeDir))
+		if (statErr == nil) != test.created || (homeErr == nil) != test.created {
+			t.Errorf("answer %q: created %v and %v, want %v", test.answer, statErr == nil, homeErr == nil, test.created)
+		}
+	}
+}
+
+func TestInitRefusesHome(t *testing.T) {
+	// The home directory itself is never made a repository.
+	repo := emptyRepository(t)
+	t.Setenv("HOME", repo)
+	t.Setenv("USERPROFILE", repo)
+	_, err := initialize(repo)
+	if err == nil || !strings.Contains(err.Error(), "is your home directory") {
+		t.Fatalf("init in the home directory: %v", err)
+	}
+	if entries, _ := os.ReadDir(repo); len(entries) != 0 {
+		t.Errorf("init in the home directory created %v", entries)
+	}
 }

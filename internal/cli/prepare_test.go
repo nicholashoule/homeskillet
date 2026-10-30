@@ -232,6 +232,17 @@ func TestPrepareView(t *testing.T) {
 		t.Errorf("ready closing: %q, %v", output.String(), err)
 	}
 
+	// Everything in place: one line, then what was checked, aligned.
+	output.Reset()
+	done := []item{
+		{id: developerModeStep, title: titles[developerModeStep], state: itemDone, detail: "symlinks allowed"},
+		{id: "git", title: "Git", state: itemDone, detail: `C:\Program Files\Git\cmd\git.exe`},
+	}
+	if err := out.ready(done, platform); err != nil ||
+		output.String() != "homeskillet prepare: ready on windows/amd64\n  Developer Mode  symlinks allowed\n  Git             C:\\Program Files\\Git\\cmd\\git.exe\n" {
+		t.Errorf("ready:\n%s", output.String())
+	}
+
 	// Outcomes as they happen: aligned, by title, for a person, who gets no
 	// line for what ran; by id, for a script, which gets every outcome.
 	output.Reset()

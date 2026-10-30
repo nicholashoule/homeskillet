@@ -562,16 +562,18 @@ func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 	return l.pointCommand(cmp.Or(pinned, state.Latest()), false, dryRun, log)
 }
 
-// Remove deletes installed version v and recomputes latest and previous. It
-// refuses to remove the version that runs, which must first be changed with
-// Use. It deletes only what Install creates, so a version directory holding
-// anything else is left alone and reported.
+// Remove deletes the installed versions and recomputes latest and previous.
+// It refuses to remove the version that runs, which must first be changed
+// with Use. It deletes only what Install creates, so a version directory
+// holding anything else is left alone and reported. Every version is checked
+// before anything changes, so one that cannot be removed keeps the others
+// installed too; a version named twice is removed once.
 //
 // It writes one line per change to log, which may be nil. With dryRun it
 // writes the same lines and changes nothing.
-func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
-	if !version.Valid(v) {
-		return fmt.Errorf("%q is not a version such as v0.0.1", v)
+func (l Layout) Remove(versions []string, dryRun bool, log io.Writer) error {
+	if len(versions) == 0 {
+		return errors.New("no version to remove")
 	}
 	if err := l.checkData(); err != nil {
 		return err
@@ -580,33 +582,23 @@ func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 	if err != nil {
 		return err
 	}
-	if !slices.Contains(state.Versions, v) {
-		return fmt.Errorf("%s is not installed; homeskillet list shows what is", v)
-	}
-	if v == state.Current {
-		return fmt.Errorf("%s is the version that runs; choose another first with homeskillet use", v)
-	}
-	// The program running now may be another version, run by its path.
-	// Windows cannot delete a running program, and would refuse only after
-	// part of the version was gone.
-	if running, err := os.Executable(); err == nil && trust.SamePath(running, l.Program(v)) {
-		return fmt.Errorf("%s is running now; run homeskillet self remove %s from another version", v, v)
-	}
-	dir := filepath.Dir(l.Program(v))
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		return err
-	}
-	for _, entry := range entries {
-		// Leftovers from an interrupted write are Install's too. Install
-		// creates no directories here, and removing one would fail only
-		// after latest and previous had moved, so any directory stops
-		// Remove before it changes anything.
-		if name := entry.Name(); entry.IsDir() || name != programFile && name != buildFile && !strings.HasPrefix(name, safefile.TempPrefix) {
-			return fmt.Errorf("%s contains %q, which homeskillet did not create; remove the directory by hand", dir, name)
+	var removals []removal
+	for _, v := range versions {
+		if slices.ContainsFunc(removals, func(r removal) bool { return r.version == v }) {
+			continue
 		}
+		r, err := l.removable(state, v)
+		if err != nil {
+			return err
+		}
+		removals = append(removals, r)
 	}
-	links, err := l.linkChanges(slices.DeleteFunc(slices.Clone(state.Versions), func(s string) bool { return s == v }))
+	remaining := slices.DeleteFunc(slices.Clone(state.Versions), func(s string) bool {
+		return slices.ContainsFunc(removals, func(r removal) bool { return r.version == s })
+	})
+	// Computed once for every version removed, so latest and previous move
+	// straight to where they end, and a dry run shows where that is.
+	links, err := l.linkChanges(remaining)
 	if err != nil {
 		return err
 	}
@@ -615,15 +607,66 @@ func (l Layout) Remove(v string, dryRun bool, log io.Writer) error {
 	if err := applyLinks(links, dryRun, log); err != nil {
 		return err
 	}
-	if err := say(log, "removed\t%s\t%s\n", v, dir); err != nil || dryRun {
-		return err
-	}
-	for _, entry := range entries {
-		if err := os.Remove(filepath.Join(dir, entry.Name())); err != nil {
+	for _, r := range removals {
+		if err := say(log, "removed\t%s\t%s\n", r.version, r.dir); err != nil {
+			return err
+		}
+		if dryRun {
+			continue
+		}
+		for _, entry := range r.entries {
+			if err := os.Remove(filepath.Join(r.dir, entry.Name())); err != nil {
+				return err
+			}
+		}
+		if err := os.Remove(r.dir); err != nil {
 			return err
 		}
 	}
-	return os.Remove(dir)
+	return nil
+}
+
+// removal is an installed version Remove has checked: its directory, and
+// the files in it, all Install's.
+type removal struct {
+	version string
+	dir     string
+	entries []os.DirEntry
+}
+
+// removable checks that Remove may delete installed version v, given state,
+// and returns what it would delete.
+func (l Layout) removable(state State, v string) (removal, error) {
+	if !version.Valid(v) {
+		return removal{}, fmt.Errorf("%q is not a version such as v0.0.1", v)
+	}
+	if !slices.Contains(state.Versions, v) {
+		return removal{}, fmt.Errorf("%s is not installed; homeskillet list shows what is", v)
+	}
+	if v == state.Current {
+		return removal{}, fmt.Errorf("%s is the version that runs; choose another first with homeskillet use", v)
+	}
+	// The program running now may be another version, run by its path.
+	// Windows cannot delete a running program, and would refuse only after
+	// part of the version was gone.
+	if running, err := os.Executable(); err == nil && trust.SamePath(running, l.Program(v)) {
+		return removal{}, fmt.Errorf("%s is running now; run homeskillet remove %s from another version", v, v)
+	}
+	dir := filepath.Dir(l.Program(v))
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return removal{}, err
+	}
+	for _, entry := range entries {
+		// Leftovers from an interrupted write are Install's too. Install
+		// creates no directories here, and removing one would fail only
+		// after latest and previous had moved, so any directory stops
+		// Remove before it changes anything.
+		if name := entry.Name(); entry.IsDir() || name != programFile && name != buildFile && !strings.HasPrefix(name, safefile.TempPrefix) {
+			return removal{}, fmt.Errorf("%s contains %q, which homeskillet did not create; remove the directory by hand", dir, name)
+		}
+	}
+	return removal{version: v, dir: dir, entries: entries}, nil
 }
 
 // checkData requires an existing, private data directory before Use or

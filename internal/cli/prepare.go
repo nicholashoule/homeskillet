@@ -169,6 +169,7 @@ func assess(os, home string) []item {
 type prepareOutput struct {
 	w      io.Writer
 	person bool
+	color  bool
 }
 
 // outcome writes what just happened to one item, by its id: "skipped  Git"
@@ -220,7 +221,7 @@ func (o prepareOutput) overview(items []item, home string, platform config.Platf
 		}
 		return nil
 	}
-	text := fmt.Sprintf("homeskillet prepare\n  %-11s %s\n  %-11s %s\n", "home:", displayPath(home), "platform:", platform)
+	text := fmt.Sprintf("%s\n  %-11s %s\n  %-11s %s\n", paint(o.color, styleHeading, "homeskillet prepare"), "home:", displayPath(home), "platform:", platform)
 	if inv.dryRun {
 		text += fmt.Sprintf("  %-11s %s\n", "dry run:", "nothing will change")
 	}
@@ -231,11 +232,11 @@ func (o prepareOutput) overview(items []item, home string, platform config.Platf
 	if inv.yes {
 		pendingHeading = "Pending (%d): shown in full; --yes asks only about winget's repair, and does not open Settings"
 	}
-	v := &view{}
-	for _, g := range []struct{ state, heading string }{
-		{itemPending, pendingHeading},
-		{itemMissing, "Missing (%d): homeskillet cannot install these"},
-		{itemDone, "Done (%d)"},
+	v := &view{color: o.color}
+	for _, g := range []struct{ state, heading, style string }{
+		{itemPending, pendingHeading, styleAttention},
+		{itemMissing, "Missing (%d): homeskillet cannot install these", styleAttention},
+		{itemDone, "Done (%d)", styleGood},
 	} {
 		var entries [][2]string
 		for _, it := range items {
@@ -244,12 +245,25 @@ func (o prepareOutput) overview(items []item, home string, platform config.Platf
 			}
 		}
 		if len(entries) > 0 {
-			if err := v.writeGroup(o.w, group{heading: fmt.Sprintf(g.heading, len(entries)), entries: entries}); err != nil {
+			if err := v.writeGroup(o.w, group{heading: fmt.Sprintf(g.heading, len(entries)), style: g.style, entries: entries}); err != nil {
 				return err
 			}
 		}
 	}
 	return nil
+}
+
+// ready writes, for a person, that everything prepare checks is in place:
+// one line, then each item and what shows it, aligned.
+func (o prepareOutput) ready(items []item, platform config.Platform) error {
+	if _, err := fmt.Fprintf(o.w, "%s %s on %s\n", paint(o.color, styleHeading, "homeskillet prepare:"), paint(o.color, styleGood, "ready"), platform); err != nil {
+		return err
+	}
+	rows := make([][]string, 0, len(items))
+	for _, it := range items {
+		rows = append(rows, []string{it.title, it.detail})
+	}
+	return writeTable(o.w, rows, nil)
 }
 
 // runPrepare checks this machine, shows what it found, and offers what is
@@ -258,8 +272,13 @@ func (o prepareOutput) overview(items []item, home string, platform config.Platf
 // PowerShell 7 is offered but not required.
 func runPrepare(ctx context.Context, inv invocation, home string, input io.Reader, output, diagnostics io.Writer) error {
 	platform, _ := host.Detect()
-	out := prepareOutput{w: output, person: terminal(output)}
+	out := prepareOutput{w: output, person: terminal(output), color: colorFor(output).on}
 	items := assess(platform.OS, home)
+	// With everything in place there is nothing to offer or explain: one
+	// line says so, and what was checked follows.
+	if out.person && !slices.ContainsFunc(items, func(it item) bool { return it.state != itemDone }) {
+		return out.ready(items, platform)
+	}
 	if err := out.overview(items, home, platform, inv); err != nil {
 		return err
 	}
@@ -292,11 +311,11 @@ func (o prepareOutput) closing(os, home string, items []item, dryRun bool) error
 			}
 		}
 		if offered > 0 {
-			fmt.Fprintf(&text, "Dry run: nothing changed; prepare would offer %s.\n", files(offered, "step"))
+			fmt.Fprintf(&text, "%s nothing changed; prepare would offer %s.\n", dryRunLead(o.color), files(offered, "step"))
 		}
 	}
 	if len(missing) == 0 {
-		text.WriteString("Ready: homeskillet can clone and link a repository here.\n")
+		text.WriteString(paint(o.color, styleGood, "Ready:") + " homeskillet can clone and link a repository here.\n")
 		_, err := io.WriteString(o.w, text.String())
 		return err
 	}
@@ -308,7 +327,7 @@ func (o prepareOutput) closing(os, home string, items []item, dryRun bool) error
 	if len(missing) > 1 {
 		verb, pronoun = "are", "they are"
 	}
-	fmt.Fprintf(&text, "Not ready: %s %s still needed.", list(named...), verb)
+	fmt.Fprintf(&text, "%s %s %s still needed.", paint(o.color, styleAttention, "Not ready:"), list(named...), verb)
 	if !dryRun {
 		fmt.Fprintf(&text, " Run %s prepare again once %s in place.", selfName(), pronoun)
 	}
