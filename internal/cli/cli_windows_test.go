@@ -92,15 +92,11 @@ func TestSetupDocumentsWindows(t *testing.T) {
 	}
 }
 
-// TestPathAdvice checks that the note about Path points to the Windows
-// guide's lines, at a heading that exists there.
+// TestPathAdvice checks that the note about Path says how to add it in
+// Windows's own dialog, with no link a later change to the docs could break.
 func TestPathAdvice(t *testing.T) {
 	got := pathAdvice(`C:\Users\you\.local\bin`)
-	if !strings.Contains(got, windowsGuide+"#putting-the-command-on-your-path") {
+	if !strings.Contains(got, "Edit environment variables for your account") || strings.Contains(got, "https://") {
 		t.Errorf("pathAdvice: %s", got)
-	}
-	guide, err := os.ReadFile(filepath.Join("..", "..", "docs", "windows.md"))
-	if err != nil || !strings.Contains(string(guide), "\n### Putting the Command on Your Path\n") {
-		t.Errorf("docs/windows.md has no heading for the link: %v", err)
 	}
 }

@@ -93,21 +93,27 @@ func TestWritableErrorAboveProfile(t *testing.T) {
 		t.Skip("Windows does not say where the profile is")
 	}
 	const modify = 0x1301bf
-	// S-1-5-11 is Authenticated Users. A directory above the profile cannot
-	// be avoided, so the error says who can change it and how to look.
+	// S-1-5-11 is Authenticated Users. Every message is one line: the path,
+	// that its permissions are too open, who can change it, and what to do.
+	// A directory above the profile cannot be avoided, so only an
+	// administrator's repair helps; a folder elsewhere can also move into the
+	// profile; one in the profile only needs its permissions fixed.
 	above := filepath.Dir(home)
-	text := writableError(above, "S-1-5-11", modify).Error()
-	for _, want := range []string{above + " holds your profile", "(Modify)", "no folder you create or move", "administrator", permissionsGuide} {
-		if !strings.Contains(text, want) {
-			t.Errorf("above the profile, %q is missing from:\n%s", want, text)
-		}
-	}
-	// The profile itself and folders in it get the advice to keep files
-	// under the profile, as do folders elsewhere.
-	for _, path := range []string{home, filepath.Join(home, "dotfiles"), filepath.Join(filepath.VolumeName(home)+`\`, "src")} {
-		if text := writableError(path, "S-1-5-11", modify).Error(); !strings.Contains(text, "keep it under your user profile") {
+	elsewhere := filepath.Join(filepath.VolumeName(home)+`\`, "src")
+	for path, want := range map[string]string{
+		above:                           "an administrator needs to repair them by restoring what Windows sets (icacls " + above + " shows them)",
+		home:                            "fix them so only you can change it",
+		filepath.Join(home, "dotfiles"): "fix them so only you can change it",
+		elsewhere:                       "fix them so only you can change it, or move it into your profile",
+	} {
+		text := writableError(path, "S-1-5-11", modify).Error()
+		if !strings.HasPrefix(text, path+": permissions too open: NT AUTHORITY\\Authenticated Users can change it") ||
+			!strings.HasSuffix(text, want) || strings.Contains(text, "\n") || strings.Contains(text, "https://") {
 			t.Errorf("%s: %s", path, text)
 		}
+	}
+	if text := writableError(above, "S-1-5-11", modify).Error(); !strings.Contains(text, "(Modify), and your profile is inside it") {
+		t.Errorf("above the profile: %s", text)
 	}
 }
 

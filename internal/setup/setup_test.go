@@ -119,7 +119,7 @@ func TestPrepareRejectsSharedRepositoryFiles(t *testing.T) {
 	if err := os.Chmod(script, 0o666); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(steps, repo, home, ""); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+	if _, err := Prepare(steps, repo, home, ""); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 		t.Fatalf("shared script accepted: %v", err)
 	}
 }
@@ -541,7 +541,7 @@ func TestPrepareRejectsSharedHome(t *testing.T) {
 	if err := os.Chmod(home, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := Prepare(steps, repo, home, ""); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+	if _, err := Prepare(steps, repo, home, ""); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 		t.Fatalf("shared home accepted: %v", err)
 	}
 }

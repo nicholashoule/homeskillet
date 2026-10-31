@@ -274,7 +274,7 @@ func TestRepositoryMustBePrivate(t *testing.T) {
 			if err := os.Chmod(filepath.Join(filepath.Dir(repo), test.path), test.mode); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Prepare(entries, repo, home, dataDir(home), false); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+			if _, err := Prepare(entries, repo, home, dataDir(home), false); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 				t.Fatalf("accepted shared %s: %v", name, err)
 			}
 			// Unlinking skips the repository's checks but not the data
@@ -317,7 +317,7 @@ func TestTargetDirectoriesMustBePrivate(t *testing.T) {
 			if err := os.Chmod(filepath.Join(home, path), 0o777); err != nil {
 				t.Fatal(err)
 			}
-			if _, err := Prepare(entries, repo, home, data, false); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+			if _, err := Prepare(entries, repo, home, data, false); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 				t.Fatalf("accepted shared %s: %v", name, err)
 			}
 			if _, err := Prepare(entries, repo, home, data, true); err != nil {

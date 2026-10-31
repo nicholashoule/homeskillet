@@ -43,7 +43,7 @@ func checkOwner(path string, info os.FileInfo) error {
 		return err
 	}
 	if owner != 0 && owner != os.Geteuid() {
-		return fmt.Errorf("%s is owned by another user", printable(path))
+		return fmt.Errorf("%s: owned by another user; use files and folders you own instead", printable(path))
 	}
 	return nil
 }
@@ -69,7 +69,7 @@ func checkPrivate(path string, info os.FileInfo) error {
 		return err
 	}
 	if owner != os.Geteuid() {
-		return fmt.Errorf("%s is not owned by the current user", printable(path))
+		return fmt.Errorf("%s: not owned by you; use files and folders you own instead", printable(path))
 	}
 	if info.Mode().Perm()&0o022 != 0 {
 		return writableError(path)
@@ -89,13 +89,14 @@ func windowsDrive(path string) bool {
 	return isLetter && (len(rest) == 1 || rest[1] == '/')
 }
 
-// writableError reports a path that others can write and says how to fix it.
-// On WSL, Windows drives mounted under /mnt report every file as 0777 and
-// silently ignore chmod unless mounted with the metadata option, so the usual
-// advice would fail there and the repository belongs in the Linux filesystem.
+// writableError reports a path that others can write, in one line, as every
+// refusal here does: the path, what is wrong, and what to do. On WSL, Windows
+// drives mounted under /mnt report every file as 0777 and silently ignore
+// chmod unless mounted with the metadata option, so the usual advice would
+// fail there and the repository belongs in the Linux filesystem.
 func writableError(path string) error {
 	if os.Getenv("WSL_DISTRO_NAME") != "" && windowsDrive(path) {
-		return fmt.Errorf("%s is writable by group or others; on WSL, Windows drives ignore chmod, so clone the repository inside the Linux filesystem (for example under ~/)", printable(path))
+		return fmt.Errorf("%s: permissions too open: Windows drives let everyone write to them in WSL, and chmod cannot change that; clone the repository inside the Linux filesystem, for example under ~/", printable(path))
 	}
-	return fmt.Errorf("%s is writable by group or others; run chmod go-w on it", printable(path))
+	return fmt.Errorf("%s: permissions too open: group or others can write to it; run chmod go-w on it", printable(path))
 }

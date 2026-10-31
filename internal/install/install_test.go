@@ -298,7 +298,7 @@ func TestInstallChecksOwnership(t *testing.T) {
 			path := program(t, builds, "one")
 			share(t, layout, path)
 			err := layout.Install(path, build("v1.0.0"), false, new(bytes.Buffer))
-			if err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+			if err == nil || !strings.Contains(err.Error(), "permissions too open") {
 				t.Fatalf("accepted %s: %v", name, err)
 			}
 		})

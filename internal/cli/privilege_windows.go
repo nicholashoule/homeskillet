@@ -33,19 +33,16 @@ func runsElevated() bool {
 	return err != nil || elevated != 0
 }
 
-// pathAdvice says how to put dir on PATH: with the PowerShell lines the
-// Windows guide gives, which keep the user Path as Windows stores it, where
-// entries such as %USERPROFILE%\AppData\Local\Microsoft\WindowsApps stay
-// variables, add dir once, and tell Windows the environment changed, so
-// that new terminals see it. Too long to print as a note, they are linked.
-// Windows keeps each user's Path in the registry, which new terminals read;
-// a profile that changes $env:Path changes it only for PowerShell.
+// pathAdvice says how to put dir on PATH by hand, for when install cannot
+// itself (see addToPath): in Windows's own dialog for the user's
+// environment, which keeps the Path as Windows stores it and tells programs
+// it changed, so that new terminals see it. Windows keeps each user's Path
+// in the registry, which new terminals read; a profile that changes
+// $env:Path changes it only for PowerShell. It names no documentation,
+// which can move.
 func pathAdvice(string) string {
-	return "add it to your Path as " + windowsGuide + "#putting-the-command-on-your-path shows, then open a new terminal"
+	return `add it to your user Path from Start, "Edit environment variables for your account", then open a new terminal`
 }
-
-// windowsGuide is the Windows guide, which pathAdvice points to.
-const windowsGuide = project + "/blob/main/docs/windows.md"
 
 // translator names what runs an x64 build on Arm64 hardware.
 func translator() string {

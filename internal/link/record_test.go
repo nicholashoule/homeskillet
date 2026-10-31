@@ -220,7 +220,7 @@ func TestSharedRecordDirectoryRefused(t *testing.T) {
 	// so does unlinking, which removes the orphaned links the record lists
 	// and could not save the record afterward.
 	for _, unlinking := range []bool{false, true} {
-		if _, err := Prepare(entries, repo, home, dataDir(home), unlinking); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+		if _, err := Prepare(entries, repo, home, dataDir(home), unlinking); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 			t.Fatalf("unlinking %v: shared record directory accepted: %v", unlinking, err)
 		}
 	}

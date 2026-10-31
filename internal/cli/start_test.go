@@ -34,7 +34,7 @@ func TestStartGuide(t *testing.T) {
 		"Nothing to link:", "1. Check this machine is ready", "homeskillet prepare\n",
 		"2. Start a repository", "homeskillet init " + repo + "\n", "or clone the one you have", "git clone URL " + repo + "\n",
 		"3. Put your dotfiles in its home folder", "4. Preview the links", "homeskillet link " + repo + " --dry-run\n",
-		"5. Link them", examples, "Every command: homeskillet help",
+		"5. Link them", "Starter repositories for each system are in examples/ at " + project + "\n", "Every command: homeskillet help",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("%q is missing from:\n%s", want, text)

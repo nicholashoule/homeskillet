@@ -447,7 +447,7 @@ func TestWithoutManifest(t *testing.T) {
 	}
 	// Discovered files get the same ownership checks as listed ones.
 	makeShared(t, filepath.Join(repo, "home", ".config"))
-	if _, err := invoke("status", repo, home); err == nil || !strings.Contains(err.Error(), "is writable by") {
+	if _, err := invoke("status", repo, home); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 		t.Fatalf("shared directory under home accepted: %v", err)
 	}
 	// With no steps to run, setup has nothing to protect and must not fail
@@ -1060,7 +1060,7 @@ func TestUnlinkChecksDataDirectoryFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	makeShared(t, filepath.Join(home, ".local", "share", "homeskillet"))
-	if _, err := invoke("unlink", repo, home); err == nil || !strings.Contains(err.Error(), "is writable by") {
+	if _, err := invoke("unlink", repo, home); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 		t.Fatalf("unlink with a shared data directory: %v", err)
 	}
 	if _, err := os.Readlink(filepath.Join(home, ".bashrc")); err != nil {
