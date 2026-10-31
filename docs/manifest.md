@@ -88,8 +88,9 @@ platform, and an empty `setup` list. It leaves out `files`, so files keep being 
 when missing:
 
 ```sh
-homeskillet init ~/dotfiles                       # write ~/dotfiles/bootstrap.json
-homeskillet init ~/dotfiles --dry-run             # print it instead
+homeskillet init ~/dotfiles                       # show what it would create, then ask
+homeskillet init ~/dotfiles --dry-run             # only show it
+homeskillet init ~/dotfiles --yes                 # create it without asking, as in a script
 homeskillet init ~/dotfiles --platform darwin     # a starter for a macOS repository
 ```
 
@@ -100,8 +101,14 @@ homeskillet init ~/dotfiles --platform darwin     # a starter for a macOS reposi
 }
 ```
 
-`init` writes nothing into a repository that has a manifest under either name
-([safety.md](safety.md#starter-manifests-checks-and-completion)). Remove `platforms` to apply everywhere.
+`init` creates nothing until you answer `y` at a terminal, or pass `--yes`, which `--quiet` needs, since it would hide
+the question; a script without it, its input piped or empty, creates nothing and fails. A repository directory that does
+not exist yet, such as `~/dotfiles` on a machine with no dotfiles, is created too, with any missing directories above
+it, each listed in what `init` shows, provided the directory they are made in passes the ownership rules; if anything
+then fails, what `init` made is removed again. It never replaces a file or directory: it writes nothing into a
+repository that has a manifest under either name, and creates `home/` only when it is missing. It refuses your home
+directory itself, which is no place for a repository ([safety.md](safety.md#starter-manifests-checks-and-completion)).
+Remove `platforms` to apply everywhere.
 
 Or copy a whole starter repository from homeskillet's [examples/](../examples/): one each for Linux, macOS, and Windows,
 with dotfiles, a setup step, and a README of the commands that link them. A test runs `check` on each, so they stay
@@ -310,10 +317,11 @@ Run this step? [y/N]
 
 Steps run from the repository root, so repository scripts such as `setup/uv.sh` work. `HOME` and `HOMESKILLET_HOME` are
 set to the selected home, and on Windows `USERPROFILE` too, and `HOMESKILLET_REPO` to the repository; the rest of your
-environment is passed to the step as it is, so a step can use a proxy setting, and also any token you have set. A step without
-`creates`, `provides`, or `inputs` is offered on every run, so make it safe to repeat. A failing step stops setup;
-declined steps are skipped and the rest are still offered. `setup --yes` runs every pending step without asking, for
-unattended builds such as a Dockerfile; [safety.md](safety.md#setup-steps) explains what that does and does not allow.
+environment is passed to the step as it is, so a step can use a proxy setting, and also any token you have set. A step
+without `creates`, `provides`, or `inputs` is offered on every run, so make it safe to repeat. A failing step stops
+setup; declined steps are skipped and the rest are still offered. `setup --yes` runs every pending step without asking,
+for unattended builds such as a Dockerfile; [safety.md](safety.md#setup-steps) explains what that does and does not
+allow.
 
 ### PATH
 

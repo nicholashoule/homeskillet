@@ -341,8 +341,10 @@ func arguments(inv invocation, command string, rest []string, current string) (s
 		return ":none", matching(backupsCommands, current)
 	case command == "self" && len(rest) == 1 && rest[0] == "use":
 		return ":none", matching(append([]string{install.Latest, install.Previous}, installedVersions(inv)...), current)
-	case command == "self" && len(rest) == 1 && rest[0] == "remove":
-		return ":none", matching(installedVersions(inv), current)
+	case command == "self" && len(rest) > 0 && rest[0] == "remove":
+		// Several versions may be removed at once, each named once.
+		names := slices.DeleteFunc(installedVersions(inv), func(v string) bool { return slices.Contains(rest[1:], v) })
+		return ":none", matching(names, current)
 	case command == "help" && len(rest) == 0:
 		return ":none", matching(commands, current)
 	case command == "completion" && len(rest) == 0:
@@ -382,7 +384,7 @@ func joinValues(words []string) []string {
 // same one-dash or two-dash form current uses. Without a command, they are
 // status's, which is what runs.
 func options(command, current string) []string {
-	if command == "version" || command == "help" || command == "completion" {
+	if slices.Contains(optionless, command) {
 		return nil
 	}
 	scope := cmp.Or(command, "status")

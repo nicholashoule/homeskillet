@@ -30,18 +30,14 @@ for Windows and `home/wsl/` for the distribution ([docs/windows.md](docs/windows
 
 ## Install
 
-Download the latest release for your system, check it, and let it install itself under `~/.local`:
+Pick your system for its install commands. Each downloads the latest release, checks it against the release's
+`SHA256SUMS`, runs it only if it matches, and lets it install itself as a versioned command under `.local` in your home:
 
-```sh
-base=https://github.com/nicholashoule/homeskillet/releases/latest/download
-curl -fsSLO --proto '=https' "$base/homeskillet-linux-amd64" && curl -fsSLO --proto '=https' "$base/SHA256SUMS"
-grep ' homeskillet-linux-amd64$' SHA256SUMS | sha256sum --check    # macOS: shasum -a 256 --check
-chmod +x homeskillet-linux-amd64 && ./homeskillet-linux-amd64 install
-```
+- [Linux](docs/install.md#linux), including WSL distributions and containers
+- [macOS](docs/install.md#macos)
+- [Windows](docs/windows.md#installing), in PowerShell
 
-The other builds are `homeskillet-linux-arm64`, `homeskillet-darwin-amd64`, `homeskillet-darwin-arm64`, and on
-Windows the `.exe` files, checked in PowerShell ([docs/windows.md](docs/windows.md#installing)). From then on,
-homeskillet manages its own versions:
+From then on, homeskillet manages its own versions, on every system:
 
 ```sh
 homeskillet update            # install the newest release and run it, keeping the one you have
@@ -49,12 +45,11 @@ homeskillet list              # installed versions, and which one runs
 homeskillet list-remote       # published versions, and which are installed
 homeskillet install 0.3.1     # install that release, without changing which one runs
 homeskillet use 0.3.1         # run that version; use latest follows the newest again
+homeskillet remove 0.3.0      # delete a version you no longer need, unless it runs
 ```
 
-With Go 1.24 or newer, on a machine without homeskillet,
-`go run github.com/nicholashoule/homeskillet@latest install` builds the release from source and installs it
-instead, on any system, and `make install` does the same from a clone
-([docs/install.md](docs/install.md#building-and-installing)).
+Building from source is for development or bringing homeskillet to another system
+([docs/install.md](docs/install.md#building-from-source)).
 
 ## Use
 
@@ -69,9 +64,10 @@ homeskillet check ~/dotfiles                  # list every issue, or say it is v
 homeskillet unlink ~/dotfiles
 ```
 
-After the first `link`, the repository may be left out anywhere. At a terminal the output is grouped for reading; in a
-script it is one tab-separated line per file. [docs/usage.md](docs/usage.md) covers every command and option, and
-`homeskillet help` lists them.
+After the first `link`, the repository may be left out anywhere. At a terminal the output is grouped for reading, in
+color where the terminal takes it (`NO_COLOR` turns that off, and `homeskillet term` says what it detects); in a script
+it is one tab-separated line per file. [docs/usage.md](docs/usage.md) covers every command and option, `homeskillet
+help` lists the commands, and `homeskillet help link` shows one in full.
 
 ## Configuring a Repository
 

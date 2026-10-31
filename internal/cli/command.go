@@ -17,8 +17,9 @@ import (
 // selfName returns how to run this program again in advice such as "run
 // homeskillet prepare again": homeskillet when that command on PATH is this
 // program, and otherwise the path it was run by, as before it is installed,
-// when the first run is the download, such as homeskillet-windows-amd64.exe.
-// Tests replace it, since a test binary is neither.
+// when the first run is the download, such as homeskillet-windows-amd64.exe,
+// ready to paste as the first word of a command (see commandWord). Tests
+// replace it, since a test binary is neither.
 var selfName = func() string {
 	executable, err := os.Executable()
 	if err != nil {
@@ -39,7 +40,9 @@ func nameFor(arg0, executable, onPath string) string {
 	if arg0 == "" || !config.Printable(arg0) {
 		return install.Binary
 	}
-	return arg0
+	// Windows passes the full path PowerShell found, which may hold a space,
+	// as in C:\Users\John Smith\Downloads.
+	return commandWord(arg0)
 }
 
 // samePath reports whether a and b name the same file once symlinks are

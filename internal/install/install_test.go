@@ -161,10 +161,10 @@ func TestLifecycle(t *testing.T) {
 
 	// The running version cannot be removed; removing latest's predecessor
 	// moves previous.
-	if err := layout.Remove("v1.2.0", false, new(bytes.Buffer)); err == nil {
+	if err := layout.Remove([]string{"v1.2.0"}, false, new(bytes.Buffer)); err == nil {
 		t.Fatal("removed the running version")
 	}
-	if err := layout.Remove("v1.1.0", false, new(bytes.Buffer)); err != nil {
+	if err := layout.Remove([]string{"v1.1.0"}, false, new(bytes.Buffer)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(filepath.Dir(layout.Program("v1.1.0"))); !errors.Is(err, fs.ErrNotExist) {
@@ -233,7 +233,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 	if err := layout.Use(Previous, true, new(bytes.Buffer)); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.Remove("v1.0.0", true, new(bytes.Buffer)); err != nil {
+	if err := layout.Remove([]string{"v1.0.0"}, true, new(bytes.Buffer)); err != nil {
 		t.Fatal(err)
 	}
 	if err := layout.Install(program(t, builds, "three"), build("v1.2.0"), true, new(bytes.Buffer)); err != nil {
@@ -326,7 +326,7 @@ func TestInvalidVersions(t *testing.T) {
 		}
 	}
 	for _, v := range []string{"v2.0.0", "../v1.0.0"} {
-		if err := layout.Remove(v, false, new(bytes.Buffer)); err == nil {
+		if err := layout.Remove([]string{v}, false, new(bytes.Buffer)); err == nil {
 			t.Errorf("removed %q", v)
 		}
 	}
@@ -340,7 +340,7 @@ func TestRemoveKeepsForeignFiles(t *testing.T) {
 	if err := os.WriteFile(notes, nil, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.Remove("v1.0.0", false, new(bytes.Buffer)); err == nil {
+	if err := layout.Remove([]string{"v1.0.0"}, false, new(bytes.Buffer)); err == nil {
 		t.Fatal("removed a directory holding a foreign file")
 	}
 	if _, err := os.Stat(notes); err != nil {
@@ -348,6 +348,54 @@ func TestRemoveKeepsForeignFiles(t *testing.T) {
 	}
 	if _, previous := links(t, layout); previous != "versions/v1.0.0" {
 		t.Fatalf("failed remove moved previous to %q", previous)
+	}
+}
+
+// TestRemoveSeveral checks that Remove checks every version before deleting
+// any, so one it refuses keeps the others, and that previous moves straight
+// to the version left.
+func TestRemoveSeveral(t *testing.T) {
+	layout, builds := fixture(t)
+	for i, v := range []string{"v1.0.0", "v1.0.5", "v1.1.0", "v1.2.0"} {
+		install(t, layout, program(t, builds, strconv.Itoa(i)), v)
+	}
+	for _, refused := range [][]string{{"v1.0.5", "v1.2.0"}, {"v1.0.5", "v0.9.0"}, {"v1.0.5", "1.1.0"}} {
+		if err := layout.Remove(refused, false, new(bytes.Buffer)); err == nil {
+			t.Fatalf("%v: removed a version it should refuse", refused)
+		}
+		if _, err := os.Stat(layout.Program("v1.0.5")); err != nil {
+			t.Fatalf("%v: a refused remove deleted another version: %v", refused, err)
+		}
+	}
+	var log bytes.Buffer
+	if err := layout.Remove([]string{"v1.1.0", "v1.0.5", "v1.1.0"}, false, &log); err != nil {
+		t.Fatal(err)
+	}
+	if got := strings.Count(log.String(), "removed\t"); got != 2 {
+		t.Errorf("a version named twice was not removed once:\n%s", log.String())
+	}
+	state, err := layout.Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"v1.0.0", "v1.2.0"}; !slices.Equal(state.Versions, want) {
+		t.Fatalf("left %v, not %v", state.Versions, want)
+	}
+	if latest, previous := links(t, layout); latest != "versions/v1.2.0" || previous != "versions/v1.0.0" {
+		t.Fatalf("links after remove: %q, %q", latest, previous)
+	}
+	if err := layout.Remove(nil, false, nil); err == nil {
+		t.Fatal("removed nothing without saying so")
+	}
+	// The program goes first, so a failure to delete it, as when another
+	// process runs it on Windows, leaves the version whole.
+	state, err = layout.Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := layout.removable(state, "v1.0.0")
+	if err != nil || len(r.entries) < 2 || r.entries[0].Name() != programFile {
+		t.Fatalf("removable: %+v, %v", r, err)
 	}
 }
 
@@ -382,7 +430,7 @@ func TestInterruptedRunsRecover(t *testing.T) {
 		t.Fatal(err)
 	}
 	install(t, layout, program(t, builds, "two"), "v1.1.0")
-	if err := layout.Remove("v1.0.0", false, new(bytes.Buffer)); err != nil {
+	if err := layout.Remove([]string{"v1.0.0"}, false, new(bytes.Buffer)); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := os.Lstat(dir); !errors.Is(err, fs.ErrNotExist) {
@@ -492,7 +540,7 @@ func TestLayoutsOutsideAllowedLocations(t *testing.T) {
 	checks := map[string]error{
 		"Install": zero.Install(path, build("v1.0.0"), false, nil),
 		"Use":     zero.Use(Latest, false, nil),
-		"Remove":  zero.Remove("v1.0.0", false, nil),
+		"Remove":  zero.Remove([]string{"v1.0.0"}, false, nil),
 	}
 	_, checks["Inspect"] = zero.Inspect()
 	_, checks["Build"] = zero.Build("v1.0.0")
@@ -516,7 +564,7 @@ func TestNilLog(t *testing.T) {
 	if err := layout.Use(Latest, false, nil); err != nil {
 		t.Fatal(err)
 	}
-	if err := layout.Remove("v1.0.0", false, nil); err != nil {
+	if err := layout.Remove([]string{"v1.0.0"}, false, nil); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -531,7 +579,7 @@ func TestRemoveRefusesDirectories(t *testing.T) {
 		t.Fatal(err)
 	}
 	latest, previous := links(t, layout)
-	if err := layout.Remove("v1.0.0", false, nil); err == nil {
+	if err := layout.Remove([]string{"v1.0.0"}, false, nil); err == nil {
 		t.Fatal("removed a version directory holding a directory")
 	}
 	if l, p := links(t, layout); l != latest || p != previous {

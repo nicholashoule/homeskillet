@@ -10,7 +10,6 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"os"
 
 	"github.com/nicholashoule/homeskillet/internal/cli"
@@ -25,7 +24,7 @@ func main() {
 	// callers such as tests impose their own cancellation.
 	if err := cli.Run(context.Background(), os.Args[1:], os.Stdin, os.Stdout, os.Stderr); err != nil {
 		if !cli.Reported(err) {
-			fmt.Fprintln(os.Stderr, "homeskillet:", err)
+			cli.PrintError(os.Stderr, err)
 		}
 		os.Exit(1)
 	}

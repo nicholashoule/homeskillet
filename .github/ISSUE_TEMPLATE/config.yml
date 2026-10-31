@@ -1,0 +1,7 @@
+# Issue templates: a bug report asks for homeskillet info's output; a
+# security problem goes privately to the Security tab, never a public issue.
+blank_issues_enabled: true
+contact_links:
+  - name: Report a security problem
+    url: https://github.com/nicholashoule/homeskillet/security/advisories/new
+    about: Privately, as SECURITY.md describes, so it stays out of public issues until it is fixed.

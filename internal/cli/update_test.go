@@ -14,6 +14,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,6 +109,7 @@ func TestSelfArguments(t *testing.T) {
 		args    []string
 		sub     string
 		operand string
+		names   []string
 		err     string
 	}{
 		{args: []string{"self", "update"}, sub: "update"},
@@ -128,8 +130,17 @@ func TestSelfArguments(t *testing.T) {
 		{args: []string{"list-remote"}, sub: "releases"},
 		{args: []string{"list-remote", "--home", "/tmp/h"}, sub: "releases"},
 		{args: []string{"list", "extra"}, err: "unexpected arguments"},
+		{args: []string{"remove", "0.3.1"}, sub: "remove", names: []string{"v0.3.1"}},
+		{args: []string{"remove", "--dry-run", "v0.3.1"}, sub: "remove", names: []string{"v0.3.1"}},
+		// Several versions, each once, written with or without the v.
+		{args: []string{"remove", "0.3.0", "v0.3.1+dirty", "v0.3.0"}, sub: "remove", names: []string{"v0.3.0", "v0.3.1+dirty"}},
+		{args: []string{"self", "remove", "v0.1.1", "0.2.0"}, sub: "remove", names: []string{"v0.1.1", "v0.2.0"}},
+		{args: []string{"remove"}, err: "'remove' needs one or more versions: any 'homeskillet list' shows, except the one that runs"},
+		{args: []string{"self", "remove"}, err: "'self remove' needs one or more versions"},
 		{args: []string{"list-remote", "--force"}, err: "--force applies only to link"},
-		{args: []string{"use"}, err: "self use needs a version"},
+		{args: []string{"use"}, err: "'use' needs a version: latest, previous, or one 'homeskillet list' shows"},
+		{args: []string{"self", "use"}, err: "'self use' needs a version"},
+		{args: []string{"self"}, err: "'self' needs a command: install, update, releases, use, list, or remove; see 'homeskillet help self'"},
 		{args: []string{"self", "update", "a", "b"}, err: "unexpected arguments"},
 		{args: []string{"update", "--force"}, err: "--force applies only to link"},
 	} {
@@ -140,8 +151,9 @@ func TestSelfArguments(t *testing.T) {
 			}
 			continue
 		}
-		if err != nil || inv.command != "self" || inv.sub != test.sub || inv.operand != test.operand {
-			t.Errorf("%q: got command %q sub %q operand %q, %v; want self %q %q", test.args, inv.command, inv.sub, inv.operand, err, test.sub, test.operand)
+		if err != nil || inv.command != "self" || inv.sub != test.sub || inv.operand != test.operand || !slices.Equal(inv.names, test.names) {
+			t.Errorf("%q: got command %q sub %q operand %q names %q, %v; want self %q %q %q", test.args, inv.command, inv.sub, inv.operand, inv.names, err,
+				test.sub, test.operand, test.names)
 		}
 	}
 	if got := selfOptions(invocation{prefix: "/opt/hs", data: "data", root: true, dryRun: true, quiet: true}, "/home/me"); strings.Join(got, " ") !=
@@ -560,4 +572,30 @@ func exitStatus22() error {
 		return exec.CommandContext(context.Background(), "cmd", "/c", "exit 22").Run()
 	}
 	return exec.CommandContext(context.Background(), "sh", "-c", "exit 22").Run()
+}
+
+func TestUpdateForAPerson(t *testing.T) {
+	requireUnix(t)
+	_, home := repository(t)
+	t.Setenv("HOME", home)
+	t.Setenv("TMPDIR", t.TempDir())
+	useDownloader(t, stubRelease(t, "v9.9.9", filepath.Join(t.TempDir(), "install.log")))
+	layout, err := selfLayout(invocation{}, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var output bytes.Buffer
+	inv := invocation{command: "self", sub: "update", dryRun: true}
+	if err := update(context.Background(), inv, layout, home, &output, io.Discard, true); err != nil ||
+		output.String() != "Dry run: downloaded v9.9.9 and checked it against its SHA256SUMS; nothing was installed.\n" {
+		t.Errorf("dry run: %q, %v", output.String(), err)
+	}
+	// The stub installs nothing, so what runs is unchanged, and it says so;
+	// "Installed" comes first, and no script line is shown.
+	output.Reset()
+	inv.dryRun = false
+	if err := update(context.Background(), inv, layout, home, &output, io.Discard, true); err != nil ||
+		!strings.HasPrefix(output.String(), "Installed v9.9.9 from GitHub, checked against its SHA256SUMS.\n") || strings.Contains(output.String(), "\t") {
+		t.Errorf("update: %q, %v", output.String(), err)
+	}
 }

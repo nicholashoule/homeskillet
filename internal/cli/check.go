@@ -45,6 +45,18 @@ func runCheck(inv invocation, output io.Writer) error {
 // manifests, then each issue and a closing line, or else what the valid
 // repository holds. It returns a reported error when there are issues.
 func (v *view) check(output io.Writer, repo string, manifest config.Manifest, issues []error) error {
+	// A directory that is no configuration repository at all has no issues
+	// to list, only that: what one holds, and how to name one or start one.
+	if len(issues) == 1 && errors.Is(issues[0], config.ErrNothingToManage) {
+		text := fmt.Sprintf("%s\n  directory: %s\n\n%s %s holds no %s/ directory, %s, or %s.\n"+
+			"Name a repository, as in homeskillet check ~/dotfiles, or start one with homeskillet init ~/dotfiles.\n",
+			paint(v.color, styleHeading, "homeskillet check"), v.path(repo),
+			paint(v.color, styleAttention, "Not a configuration repository:"), v.path(repo), config.HomeDir, config.FileName, config.DotfilesFileName)
+		if _, err := io.WriteString(output, text); err != nil {
+			return err
+		}
+		return reportedError{invalid(repo, issues)}
+	}
 	var found []string
 	for _, name := range config.FileNames() {
 		if _, err := os.Lstat(filepath.Join(repo, name)); err == nil {
@@ -55,7 +67,7 @@ func (v *view) check(output io.Writer, repo string, manifest config.Manifest, is
 	if manifests == "" {
 		manifests = "none; files are found under " + config.HomeDir + "/"
 	}
-	text := fmt.Sprintf("homeskillet check\n  %-11s %s\n  %-11s %s\n\n", "repository:", v.path(repo), "manifests:", manifests)
+	text := fmt.Sprintf("%s\n  %-11s %s\n  %-11s %s\n\n", paint(v.color, styleHeading, "homeskillet check"), "repository:", v.path(repo), "manifests:", manifests)
 	if len(issues) == 0 {
 		platforms := "every platform"
 		if len(manifest.Platforms) > 0 {
@@ -72,20 +84,20 @@ func (v *view) check(output io.Writer, repo string, manifest config.Manifest, is
 		if contents == "" {
 			contents = "nothing to link or set up yet"
 		}
-		_, err := fmt.Fprintf(output, "%sValid: %s, for %s.\n", text, contents, platforms)
+		_, err := fmt.Fprintf(output, "%s%s %s, for %s.\n", text, paint(v.color, styleGood, "Valid:"), contents, platforms)
 		return err
 	}
 	if _, err := io.WriteString(output, text); err != nil {
 		return err
 	}
-	g := group{heading: fmt.Sprintf("Issues (%d)", len(issues))}
+	g := group{heading: fmt.Sprintf("Issues (%d)", len(issues)), style: styleAttention}
 	for _, issue := range issues {
 		g.entries = append(g.entries, [2]string{oneLine(issue), ""})
 	}
 	if err := v.writeGroup(output, g); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintln(output, "Not valid: link, status, and setup refuse this repository until these are fixed."); err != nil {
+	if _, err := fmt.Fprintln(output, paint(v.color, styleAttention, "Not valid:")+" link, status, and setup refuse this repository until these are fixed."); err != nil {
 		return err
 	}
 	return reportedError{invalid(repo, issues)}

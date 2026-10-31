@@ -40,18 +40,21 @@ A command runs in this order:
 
 1. `cli.Run` parses the command and flags. The default is `status`. A flag that does not apply to the command is an
    error rather than silently ignored, and so is an empty option value or argument
-   ([safety.md](safety.md#links-and-conflicts)). `help` and `--help` print the help text to standard output, `version`
-   prints `version.Current`, `completion` prints a shell script, and the hidden `__complete` command those scripts call
-   works out candidates (see completion.go); each then stops. Every other command refuses to run as root, or elevated on
-   Windows (`privileged`), without `--allow-root`. `init` then writes its starter manifest (see init.go), and `check`
-   reports on the repository and stops (see check.go): the steps below through `config.Load`, then `link.CheckSource`
-   for every entry, for every platform, with each issue collected rather than the first returned. `wsl` (see
-   wsl_windows.go) passes the command on to the Linux build in a distribution, after copying a Windows clone there
-   through the hidden `__mirror` command (see wsl.go and package mirror), which that build runs on the copy it receives;
-   `wsl install` records itself there through the hidden `__windows-build` command, and the Linux build's `wsl` hands
-   over to that recorded program (see wsl_unix.go). The rest refuse a home directory that fails `trust.CheckLocation`;
-   `self` then continues as described under [Installing homeskillet](#installing-homeskillet), and `backups` lists, or
-   purges once approved, the data directory's backups (see backups.go).
+   ([safety.md](safety.md#links-and-conflicts)). `help` and `--help` print the help text to standard output: an
+   overview, or after a command, that command's own, whose options come from the same table that refuses the others (see
+   help.go). `version` prints `version.Current`, `info` prints which homeskillet runs, the system, and the terminal, and
+   `term` the terminal alone (see info.go), `completion` prints a shell script, and the hidden `__complete` command
+   those scripts call works out candidates (see completion.go); each then stops. Every other command refuses to run as
+   root, or elevated on Windows (`privileged`), without `--allow-root`. `init` then shows its starter manifest and
+   creates it once approved (see init.go), and `check` reports on the repository and stops (see check.go): the steps
+   below through `config.Load`, then `link.CheckSource` for every entry, for every platform, with each issue collected
+   rather than the first returned. `wsl` (see wsl_windows.go) passes the command on to the Linux build in a
+   distribution, after copying a Windows clone there through the hidden `__mirror` command (see wsl.go and package
+   mirror), which that build runs on the copy it receives; `wsl install` records itself there through the hidden
+   `__windows-build` command, and the Linux build's `wsl` hands over to that recorded program (see wsl_unix.go). The
+   rest refuse a home directory that fails `trust.CheckLocation`; `self` then continues as described under [Installing
+   homeskillet](#installing-homeskillet), and `backups` lists, or purges once approved, the data directory's backups
+   (see backups.go).
 2. `canonicalDirectory` resolves the repository and existing home directory, with a leading `~` as the user's home,
    which no shell expands in `cmd`. Packages link and trust compare path strings, which is only sound for canonical
    paths. The resolved repository must pass `trust.CheckLocation`. A current directory it refuses, when no repository is
@@ -79,8 +82,10 @@ A command runs in this order:
    removes orphans and makes missing symlinks, or `link.Remove` deletes owned links and orphans. If linking fails after
    `link.Backup`, `link.Restore` moves back what was not yet replaced. Either way `link.Refresh` reads each target's
    state again and `link.Save` records the links that exist, keeping other recorded links when files were named. In a
-   terminal, `cli`'s view (report.go) prints a header, groups, and a closing line; otherwise each entry or change is one
-   tab-separated line, the format scripts parse.
+   terminal, `cli`'s view (report.go) prints a header, groups, and a closing line, with bold headings and green or
+   yellow results when `colorFor` (color.go) allows: only at a terminal, without `NO_COLOR` or `TERM=dumb`, and on
+   Windows once the console takes color codes. Otherwise each entry or change is one tab-separated line, the format
+   scripts parse.
 5. For setup, the CLI keeps only the steps named after `setup`, if any, in manifest order, failing first on a name that
    matches no step for this platform (`selectSteps`), and offers those even when done (`setup.Options.Again`).
    `setup.Prepare` returns at once when there are no steps. Otherwise it requires the whole repository tree to be
@@ -175,7 +180,10 @@ Like `link.Prepare`, each command checks everything before changing anything, an
 - Targets are relative to the selected home and may neither lie inside nor contain the repository or the data directory.
 - Overlapping selected targets and symlinked target parents are rejected.
 - Manifest paths and names discovered under `home/` may not contain control or formatting characters, which could forge
-  terminal output. Directory names are checked before the directory is read, so error messages are safe too.
+  terminal output. Directory names are checked before the directory is read, so error messages are safe too. Colors
+  are fixed codes around homeskillet's own words, never around a path or name, and never in output that is not a
+  terminal; the standard, one meaning per color, is in color.go, and columns that hold colored text are measured by
+  what they show (`visibleWidth`).
 - Manifests are optional. When none lists `files`, every file under `home/` is an entry. An explicit `"files": []` links
   nothing. A manifest that exists but cannot be read is an error, never treated as absent. Two manifests merge;
   identical entries and steps count once, and two different steps with one name are an error rather than one silently

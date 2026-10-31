@@ -33,12 +33,16 @@ import (
 
 var (
 	commands = []string{"status", "link", "unlink", "setup", "init", "check", "prepare", "wsl", "backups",
-		"update", "install", "use", "list", "list-remote", "self", "version", "completion", "help"}
+		"update", "install", "use", "list", "list-remote", "remove", "self", "version", "info", "term", "completion", "help"}
+	// optionless lists the commands that take no options: they act on
+	// nothing an option could change, so one there is refused, and neither
+	// help nor completion offers any.
+	optionless = []string{"version", "info", "term", "completion", "help"}
 	// selfAliases maps the self commands that are also commands of their own
 	// to the self command each runs: homeskillet update is homeskillet self
 	// update, and homeskillet list-remote is homeskillet self releases, named
 	// as version managers name it.
-	selfAliases = map[string]string{"update": "update", "install": "install", "use": "use", "list": "list", "list-remote": "releases"}
+	selfAliases = map[string]string{"update": "update", "install": "install", "use": "use", "list": "list", "list-remote": "releases", "remove": "remove"}
 	// shortNames maps a command's short form to the command, which it runs
 	// in every way; help and errors list only the full name.
 	shortNames      = map[string]string{"prep": "prepare"}
@@ -52,9 +56,9 @@ var (
 		"repo": {"status", "link", "unlink", "setup", "init", "check"},
 		// init writes only into the repository.
 		"home": {"status", "link", "unlink", "setup", "prepare", "self", "backups"},
-		// --yes approves running steps, prepare's installs, or deleting
-		// backups, without asking.
-		"yes": {"setup", "prepare", "backups"},
+		// --yes approves running steps, prepare's installs, deleting
+		// backups, or init's starter files, without asking.
+		"yes": {"setup", "prepare", "backups", "init"},
 		// self installs the running build and version prints its own
 		// details, so neither acts for another platform. init writes it
 		// into the starter manifest.
@@ -81,31 +85,25 @@ var (
 // invocation is a parsed command line.
 type invocation struct {
 	command string // one of commands
+	// typed is the command as written, such as use for self use, so
+	// messages name what was run.
+	typed   string
 	sub     string // for self, one of selfCommands
 	operand string // for self use, self update, self install, and self remove, the version
 	repo    string
-	// repoGiven says the repository was named rather than defaulted (see
-	// openRepository).
-	repoGiven bool
 	// files selects entries for status, link, and unlink: targets in home,
 	// sources in the repository, or directories holding either. Empty
 	// means every entry.
 	files []string
-	// steps selects setup steps by name. Empty means every step.
-	steps []string
+	// names are the words after setup's repository, the steps to offer,
+	// empty meaning every step, or after remove, the versions to delete.
+	names []string
 	// words is the command line a completion script asks about (see
 	// complete).
 	words  []string
-	force  bool // --force: move conflicts aside, then link
-	quiet  bool // --quiet: print nothing but errors
 	home   string
 	prefix string
 	data   string // --data-dir
-	dryRun bool
-	// verbose is --verbose: a failure is shown whole (see failure).
-	verbose bool
-	root    bool // --allow-root
-	yes     bool
 	// platform is --platform, the platform to act for instead of the
 	// detected one.
 	platform string
@@ -114,6 +112,23 @@ type invocation struct {
 	olderThan string
 	// wsl holds what only the wsl command reads (see parseWSL).
 	wsl *wslOptions
+	// The switches come last, together, so they share a word rather than
+	// each padding one: the struct is passed by value everywhere, and the
+	// lint's hugeParam limit counts its size.
+
+	// repoGiven says the repository was named rather than defaulted (see
+	// openRepository).
+	repoGiven bool
+	// bare says neither a command nor a repository was typed, only options
+	// if anything, so status is the default (see startGuide).
+	bare   bool
+	force  bool // --force: move conflicts aside, then link
+	quiet  bool // --quiet: print nothing but errors
+	dryRun bool
+	// verbose is --verbose: a failure is shown whole (see failure).
+	verbose bool
+	root    bool // --allow-root
+	yes     bool
 }
 
 // wslOptions are the wsl command's own: the distribution (--distribution,
@@ -168,6 +183,10 @@ func run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 		return writeCompletion(inv.operand, output)
 	case "version":
 		return writeVersion(output)
+	case "info":
+		return runInfo(input, output)
+	case "term":
+		return runTerm(input, output)
 	}
 	// Most sudo configurations reset HOME to /root, so "sudo homeskillet link"
 	// would point root's shell startup files at files the invoking user owns,
@@ -219,6 +238,13 @@ func runWithHome(ctx context.Context, inv invocation, home string, input io.Read
 		return err
 	}
 	repo, manifest, remembered, err := openRepository(inv, home)
+	// homeskillet alone, with nothing to act on, is someone finding out
+	// what it does, often just after downloading it: a person gets how to
+	// start rather than an error, and a script still gets the error.
+	var nothing nothingLinked
+	if errors.As(err, &nothing) && inv.bare && terminal(output) {
+		return startGuide(output, home)
+	}
 	if err != nil {
 		return err
 	}
@@ -244,11 +270,11 @@ func runWithHome(ctx context.Context, inv invocation, home string, input io.Read
 		return err
 	}
 	if inv.command == "setup" {
-		if steps, err = selectSteps(inv.steps, steps, manifest.Setup, repo, platform); err != nil {
+		if steps, err = selectSteps(inv.names, steps, manifest.Setup, repo, platform); err != nil {
 			return err
 		}
 		return runSetup(ctx, steps, repo, home, inv.dryRun, setup.Options{
-			Repo: repo, Home: home, Data: data, Again: len(inv.steps) > 0, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
+			Repo: repo, Home: home, Data: data, Again: len(inv.names) > 0, Yes: inv.yes, Input: input, Output: output, Errors: diagnostics,
 		}, v)
 	}
 	// A person who has just linked a repository may not know it has setup
@@ -267,7 +293,7 @@ func runWithHome(ctx context.Context, inv invocation, home string, input io.Read
 func runApart(ctx context.Context, inv invocation, input io.Reader, output, diagnostics io.Writer) (bool, error) {
 	switch inv.command {
 	case "init":
-		return true, runInit(inv, output)
+		return true, runInit(inv, input, output)
 	case "check":
 		return true, runCheck(inv, output)
 	case "wsl":
@@ -324,7 +350,10 @@ func writeVersion(output io.Writer) error {
 		}
 		platform = fmt.Sprintf("  %-10s %s\n  %-10s %s\n", "built for:", info.Platform, "host:", hostLine)
 	}
-	_, err := fmt.Fprintf(output, "homeskillet %s\n%s%s", info.Version, info.Details(), platform)
+	// The project's page comes last; only the first line is ever read by a
+	// program (see versionOf).
+	_, err := fmt.Fprintf(output, "%s\n%s%s  %-10s %s\n", paint(colorFor(output).on, styleHeading, "homeskillet "+info.Version), info.Details(), platform,
+		"source:", project)
 	return err
 }
 
@@ -363,10 +392,14 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		args = []string{"version"}
 	}
 	inv := invocation{}
+	// --help before any command, as in homeskillet --help, is the overview;
+	// after one, it is that command's help.
+	named := len(args) > 0 && !strings.HasPrefix(args[0], "-")
 	var err error
-	if inv.command, args, err = takeCommand(args); err != nil {
+	if inv.command, inv.typed, args, err = takeCommand(args); err != nil {
 		return invocation{}, err
 	}
+	inv.bare = !named
 	switch inv.command {
 	case "help":
 		return parseHelp(args, output)
@@ -374,15 +407,16 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		return parseWSL(args, output)
 	}
 	if _, ok := subcommands[inv.command]; ok {
-		inv.sub, args = word(args, "")
+		// self help and backups help are their commands' help, as help self
+		// is.
+		if inv.sub, args = word(args, ""); inv.sub == "help" {
+			return subcommandHelp(inv.command, args, output)
+		}
 	}
 	flags := newFlags(&inv)
 	operands, err := parseFlags(flags, args)
 	if err != nil {
-		if errors.Is(err, flag.ErrHelp) {
-			return invocation{}, help(output, flags)
-		}
-		return invocation{}, fmt.Errorf("%w\n  run homeskillet --help to see the commands and options", err)
+		return invocation{}, flagError(err, named, inv.typed, output)
 	}
 	var misplaced, empty error
 	repoFlag := false
@@ -423,29 +457,56 @@ func parse(args []string, output io.Writer) (invocation, error) {
 		return invocation{}, misplaced
 	case empty != nil:
 		return invocation{}, empty
-	case (slices.Contains([]string{"use", "remove", "update", "install"}, inv.sub) || inv.command == "completion") && len(operands) == 1:
+	case (slices.Contains([]string{"use", "update", "install"}, inv.sub) || inv.command == "completion") && len(operands) == 1:
 		inv.operand = operands[0]
 		if inv.command == "self" {
 			inv.operand = withV(inv.operand)
 		}
+	case inv.sub == "remove":
+		inv.names = versionsOnce(operands)
 	case slices.Contains(selecting, inv.command):
 		inv.files = operands
 	case inv.command == "setup":
-		inv.steps = operands
+		inv.names = operands
 	case len(operands) != 0:
 		return invocation{}, fmt.Errorf("unexpected arguments: %s", strings.Join(operands, " "))
 	}
 	switch {
-	case (inv.command == "version" || inv.command == "completion") && flags.NFlag() != 0:
+	case slices.Contains(optionless, inv.command) && flags.NFlag() != 0:
 		return invocation{}, fmt.Errorf("%s takes no options", inv.command)
 	case inv.command == "completion" && inv.operand == "":
-		return invocation{}, fmt.Errorf("completion needs a shell: %s", strings.Join(slices.Sorted(maps.Keys(completionScripts)), ", "))
+		return invocation{}, fmt.Errorf("'completion' needs a shell: %s; see 'homeskillet help completion'", alternatives(slices.Sorted(maps.Keys(completionScripts))))
 	case inv.command == "self" && inv.sub == "":
-		return invocation{}, fmt.Errorf("self needs a command: %s", strings.Join(selfCommands, ", "))
-	case (inv.sub == "use" || inv.sub == "remove") && inv.operand == "":
-		return invocation{}, fmt.Errorf("self %s needs a version", inv.sub)
+		return invocation{}, unknownSubcommand("self", "", selfCommands)
+	case inv.sub == "use" && inv.operand == "" || inv.sub == "remove" && len(inv.names) == 0:
+		return invocation{}, missingVersion(inv)
 	}
 	return inv, nil
+}
+
+// flagError writes the help that --help asks for, the overview when no
+// command was named before it and otherwise that command's, typed as it was
+// written. Any other error says where the command's options are listed.
+func flagError(err error, named bool, typed string, output io.Writer) error {
+	switch {
+	case errors.Is(err, flag.ErrHelp) && !named:
+		return help(output)
+	case errors.Is(err, flag.ErrHelp):
+		return helpFor(output, typed)
+	}
+	return fmt.Errorf("%w\n  run homeskillet help %s to see its options", err, typed)
+}
+
+// versionsOnce returns the versions remove names, each with its leading v
+// and once, in the order given.
+func versionsOnce(operands []string) []string {
+	var versions []string
+	for _, v := range operands {
+		if v = withV(v); !slices.Contains(versions, v) {
+			versions = append(versions, v)
+		}
+	}
+	return versions
 }
 
 // withV returns a version written without its leading v, as 0.2.0, with it,
@@ -464,21 +525,69 @@ func withV(v string) string {
 // isPath), so a mistyped command is reported rather than read as a
 // directory, and status never changes anything either way. A self alias,
 // such as update, becomes self with the alias as its command.
-func takeCommand(args []string) (string, []string, error) {
-	command, rest := word(args, "status")
+func takeCommand(args []string) (command, typed string, rest []string, err error) {
+	command, rest = word(args, "status")
+	typed = command
 	if full, ok := shortNames[command]; ok {
 		command = full
 	}
 	if sub, ok := selfAliases[command]; ok {
-		return "self", append([]string{sub}, rest...), nil
+		return "self", typed, append([]string{sub}, rest...), nil
 	}
 	switch {
 	case slices.Contains(commands, command):
-		return command, rest, nil
+		return command, typed, rest, nil
 	case isPath(command):
-		return "status", args, nil
+		return "status", "status", args, nil
 	}
-	return "", nil, unknownCommand(command)
+	return "", "", nil, unknownCommand(command)
+}
+
+// unknownSubcommand says that command, such as self, was run without one
+// of the commands it takes, sub "", or with one it does not take, in the
+// form an unknown command gets.
+func unknownSubcommand(command, sub string, takes []string) error {
+	if sub == "" {
+		return fmt.Errorf("'%s' needs a command: %s; see 'homeskillet help %s'", command, alternatives(takes), command)
+	}
+	shown := sub
+	if !config.Printable(shown) {
+		shown = strconv.Quote(shown)
+	}
+	return fmt.Errorf("'%s %s' is not a command; '%s' takes %s", command, shown, command, alternatives(takes))
+}
+
+// alternatives joins choices as a person reads a list to choose from: a, b,
+// or c.
+func alternatives(choices []string) string {
+	return joined(choices, "or")
+}
+
+// joined writes words as a list in a sentence, the last two joined by
+// conjunction, as in a, b, and c.
+func joined(words []string, conjunction string) string {
+	switch len(words) {
+	case 0:
+		return ""
+	case 1:
+		return words[0]
+	case 2:
+		return words[0] + " " + conjunction + " " + words[1]
+	}
+	return strings.Join(words[:len(words)-1], ", ") + ", " + conjunction + " " + words[len(words)-1]
+}
+
+// missingVersion says that use or remove was run without a version, naming
+// the command as it was typed, and what a version can be.
+func missingVersion(inv invocation) error {
+	name := inv.typed
+	if name == "self" {
+		name = "self " + inv.sub
+	}
+	if inv.sub == "use" {
+		return fmt.Errorf("'%s' needs a version: latest, previous, or one 'homeskillet list' shows", name)
+	}
+	return fmt.Errorf("'%s' needs one or more versions: any 'homeskillet list' shows, except the one that runs", name)
 }
 
 // unknownCommand says that word is not a command, briefly: the nearest
@@ -551,7 +660,7 @@ func takeSubcommand(inv *invocation, operands []string) ([]string, error) {
 		inv.sub, operands = operands[0], operands[1:]
 	}
 	if inv.sub != "" && !slices.Contains(allowed, inv.sub) {
-		return nil, fmt.Errorf("unknown command %s %s; use %s %s", inv.command, inv.sub, inv.command, strings.Join(allowed, ", "+inv.command+" "))
+		return nil, unknownSubcommand(inv.command, inv.sub, allowed)
 	}
 	return operands, nil
 }
@@ -577,13 +686,34 @@ func parseHidden(args []string) (invocation, bool, error) {
 	return invocation{}, false, nil
 }
 
-// parseHelp writes the help text for help. It covers every command, so a
-// command named after help gets the same text.
+// parseHelp writes the help text for help: the overview, or with a command,
+// as in help link, that command's own help. help --help is help's own.
 func parseHelp(args []string, output io.Writer) (invocation, error) {
-	if len(args) > 1 || len(args) == 1 && !slices.Contains(commands, args[0]) && args[0] != "--help" && args[0] != "-h" {
+	switch {
+	case len(args) == 0:
+		return invocation{}, help(output)
+	case len(args) > 1:
+		return invocation{}, fmt.Errorf("unexpected arguments: %s\n  help takes one command, as in homeskillet help self", strings.Join(args[1:], " "))
+	case args[0] == "--help" || args[0] == "-h":
+		return invocation{}, helpFor(output, "help")
+	}
+	topic := args[0]
+	if full, ok := shortNames[topic]; ok {
+		topic = full
+	}
+	if !slices.Contains(commands, topic) {
+		return invocation{}, unknownCommand(args[0])
+	}
+	return invocation{}, helpFor(output, topic)
+}
+
+// subcommandHelp writes command's own help for its help subcommand, as in
+// self help, which takes nothing after it.
+func subcommandHelp(command string, args []string, output io.Writer) (invocation, error) {
+	if len(args) > 0 {
 		return invocation{}, fmt.Errorf("unexpected arguments: %s", strings.Join(args, " "))
 	}
-	return invocation{}, help(output, newFlags(new(invocation)))
+	return invocation{}, helpFor(output, command)
 }
 
 // newFlags returns the options, set to write into inv. Their usage strings
@@ -598,12 +728,12 @@ func newFlags(inv *invocation) *flag.FlagSet {
 	flags.StringVar(&inv.home, "home", "", "Use `DIR` as the home directory (default: yours)")
 	flags.StringVar(&inv.repo, "repo", ".", "Use `DIR` as the repository, as if named after the command")
 	flags.StringVar(&inv.platform, "platform", "", "Act for `OS[/ARCH]`, such as darwin or linux/arm64 (default: this machine)")
-	flags.BoolVar(&inv.quiet, "quiet", false, "Print only errors; the exit status reports the result (not for setup)")
+	flags.BoolVar(&inv.quiet, "quiet", false, "Print only errors; the exit status reports the result")
 	flags.StringVar(&inv.data, "data-dir", "", "Keep the link record, backups, and installed versions in `DIR`, relative to the home unless absolute "+
 		"(default: $"+dataDirVariable+", else .local/share/homeskillet)")
 	flags.BoolVar(&inv.root, "allow-root", false, "Allow running as root, or elevated on Windows, for root's own dotfiles; root must own everything homeskillet reads")
 	flags.BoolVar(&inv.force, "force", false, "Move conflicting files into a backup, then link")
-	flags.BoolVar(&inv.yes, "yes", false, "Run every pending step, or for backups purge delete every backup listed, without asking")
+	flags.BoolVar(&inv.yes, "yes", false, "Approve without asking: setup's pending steps, prepare's installs, init's starter files, or backups purge's deletions")
 	flags.StringVar(&inv.olderThan, "older-than", "", "Only backups moved more than `AGE` ago, in days or hours, such as 30d or 12h")
 	flags.StringVar(&inv.prefix, "prefix", "", "Install into `DIR`/bin (default: .local in the home directory)")
 	if inv.wsl == nil {
@@ -690,20 +820,29 @@ func openRepository(inv invocation, home string) (repo string, manifest config.M
 	if data, dataErr := dataDir(inv, home); dataErr == nil {
 		recorded, _ = link.Repositories(data, home)
 	}
+	// Advice names homeskillet as it was run, so that it works as written
+	// before homeskillet is installed, when the first run is the download,
+	// and each repository ready to paste. Naming it searches PATH, so it is
+	// done only for advice that is printed.
 	if inv.repoGiven {
+		self := selfName()
 		if len(recorded) == 0 {
-			return "", config.Manifest{}, false, fmt.Errorf("%w\n  that is the home directory; name a repository instead: homeskillet %s /path/to/dotfiles", err, inv.command)
+			return "", config.Manifest{}, false, fmt.Errorf("%w\n  that is the home directory; name a repository instead: %s %s /path/to/dotfiles", err, self, inv.command)
 		}
 		var choices strings.Builder
 		choices.WriteString("\n  that is the home directory; name the repository linked into it instead:")
 		for _, recordedRepo := range recorded {
-			fmt.Fprintf(&choices, "\n    homeskillet %s %s", inv.command, recordedRepo)
+			fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, shellWord(recordedRepo))
 		}
 		return "", config.Manifest{}, false, fmt.Errorf("%w%s", err, choices.String())
 	}
 	switch len(recorded) {
 	case 0:
-		return "", config.Manifest{}, false, fmt.Errorf("%w\n  name one: homeskillet %s /path/to/dotfiles", err, inv.command)
+		// Nothing linked yet is where everyone starts, so say how to.
+		self := selfName()
+		return "", config.Manifest{}, false, nothingLinked{fmt.Errorf("%w\n  name one: %s %s /path/to/dotfiles\n"+
+			"  nothing is linked yet: clone your dotfiles repository and name the clone, or start one with %s init /path/to/dotfiles",
+			err, self, inv.command, self)}
 	case 1:
 		repo, manifest, err = loadRepository(recorded[0])
 		if err != nil {
@@ -713,8 +852,9 @@ func openRepository(inv invocation, home string) (repo string, manifest config.M
 	}
 	var choices strings.Builder
 	fmt.Fprintf(&choices, "\n  several repositories are linked into %s; name one:", home)
+	self := selfName()
 	for _, recordedRepo := range recorded {
-		fmt.Fprintf(&choices, "\n    homeskillet %s %s", inv.command, recordedRepo)
+		fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, shellWord(recordedRepo))
 	}
 	return "", config.Manifest{}, false, fmt.Errorf("%w%s", err, choices.String())
 }

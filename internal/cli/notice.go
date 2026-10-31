@@ -137,7 +137,9 @@ func (c *updateCheck) print(output io.Writer) error {
 	if !ok || found.line == "" {
 		return nil
 	}
-	if _, err := io.WriteString(output, found.line); err != nil {
+	// The check runs only at a terminal (see startUpdateCheck), so the note
+	// is a sentence for a person.
+	if _, err := io.WriteString(output, paint(colorFor(output).on, styleAttention, "Note:")+" "+found.line); err != nil {
 		return err
 	}
 	found.record.Noticed = c.now
@@ -223,7 +225,7 @@ func prepareNotice(ctx context.Context, data, running string, installed func() [
 	if record.Latest == "" || version.Compare(record.Latest, running) <= 0 || !due(now, record.Noticed) || slices.Contains(installed(), record.Latest) {
 		return notice{record: record}
 	}
-	line := fmt.Sprintf("note\t%s is available; homeskillet update installs it (%s=off hides this)\n", record.Latest, updateCheckVariable)
+	line := fmt.Sprintf("%s is available; homeskillet update installs it (%s=off hides this)\n", record.Latest, updateCheckVariable)
 	return notice{line: line, record: record}
 }
 

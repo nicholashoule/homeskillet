@@ -44,8 +44,13 @@ func statusOf(repo, home string) (string, error) {
 	return output.String(), err
 }
 
+// initialize runs init with args, approving with --yes unless asked for a
+// dry run.
 func initialize(args ...string) (string, error) {
 	var output bytes.Buffer
+	if !slices.Contains(args, "--dry-run") {
+		args = append(args, "--yes")
+	}
 	err := Run(context.Background(), append([]string{"init"}, args...), nil, &output, &output)
 	return output.String(), err
 }
@@ -225,7 +230,7 @@ func TestInitRefusesUnusableHome(t *testing.T) {
 func TestInitArguments(t *testing.T) {
 	repo := emptyRepository(t)
 	for _, args := range [][]string{
-		{repo, "--home", repo}, {repo, "--force"}, {repo, "--yes"}, {repo, "--data-dir", repo}, {repo, "extra"},
+		{repo, "--home", repo}, {repo, "--force"}, {repo, "--data-dir", repo}, {repo, "extra"},
 	} {
 		if _, err := parse(append([]string{"init"}, args...), new(bytes.Buffer)); err == nil {
 			t.Errorf("init accepted %q", args)
@@ -236,4 +241,97 @@ func TestInitArguments(t *testing.T) {
 func exists(path string) bool {
 	_, err := os.Lstat(path)
 	return err == nil
+}
+
+func TestInitAsks(t *testing.T) {
+	// Without --yes, init shows what it would create and asks; anything but
+	// yes creates nothing, and a script that gave no answer gets an error.
+	for _, test := range []struct {
+		answer  string
+		created bool
+		err     string
+	}{{"", false, "pass --yes"}, {"n\n", false, "pass --yes"}, {"y\n", true, ""}} {
+		repo := emptyRepository(t)
+		var output bytes.Buffer
+		err := Run(context.Background(), []string{"init", repo}, strings.NewReader(test.answer), &output, &output)
+		if test.err != "" && (err == nil || !strings.Contains(err.Error(), test.err)) || test.err == "" && err != nil {
+			t.Errorf("answer %q: %v", test.answer, err)
+		}
+		if !strings.Contains(output.String(), "would write\t"+filepath.Join(repo, config.FileName)) || !strings.Contains(output.String(), "Create these? [y/N]") {
+			t.Errorf("answer %q: the plan was not shown before asking:\n%s", test.answer, output.String())
+		}
+		_, statErr := os.Lstat(filepath.Join(repo, config.FileName))
+		_, homeErr := os.Lstat(filepath.Join(repo, config.HomeDir))
+		if (statErr == nil) != test.created || (homeErr == nil) != test.created {
+			t.Errorf("answer %q: created %v and %v, want %v", test.answer, statErr == nil, homeErr == nil, test.created)
+		}
+	}
+}
+
+func TestInitCreatesRepository(t *testing.T) {
+	// Someone with no dotfiles yet names a directory that does not exist,
+	// perhaps below another that does not either: init creates both, as
+	// part of what it shows and asks about.
+	root := filepath.Dir(emptyRepository(t))
+	repo := filepath.Join(root, "projects", "dotfiles")
+	output, err := initialize(repo, "--dry-run")
+	if err != nil || !strings.Contains(output, "would create\t"+filepath.Join(root, "projects")+"\n") ||
+		!strings.Contains(output, "would create\t"+repo+"\n") || !strings.Contains(output, "would create\t"+filepath.Join(repo, config.HomeDir)+"\n") {
+		t.Fatalf("dry run, which must show every directory it would make: %q, %v", output, err)
+	}
+	if exists(filepath.Join(root, "projects")) {
+		t.Fatal("the dry run created the repository")
+	}
+	var declined bytes.Buffer
+	if err := Run(context.Background(), []string{"init", repo}, strings.NewReader("n\n"), &declined, &declined); err == nil || exists(filepath.Join(root, "projects")) {
+		t.Fatalf("declined, yet created, or no error for a script: %v", err)
+	}
+	output, err = initialize(repo)
+	if err != nil {
+		t.Fatalf("%q, %v", output, err)
+	}
+	for _, created := range []string{filepath.Join(root, "projects"), repo, filepath.Join(repo, config.HomeDir), filepath.Join(repo, config.FileName)} {
+		if !strings.Contains(output, "created\t"+created+"\n") {
+			t.Errorf("%s not reported in %q", created, output)
+		}
+	}
+	if _, err := config.Load(repo); err != nil {
+		t.Fatal(err)
+	}
+	// A path that exists but is no directory is not created over.
+	file := filepath.Join(root, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := initialize(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
+		t.Errorf("init over a file: %v", err)
+	}
+}
+
+// TestInitQuietNeedsYes checks that init refuses --quiet without --yes,
+// which would hide the question it waits on, and creates nothing.
+func TestInitQuietNeedsYes(t *testing.T) {
+	repo := emptyRepository(t)
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"init", repo, "--quiet"}, strings.NewReader("y\n"), &output, &output); err == nil ||
+		!strings.Contains(err.Error(), "--quiet needs --yes") {
+		t.Fatalf("init --quiet without --yes: %v", err)
+	}
+	if exists(filepath.Join(repo, config.FileName)) {
+		t.Fatal("init --quiet without --yes created the manifest")
+	}
+}
+
+func TestInitRefusesHome(t *testing.T) {
+	// The home directory itself is never made a repository.
+	repo := emptyRepository(t)
+	t.Setenv("HOME", repo)
+	t.Setenv("USERPROFILE", repo)
+	_, err := initialize(repo)
+	if err == nil || !strings.Contains(err.Error(), "is your home directory") {
+		t.Fatalf("init in the home directory: %v", err)
+	}
+	if entries, _ := os.ReadDir(repo); len(entries) != 0 {
+		t.Errorf("init in the home directory created %v", entries)
+	}
 }

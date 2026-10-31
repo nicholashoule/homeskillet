@@ -91,3 +91,16 @@ func TestSetupDocumentsWindows(t *testing.T) {
 		t.Fatalf("setup --dry-run with the profile: %q, %v", output, err)
 	}
 }
+
+// TestPathAdvice checks that the note about Path points to the Windows
+// guide's lines, at a heading that exists there.
+func TestPathAdvice(t *testing.T) {
+	got := pathAdvice(`C:\Users\you\.local\bin`)
+	if !strings.Contains(got, windowsGuide+"#putting-the-command-on-your-path") {
+		t.Errorf("pathAdvice: %s", got)
+	}
+	guide, err := os.ReadFile(filepath.Join("..", "..", "docs", "windows.md"))
+	if err != nil || !strings.Contains(string(guide), "\n### Putting the Command on Your Path\n") {
+		t.Errorf("docs/windows.md has no heading for the link: %v", err)
+	}
+}

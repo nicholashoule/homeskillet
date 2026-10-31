@@ -44,6 +44,12 @@ import (
 // downloaded, so what it changes does not depend on the download honoring
 // --dry-run.
 func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home string, output, diagnostics io.Writer) error {
+	return update(ctx, inv, layout, home, output, diagnostics, terminal(output))
+}
+
+// update is runUpdate, saying what happened for a person at a terminal, in
+// a sentence or two, or for a script, in tab-separated lines.
+func update(ctx context.Context, inv invocation, layout install.Layout, home string, output, diagnostics io.Writer, person bool) error {
 	target := inv.operand
 	if target != "" && !release(target) {
 		return fmt.Errorf("%q is not a published version such as v0.2.0; only releases are downloaded", target)
@@ -68,7 +74,11 @@ func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home 
 	follow := inv.operand == "" && inv.sub == "update" && state.Current != "" && !state.Following
 	if slices.Contains(state.Versions, target) {
 		if follow {
-			return followLatest(layout, state.Current, inv.dryRun, output)
+			return followLatest(layout, state.Current, inv.dryRun, output, person)
+		}
+		if person {
+			_, err := fmt.Fprintln(output, upToDate(state, target, inv.operand == "", colorFor(output).on))
+			return err
 		}
 		_, err := fmt.Fprintf(output, "unchanged\t%s\talready installed%s\n", target, chooseHint(state, target))
 		return err
@@ -94,23 +104,118 @@ func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home 
 	if err := verifyDownload(ctx, file, sum); err != nil {
 		return err
 	}
-	if _, err := fmt.Fprintf(output, "downloaded\t%s\t%s, checked against its SHA256SUMS\n", target, name); err != nil {
+	if err := reportDownload(output, target, name, state.Current, inv.dryRun, follow, person); err != nil || inv.dryRun {
 		return err
 	}
-	if inv.dryRun {
-		if _, err := fmt.Fprintf(output, "install\t%s\twould be installed as a version of its own\n", target); err != nil || !follow {
-			return err
+	// For a person, the install's notes, such as a directory to add to
+	// PATH, come after what happened.
+	var notes strings.Builder
+	installOutput := output
+	if person {
+		installOutput = &notes
+	}
+	if err := installDownload(ctx, file, target, inv, home, follow || person, installOutput, diagnostics, person); err != nil {
+		return err
+	}
+	if !person {
+		if follow {
+			return followLatest(layout, state.Current, false, output, person)
 		}
-		_, err := fmt.Fprintf(output, "current\tlatest\twould be followed again instead of the pinned %s\n", state.Current)
-		return err
+		return goBackNote(layout, state.Current, output)
 	}
-	if err := installDownload(ctx, file, target, inv, home, follow, output, diagnostics); err != nil {
+	if _, err := fmt.Fprintf(output, "%s %s from GitHub, checked against its SHA256SUMS.\n", paint(colorFor(output).on, styleGood, "Installed"), target); err != nil {
 		return err
 	}
 	if follow {
-		return followLatest(layout, state.Current, false, output)
+		err = followLatest(layout, state.Current, false, output, person)
+	} else {
+		err = runsNow(layout, state.Current, target, output)
 	}
-	return goBackNote(layout, state.Current, output)
+	if err != nil {
+		return err
+	}
+	_, err = io.WriteString(output, personNotes(notes.String(), colorFor(output).on))
+	return err
+}
+
+// personNotes returns the install's note lines, tab-separated, as sentences
+// for a person, each after a Note: in the standard's color for what still
+// needs doing.
+func personNotes(lines string, color bool) string {
+	var text strings.Builder
+	for line := range strings.Lines(lines) {
+		note := strings.TrimSuffix(strings.TrimPrefix(line, "note\t"), "\n")
+		text.WriteString(paint(color, styleAttention, "Note:") + " " + strings.ReplaceAll(note, "\t", " ") + "\n")
+	}
+	return text.String()
+}
+
+// reportDownload says that target was downloaded and checked, for a script,
+// and for a dry run what would follow: for a person in a sentence, which is
+// all a dry run says to one, for a script in lines. pinned is the version
+// that runs, which update without a version lets go of when follow is set.
+func reportDownload(output io.Writer, target, name, pinned string, dryRun, follow, person bool) error {
+	if person {
+		if !dryRun {
+			return nil
+		}
+		text := fmt.Sprintf("%s downloaded %s and checked it against its SHA256SUMS; nothing was installed.\n", dryRunLead(colorFor(output).on), target)
+		if follow {
+			text += fmt.Sprintf("It would then run in place of the pinned %s.\n", pinned)
+		}
+		_, err := io.WriteString(output, text)
+		return err
+	}
+	if _, err := fmt.Fprintf(output, "downloaded\t%s\t%s, checked against its SHA256SUMS\n", target, name); err != nil || !dryRun {
+		return err
+	}
+	if _, err := fmt.Fprintf(output, "install\t%s\twould be installed as a version of its own\n", target); err != nil || !follow {
+		return err
+	}
+	_, err := fmt.Fprintf(output, "current\tlatest\twould be followed again instead of the pinned %s\n", pinned)
+	return err
+}
+
+// upToDate says, for a person, that version v, already installed, needs no
+// update: what runs, and if v is not it, how to run v. newest says v is the
+// newest release, as update without a version finds it.
+func upToDate(state install.State, v string, newest, color bool) string {
+	switch {
+	case state.Current == v && newest && state.Following:
+		return paint(color, styleGood, "homeskillet is up to date:") + " " + v + " runs, following latest."
+	case state.Current == v && newest:
+		return paint(color, styleGood, "homeskillet is up to date:") + " " + v + " runs."
+	case state.Current == v:
+		return v + " " + paint(color, styleGood, "is installed, and it runs") + "."
+	}
+	return v + " " + paint(color, styleGood, "is already installed") + "; homeskillet use " + v + " runs it."
+}
+
+// runsNow says, for a person, after installing target, which version runs
+// and, when that changed, how to go back to before, the version that ran.
+func runsNow(layout install.Layout, before, target string, output io.Writer) error {
+	state, err := layout.Inspect()
+	if err != nil {
+		_, err = fmt.Fprintf(output, "%s %v\n", paint(colorFor(output).on, styleError, "The installation could not be read back:"), err)
+		return err
+	}
+	color := colorFor(output).on
+	var text string
+	switch {
+	case state.Current == target && state.Following:
+		text = target + " " + paint(color, styleGood, "runs now") + ", following latest."
+	case state.Current == target:
+		text = target + " " + paint(color, styleGood, "runs now") + "."
+	case !state.Following && state.Current != "":
+		text = state.Current + " " + paint(color, styleGood, "still runs") + ", pinned; homeskillet use " + target + " runs the new one."
+	default:
+		text = state.Current + " " + paint(color, styleGood, "still runs") + ", as the latest; homeskillet use " + target + " runs the new one."
+	}
+	if before != "" && state.Current != before {
+		text += " To go back: homeskillet use " + before
+	}
+	_, err = fmt.Fprintln(output, text)
+	return err
 }
 
 // installDownload runs the release binary file, just downloaded and checked,
@@ -119,7 +224,10 @@ func runUpdate(ctx context.Context, inv invocation, layout install.Layout, home 
 // command (see selfOptions). When update goes on to follow latest, the
 // install's line about what still runs would be out of date before anyone
 // read it, so it is left out, as wsl install leaves it out.
-func installDownload(ctx context.Context, file, target string, inv invocation, home string, follow bool, output, diagnostics io.Writer) error {
+//
+// For a person, only the install's notes are kept, such as a directory to
+// add to PATH, written as sentences; update says the rest.
+func installDownload(ctx context.Context, file, target string, inv invocation, home string, follow bool, output, diagnostics io.Writer, person bool) error {
 	name := filepath.Base(file)
 	if err := os.Chmod(file, 0o700); err != nil { //nolint:gosec // G302: a program must be executable, and only by its owner
 		return err
@@ -140,10 +248,17 @@ func installDownload(ctx context.Context, file, target string, inv invocation, h
 	cmd.Stderr = diagnostics
 	runErr := cmd.Run()
 	for line := range strings.Lines(installed.String()) {
-		if !install.AboutRunning(strings.TrimSuffix(line, "\n")) {
-			if _, err := io.WriteString(output, line); err != nil {
-				return err
-			}
+		text := strings.TrimSuffix(line, "\n")
+		if install.AboutRunning(text) {
+			continue
+		}
+		// A person gets only the notes, which update words for them once
+		// it has said what happened (see personNotes).
+		if person && !strings.HasPrefix(text, "note\t") {
+			continue
+		}
+		if _, err := io.WriteString(output, line); err != nil {
+			return err
 		}
 	}
 	if runErr != nil {
@@ -160,11 +275,25 @@ func installDownload(ctx context.Context, file, target string, inv invocation, h
 // followLatest makes the command follow latest again, as update does when a
 // version was pinned, then says how to go back to before, the version that
 // ran.
-func followLatest(layout install.Layout, before string, dryRun bool, output io.Writer) error {
-	if err := layout.Use(install.Latest, dryRun, output); err != nil || dryRun {
+func followLatest(layout install.Layout, before string, dryRun bool, output io.Writer, person bool) error {
+	if !person {
+		if err := layout.Use(install.Latest, dryRun, output); err != nil || dryRun {
+			return err
+		}
+		return goBackNote(layout, before, output)
+	}
+	if err := layout.Use(install.Latest, dryRun, io.Discard); err != nil {
 		return err
 	}
-	return goBackNote(layout, before, output)
+	if dryRun {
+		_, err := fmt.Fprintf(output, "%s the newest would run in place of the pinned %s; nothing changed.\n", dryRunLead(colorFor(output).on), before)
+		return err
+	}
+	state, err := layout.Inspect()
+	if err != nil {
+		return err
+	}
+	return runsNow(layout, before, state.Current, output)
 }
 
 // stagingDir returns a new private directory to download into: under the
@@ -257,15 +386,16 @@ func runReleases(ctx context.Context, layout install.Layout, output io.Writer) e
 		_, err := fmt.Fprintln(output, "no releases published")
 		return err
 	}
-	newest := true
+	rows := make([][]string, 0, len(published))
+	newest := ""
 	for _, r := range published {
 		var roles []string
 		// The newest release is the first that GitHub does not flag as a
 		// pre-release, which is the one the latest release page leads to,
 		// and so the one update installs when no version is named.
-		if newest && !r.Prerelease {
+		if newest == "" && !r.Prerelease {
 			roles = append(roles, "newest")
-			newest = false
+			newest = r.Version
 		}
 		if r.Prerelease {
 			roles = append(roles, "pre-release")
@@ -276,9 +406,45 @@ func runReleases(ctx context.Context, layout install.Layout, output io.Writer) e
 		if r.Version == state.Current {
 			roles = append(roles, "current")
 		}
-		if _, err := fmt.Fprintf(output, "%s\t%s\n", r.Version, cmp.Or(strings.Join(roles, ", "), "-")); err != nil {
+		rows = append(rows, []string{r.Version, strings.Join(roles, ", ")})
+	}
+	if terminal(output) {
+		return releasesView(rows, newest, state, output)
+	}
+	for _, row := range rows {
+		if _, err := fmt.Fprintf(output, "%s\t%s\n", row[0], cmp.Or(row[1], "-")); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// releasesView writes the published releases for a person: aligned, newest
+// first, then what the newest is to this installation.
+func releasesView(rows [][]string, newest string, state install.State, w io.Writer) error {
+	color := colorFor(w).on
+	if _, err := fmt.Fprintf(w, "%s\n  from: %s\n\n%s\n", paint(color, styleHeading, "homeskillet list-remote"), project+"/releases",
+		paint(color, styleHeading, fmt.Sprintf("Published (%d)", len(rows)))); err != nil {
+		return err
+	}
+	painted := make([][]string, len(rows))
+	for i, row := range rows {
+		painted[i] = []string{row[0], paintRoles(color, row[1])}
+	}
+	if err := writeTable(w, painted, nil); err != nil {
+		return err
+	}
+	var closing string
+	switch {
+	case newest == "":
+		closing = "No release is published yet, other than pre-releases."
+	case newest == state.Current:
+		closing = newest + " is the newest, and " + paint(color, styleGood, "it runs here") + "."
+	case slices.Contains(state.Versions, newest):
+		closing = newest + " is the newest, and installed; " + paint(color, styleAttention, "homeskillet use latest runs it") + "."
+	default:
+		closing = newest + " is the newest; " + paint(color, styleAttention, "homeskillet update installs it") + "."
+	}
+	_, err := fmt.Fprintf(w, "\n%s\n", closing)
+	return err
 }

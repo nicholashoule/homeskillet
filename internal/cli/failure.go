@@ -7,6 +7,8 @@ package cli
 
 import (
 	"errors"
+	"fmt"
+	"io"
 	"io/fs"
 	"strings"
 
@@ -78,4 +80,13 @@ func hintFor(err error) string {
 		return "check its owner and permissions; homeskillet runs as you, not as root"
 	}
 	return ""
+}
+
+// PrintError writes err as main shows a failure, after "homeskillet:", in
+// red at a terminal where colors are on (see colorFor). A nil w discards it.
+func PrintError(w io.Writer, err error) {
+	if w == nil {
+		return
+	}
+	_, _ = fmt.Fprintln(w, paint(colorFor(w).on, styleError, "homeskillet:"), err) // a failed write of the error has nowhere left to go
 }

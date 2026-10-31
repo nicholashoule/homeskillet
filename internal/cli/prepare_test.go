@@ -8,6 +8,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -149,12 +150,38 @@ func TestPrepareGit(t *testing.T) {
 	}
 	t.Setenv("PATH", bin)
 	output, err = prepare()
-	if err != nil || output != "done\tgit\t"+filepath.Join(bin, "git")+"\nready\tcan clone and link a repository\n" {
+	if err != nil || output != "done\thome\tno other account can write to it\ndone\tgit\t"+filepath.Join(bin, "git")+"\nready\tcan clone and link a repository\n" {
 		t.Errorf("with git: %q, %v", output, err)
 	}
 	// Linux and macOS have no Developer Mode to report.
 	if strings.Contains(output, developerModeStep) {
 		t.Errorf("developer mode reported off Windows: %q", output)
+	}
+}
+
+func TestPrepareHome(t *testing.T) {
+	// A home others can change is reported as missing, with why, not as an
+	// error that stops prepare part way: it can be run again as it is fixed.
+	_, home := repository(t)
+	makeShared(t, home)
+	var output bytes.Buffer
+	err := Run(context.Background(), []string{"prepare", "--dry-run", "--home", home}, strings.NewReader(""), &output, &output)
+	if err == nil || !strings.HasPrefix(err.Error(), "not ready: missing home") || !strings.HasPrefix(output.String(), "missing\thome\t"+home) {
+		t.Fatalf("%q, %v", output.String(), err)
+	}
+	if item := homeItem(home); item.state != itemMissing || strings.Contains(item.detail, "\n") {
+		t.Errorf("home item, on one line: %+v", item)
+	}
+}
+
+func TestNextStep(t *testing.T) {
+	// With nothing installed, the next step is installing, named as run.
+	_, home := repository(t)
+	saved := selfName
+	t.Cleanup(func() { selfName = saved })
+	selfName = func() string { return `.\homeskillet-windows-amd64.exe` }
+	if next := nextStep(home); next != `.\homeskillet-windows-amd64.exe install installs homeskillet as a command that runs from any folder.` {
+		t.Errorf("nothing installed: %q", next)
 	}
 }
 
@@ -173,6 +200,50 @@ func TestWaitForEnter(t *testing.T) {
 	}
 	if err := waitForEnter(nil); err != nil {
 		t.Error(err)
+	}
+}
+
+func TestAwaitDeveloperMode(t *testing.T) {
+	off := errors.New("symlinks not allowed")
+	for _, test := range []struct {
+		name  string
+		input string
+		// offFor is how many checks find Developer Mode still off.
+		offFor int
+		want   string
+		checks int
+	}{
+		{"on at once", "\n", 0, "", 1},
+		// Enter came before Windows switched it on; asked again, it is on.
+		{"on when checked again", "\ny\n", 1, "", 2},
+		{"still off, checked again twice", "\ny\nyes\n", 2, "", 3},
+		{"still off, not checked again", "\n\n", 1, "skipped  Developer Mode  still off\n", 1},
+		{"still off, input ends", "\n", 1, "skipped  Developer Mode  still off\n", 1},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			checks := 0
+			probe := func() error {
+				checks++
+				if checks <= test.offFor {
+					return off
+				}
+				return nil
+			}
+			var output bytes.Buffer
+			if err := awaitDeveloperMode(strings.NewReader(test.input), prepareOutput{w: &output, person: true}, probe); err != nil {
+				t.Fatal(err)
+			}
+			if checks != test.checks {
+				t.Errorf("checked %d times, want %d", checks, test.checks)
+			}
+			// Each time it is still off, the user is told and asked.
+			if got := strings.Count(output.String(), "Check again? [y/N]"); got != min(test.offFor, test.checks) {
+				t.Errorf("asked %d times, want %d:\n%s", got, min(test.offFor, test.checks), output.String())
+			}
+			if !strings.HasSuffix(output.String(), test.want) {
+				t.Errorf("output ends %q, want %q", output.String(), test.want)
+			}
+		})
 	}
 }
 
@@ -195,7 +266,7 @@ func TestPrepareView(t *testing.T) {
 		"Pending (2): shown in full and asked about before each runs\n" +
 		"  Developer Mode  turn it on in Settings, System, For developers\n" +
 		"  Git             winget install --id Git.Git\n\n" +
-		"Missing (1): homeskillet cannot install these\n" +
+		"Missing (1): homeskillet cannot fix these itself\n" +
 		"  PowerShell 7  https://github.com/PowerShell/PowerShell/releases\n\n" +
 		"Done (1)\n" +
 		"  winget  C:\\Users\\you\\AppData\\Local\\Microsoft\\WindowsApps\\winget.exe\n\n"
@@ -228,8 +299,23 @@ func TestPrepareView(t *testing.T) {
 	}
 	t.Setenv("PATH", bin)
 	output.Reset()
-	if err := out.closing("linux", home, nil, false); err != nil || output.String() != "Ready: homeskillet can clone and link a repository here.\n" {
+	// Ready says what the machine has, and what to do next: in this home,
+	// with nothing installed, install homeskillet.
+	install := "Next: homeskillet install installs homeskillet as a command that runs from any folder.\n"
+	if err := out.closing("linux", home, nil, false); err != nil ||
+		output.String() != "Ready: this machine has everything homeskillet needs to clone and link a repository.\n"+install {
 		t.Errorf("ready closing: %q, %v", output.String(), err)
+	}
+
+	// Everything in place: one line, then what was checked, aligned.
+	output.Reset()
+	done := []item{
+		{id: developerModeStep, title: titles[developerModeStep], state: itemDone, detail: "symlinks allowed"},
+		{id: "git", title: "Git", state: itemDone, detail: `C:\Program Files\Git\cmd\git.exe`},
+	}
+	if err := out.ready(done, platform, home); err != nil ||
+		output.String() != "homeskillet prepare: ready on windows/amd64\n  Developer Mode  symlinks allowed\n  Git             C:\\Program Files\\Git\\cmd\\git.exe\n"+install {
+		t.Errorf("ready:\n%s", output.String())
 	}
 
 	// Outcomes as they happen: aligned, by title, for a person, who gets no

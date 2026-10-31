@@ -1,8 +1,8 @@
 # Using homeskillet
 
 How to run homeskillet day to day. [manifest.md](manifest.md) describes what a configuration repository holds, and
-[safety.md](safety.md) what homeskillet refuses to do and why. `homeskillet help` (or `-h`) lists every command and
-option.
+[safety.md](safety.md) what homeskillet refuses to do and why. `homeskillet help` (or `-h`) lists the commands, and
+`homeskillet help COMMAND` (or `homeskillet COMMAND --help`) shows one command's arguments and the options it takes.
 
 ## Commands
 
@@ -12,7 +12,7 @@ option.
 | `link` | Link the repository's files into the home directory. |
 | `unlink` | Remove the repository's links from the home directory. |
 | `setup` | Show each setup step and run the ones you approve ([manifest.md](manifest.md#setup-steps)). |
-| `init` | Write a starter `bootstrap.json` where there is no manifest ([manifest.md](manifest.md#creating-one)). |
+| `init` | Show a starter `bootstrap.json`, and a `home/` when missing, then create them once you approve, where there is no manifest ([manifest.md](manifest.md#creating-one)). |
 | `check` | List every issue in a repository, for every platform, or say it is valid ([manifest.md](manifest.md#checking-one)). |
 | `prepare`, `prep` | Check that this machine has what homeskillet needs, such as Developer Mode and Git on Windows, and offer what is missing once you approve ([windows.md](windows.md#preparing-windows)). |
 | `wsl` | On Windows, or from a WSL shell, act in a WSL distribution ([windows.md](windows.md#the-wsl-command)). |
@@ -20,8 +20,11 @@ option.
 | `update` | Install the newest release from GitHub, or the version given, checked against its `SHA256SUMS`, keeping the old one ([install.md](install.md#updating)). |
 | `install`, `use` | Install this build as a version of its own, or with a version, that release as `update` does; run `latest`, `previous`, or a version ([install.md](install.md#versions-and-updates)). |
 | `list`, `list-remote` | List the installed versions and which one runs; list the versions published on GitHub and which are installed ([install.md](install.md#versions-and-updates)). |
-| `self` | The same as `update`, `install`, `use`, `list`, and `list-remote` (`self releases`), plus `self remove` ([install.md](install.md#versions-and-updates)). |
-| `version`, `completion`, `help` | Show the version, print a shell completion script ([install.md](install.md#shell-completion)), or show the help. |
+| `remove` | Delete installed versions, one or several, but never the one that runs ([install.md](install.md#versions-and-updates)). |
+| `self` | The same as `update`, `install`, `use`, `list`, `list-remote` (`self releases`), and `remove` ([install.md](install.md#versions-and-updates)). |
+| `version`, `completion`, `help` | Show the version, print a shell completion script ([install.md](install.md#shell-completion)), or show the help: the commands, or with a command, as in `help link`, that command's arguments and options. `self help`, `backups help`, and `wsl help` show theirs too. |
+| `info` | Show what to paste into a bug report: which homeskillet runs and from where, the OS, and the terminal, as `term` shows it. It writes your home folder as `~` and shows nothing else from your environment. |
+| `term` | Show what homeskillet detects about the terminal, with what each finding decides, such as whether output is a terminal (a grouped view or lines for scripts) and whether colors are on and why. |
 
 ```sh
 homeskillet ~/dotfiles                        # status: what link would change
@@ -39,9 +42,12 @@ homeskillet check ~/dotfiles
 
 The repository is the first argument after the command, or `--repo`. Left out, it is the current directory or, when that
 is not a repository, the one repository already linked into the home, so after the first `link`, `homeskillet link`
-alone works anywhere; with several linked, homeskillet lists them rather than choose. In place of a command, and after
-`setup`, where other words name steps, the repository must plainly be a path: `.`, `..`, or containing `/`, or on
-Windows `\` or a drive. A mistyped command is then never read as a directory: write `./dotfiles`, not `dotfiles`.
+alone works anywhere; with several linked, homeskillet lists them rather than choose. With none linked yet, as on a new
+machine, `homeskillet` run alone at a terminal shows how to start, step by step, from `prepare` to the first `link`,
+naming itself as you ran it, such as the download before it is installed; a script gets the error. In place of a
+command, and after `setup`, where other words name steps, the repository must plainly be a path: `.`, `..`, or
+containing `/`, or on Windows `\` or a drive. A mistyped command is then never read as a directory: write
+`./dotfiles`, not `dotfiles`.
 
 A path that starts with `~`, as `~/dotfiles`, means your home from any shell, `cmd` included. Keep the clone in a
 permanent place, since links point into it, and unlink before moving or deleting it.
@@ -63,10 +69,10 @@ value, as from an unset variable in `--home "$SCRATCH"`, is refused rather than 
 | `--dry-run` | Change nothing and run no setup step; say what would happen. |
 | `--home DIR` | Act on another home, such as a scratch one to try a repository in. |
 | `--platform OS[/ARCH]` | Act for another platform, such as `darwin` or `linux/arm64` ([manifest.md](manifest.md#platforms)). |
-| `--quiet` | Print nothing but errors; the exit status reports the result. Not for `setup`, whose steps must be shown. |
+| `--quiet` | Print nothing but errors; the exit status reports the result. Not for `setup`, whose steps must be shown, and for `init` only with `--yes`, since it would hide init's question. |
 | `--verbose` | On failure, show the whole error, not only its first line ([Output](#output)). |
 | `--force` | For `link`: move conflicting files into a backup, then link (see below). |
-| `--yes` | For `setup`: run every pending step without asking, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). For `backups purge`: delete every backup listed without asking. |
+| `--yes` | Approve without asking. For `setup`: run every pending step, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). For `prepare`: run the installs, though winget's repair still asks. For `init`: create the starter files. For `backups purge`: delete every backup listed. |
 | `--older-than AGE` | For `backups`: only backups moved more than `AGE` ago, such as `30d`. |
 | `--data-dir DIR` | Keep the records of links and setup steps, backups, and installed versions elsewhere ([install.md](install.md#data-directory)). |
 | `--prefix DIR` | For `self`: install under another prefix. |
@@ -79,6 +85,20 @@ At a terminal, homeskillet says what it is running and where, groups files by wh
 and ends with what changed or what to do; after `link` and `status`, it also names any setup steps still pending. In a
 pipe or a script it prints one tab-separated line per file or step instead, a stable format to parse, such as
 `linked<TAB>/home/you/.bashrc -> /home/you/dotfiles/home/.bashrc`.
+
+At a terminal, every command and its help follow one color standard, where each color has one meaning:
+
+| Color | Means | Such as |
+|---|---|---|
+| Bold | A command's title, and the headings of its groups and sections | `homeskillet link`, `Usage:` |
+| Green | Done, in place, or ready | `Linked (3)`, `Done:`, `Ready:`, `current` |
+| Yellow | Still to do, or did not happen | `Conflicts (1)`, `Dry run:`, `Pending (2)`, `Note:` |
+| Red | A failure | the `homeskillet:` before an error |
+| Cyan | In help, what to type: commands, options, and arguments | `link`, `--dry-run`, `VERSION` |
+
+Colors go only around homeskillet's own words, never a path, a version, or another name, and they only add to what the
+words say, so nothing is lost without them. They are off in a pipe or script, when `NO_COLOR` is set to anything, when
+`TERM` is `dumb`, and on a Windows console that does not take color codes; `homeskillet term` says which applies.
 
 A failure is one line saying what failed, with homeskillet's own advice on the lines after it, and a hint when the cause
 is one it recognizes: a setup step that failed or names a program not on `PATH`, a permission it lacks, or a full disk.

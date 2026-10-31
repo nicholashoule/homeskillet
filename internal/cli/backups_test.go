@@ -10,6 +10,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -97,7 +98,7 @@ func TestBackupsArguments(t *testing.T) {
 		args []string
 		want string
 	}{
-		{[]string{"backups", "bogus"}, "unknown command backups bogus"},
+		{[]string{"backups", "bogus"}, "'backups bogus' is not a command; 'backups' takes list or purge"},
 		{[]string{"backups", "purge", "extra"}, "unexpected arguments"},
 		{[]string{"backups", "--older-than", "0d"}, "not a number of days"},
 		{[]string{"backups", "--older-than", "soon"}, "not an age"},
@@ -123,11 +124,20 @@ func TestBackupsView(t *testing.T) {
 	if err := listBackups(&view{}, &output, data, kept, false); err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"data:", "Backups (1)", filepath.Join(link.BackupDir, ".bashrc.1700000000"), "2.1 KiB",
-		time.Unix(1700000000, 0).Format("2006-01-02 15:04"), "1 backup; homeskillet backups purge deletes them after asking."} {
-		if !strings.Contains(output.String(), want) {
-			t.Errorf("view lacks %q:\n%s", want, output.String())
-		}
+	// Each backup by its place in the home, with when it was moved and its
+	// size; then where to find its file to restore it.
+	want := "homeskillet backups\n  backups in: " + filepath.Join(data, link.BackupDir) + "\n\n" +
+		"Backups (1)\n  .bashrc  " + time.Unix(1700000000, 0).Format("2006-01-02 15:04") + "  2.1 KiB\n\n" +
+		"To restore one, move it back from that folder, where its name ends in the time it was moved, as in .bashrc.1700000000.\n" +
+		"homeskillet backups purge deletes them after asking.\n"
+	if output.String() != want {
+		t.Errorf("view:\n%s\nwant:\n%s", output.String(), want)
+	}
+	// Newest first.
+	output.Reset()
+	two := append(slices.Clone(kept), link.Kept{Path: filepath.Join(data, link.BackupDir, ".vimrc.1700000500"), Original: ".vimrc", Moved: time.Unix(1700000500, 0), Size: 10})
+	if err := listBackups(&view{}, &output, data, two, false); err != nil || strings.Index(output.String(), ".vimrc ") > strings.Index(output.String(), ".bashrc ") {
+		t.Errorf("not newest first: %v\n%s", err, output.String())
 	}
 	output.Reset()
 	if err := listBackups(&view{}, &output, data, nil, false); err != nil || !strings.Contains(output.String(), "No backups.") {

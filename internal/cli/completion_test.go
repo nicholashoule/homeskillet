@@ -118,6 +118,26 @@ func TestCompletions(t *testing.T) {
 	}
 }
 
+// TestCompleteRemove checks that remove offers every installed version,
+// after the first too, but none already named.
+func TestCompleteRemove(t *testing.T) {
+	requireSymlinks(t)
+	_, home := repository(t)
+	installVersions(t, home, "v0.3.0", "v0.3.1", "v0.4.0")
+	for _, test := range []struct {
+		words      []string
+		candidates []string
+	}{
+		{[]string{"remove", "--home", home, "v0.3"}, []string{"v0.3.0", "v0.3.1"}},
+		{[]string{"remove", "--home", home, "v0.3.0", "v0.3"}, []string{"v0.3.1"}},
+		{[]string{"self", "remove", "--home", home, "v0.3.1", ""}, []string{"v0.3.0", "v0.4.0"}},
+	} {
+		if directive, candidates := completions(test.words); directive != ":none" || !slices.Equal(candidates, test.candidates) {
+			t.Errorf("%q: got %s %q, want %q", test.words, directive, candidates, test.candidates)
+		}
+	}
+}
+
 // TestMatchingDropsUnprintable checks that a candidate that could rewrite the
 // terminal, such as a version directory named with an escape sequence, is
 // never offered to the shell.

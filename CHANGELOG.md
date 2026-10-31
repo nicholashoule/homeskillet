@@ -8,44 +8,84 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 
 ## [Unreleased]
 
-## [0.4.0]
+## [0.5.0]
 
-homeskillet now gets a fresh machine ready and manages its own versions like a version manager: `homeskillet prepare`
-checks for what it needs, such as Developer Mode and Git on Windows, and offers what is missing, each only once you
-approve; `list` and `list-remote` show the versions installed and published; and `update` always leaves the newest
-release running. Failures are one line and a hint, with `--verbose` for the whole error.
+homeskillet's output reads better at a terminal: `help` is short, with each command's own help one command away,
+version lists line up, `update`, `use`, and `remove` say what happened in a sentence, `init` asks before it creates
+anything, `info` gathers what a bug report needs, and one color standard shows what is done and what still needs doing.
+Starting out is guided: `homeskillet` alone shows how to begin, `prepare` can be run again until everything is in
+place and then says what to do next, and the Windows install lines leave `homeskillet` ready to run.
 
 ### Added
 
-- `homeskillet prepare` gets a machine ready before a repository is cloned: on Windows it checks Developer Mode, Git,
-  and PowerShell 7, offers to open Settings for Developer Mode, to register or repair winget when it is missing, and to
-  install Git and PowerShell with winget, each shown exactly and run only once you answer `y`; on Linux and macOS it
-  checks for Git and says how to install it. `--dry-run` only checks, and it exits nonzero while something needed is
-  missing; `homeskillet prep` is short for it ([docs/windows.md](docs/windows.md#preparing-windows)).
-- A failure is one line and a hint when homeskillet recognizes the cause, such as a setup step that failed, a program
-  not on `PATH`, a permission it lacks, or a full disk; `--verbose` shows the whole error
+- `homeskillet` alone, at a terminal with no repository here and none linked yet, shows how to start, step by step:
+  `prepare`, `install` when you ran the download, `init` or `git clone`, where files go, and `link`, each ready to
+  copy ([docs/usage.md](docs/usage.md#the-repository)).
+- `homeskillet init ~/dotfiles` creates `~/dotfiles` when it does not exist yet, with any missing directories above it,
+  each listed in what it shows and asks about ([docs/manifest.md](docs/manifest.md#creating-one)).
+- `prepare` checks your home first, as every command that links or installs there does. When it fails, as when `C:\`
+  lets other users change it, `prepare` says why and who can fix it, holds back only the installs that would run
+  there, and still offers the rest, so you can run it again as each thing is fixed
+  ([docs/windows.md](docs/windows.md#preparing-windows)).
+
+- `homeskillet remove VERSION...` deletes installed versions, one or several at once, as `self remove` does. It checks
+  every one before deleting any, and refuses the one that runs.
+- `homeskillet info` shows what to paste into a bug report: which homeskillet runs and from where, the OS release and
+  kernel, and the terminal. It writes your home folder as `~` and shows nothing else from your environment. A new issue
+  template asks for it.
+- `homeskillet term` shows the terminal alone, with what each finding decides, such as whether output is a terminal
+  and whether colors are on and why.
+- At a terminal, every command and its help use one color standard: bold titles and headings, green for what is done
+  or ready, yellow for what still needs doing or did not happen, red for failures, and in help, cyan for what to type.
+  `NO_COLOR` or `TERM=dumb` turns them off, and pipes and scripts never get them
   ([docs/usage.md](docs/usage.md#output)).
-- `homeskillet list` lists the installed versions and which one runs, and `homeskillet list-remote` the versions
-  published on GitHub and which of them are installed, the same as `self list` and `self releases`
-  ([docs/install.md](docs/install.md#versions-and-updates)).
 
 ### Changed
 
-- `homeskillet update` always leaves the newest release running: when you had pinned a version with `use`, it follows
-  `latest` again and names the version that ran before. `install VERSION` and `update VERSION` still install without
-  changing which version runs ([docs/install.md](docs/install.md#updating)).
-- Messages name the short commands, as in `homeskillet use latest` and `homeskillet list`, and asking for a version
-  that is not published says so and points to `homeskillet list-remote`.
-- An unknown command gets one line, such as `'lnk' is not a command; did you mean 'link'?`, and help describes each
-  command in a line, with a link to the full docs. At a terminal, `prepare` reports in groups with a closing sentence,
-  as `setup` does, and neither adds a `ran` line after a step's own output; scripts still get one line per item and
-  outcome.
+- The Windows install lines put `.local\bin` on your Path, for that window and new ones, so `homeskillet` runs at once,
+  delete the downloads, and say when homeskillet is not installed yet because `prepare` or `install` stopped. They
+  download with PowerShell's own `Invoke-WebRequest` where `curl.exe` is missing, and the steps say how to tell
+  PowerShell from Command Prompt and switch ([docs/windows.md](docs/windows.md#installing)).
+- `prepare` ends, when everything is in place, by saying that the machine has what homeskillet needs, and what to do
+  next: install homeskillet when you ran the download, put `.local\bin` on PATH, or, with nothing linked yet, run
+  `homeskillet` alone to start.
+- On Windows, when Developer Mode is still off after you press Enter, as when Windows has not finished switching it
+  on, `prepare` asks whether to check again instead of going on without it.
+- On Windows, when a directory above your profile, such as `C:\`, lets other users change it, the error says that only
+  an administrator can fix it, names the permission, such as Modify, and how to see it with `icacls`, instead of
+  advising you to move your files under your profile
+  ([docs/windows.md](docs/windows.md#ownership-and-permissions)).
+- Advice in errors names homeskillet as you ran it, such as `.\homeskillet-windows-amd64.exe` before it is installed,
+  so it works as written.
+- `homeskillet init` shows what it would create and asks before creating it; scripts pass `--yes`, which `--quiet`
+  needs too. It refuses your home directory itself, and as before never replaces a file or directory
+  ([docs/manifest.md](docs/manifest.md#creating-one)).
+- At a terminal, `homeskillet list` groups releases apart from development builds, newest first, in columns that line up
+  however long a development version is, and ends with which version runs; `list-remote` lines up too and says what the
+  newest release is to this machine. `prepare` is a single line and a list when everything is in place. `update`, `use`,
+  and `remove` say what happened in a sentence, such as `v0.4.0 runs now, following latest`, with how to go back, or
+  `Removed v0.3.0 and v0.3.1.`; `backups` names each file by its place in the home and says how to restore one; and
+  `check` says plainly when a directory is no configuration repository at all. Scripts get the same tab-separated lines
+  as before.
+- A command run without what it needs, or with a subcommand it does not take, says so in one line naming the command as
+  you typed it, such as `'use' needs a version: latest, previous, or one 'homeskillet list' shows`.
+- `homeskillet help` is short: the commands, each in a line, and the options most of them take.
+  `homeskillet help COMMAND`, `homeskillet COMMAND --help`, or `homeskillet self help` shows that command's usage, its
+  arguments, and only the options it takes. A mistyped option points to that command's help.
+- Installing starts from your system: the README and the website link to each system's install commands, and the
+  Windows guide opens with numbered steps that pick the build for your PC. On Windows, when `.local\bin` is not on
+  your Path, `install` prints the PowerShell command that adds it ([docs/windows.md](docs/windows.md#installing)).
+- The note that a newer release is available reads as a sentence: `Note: v0.5.0 is available; homeskillet update
+  installs it`.
+- `homeskillet help` and `homeskillet version` name the project's page, https://github.com/nicholashoule/homeskillet.
 
 ## Earlier Releases
 
 Each release keeps its notes on its GitHub Release; see [all
 releases](https://github.com/nicholashoule/homeskillet/releases).
 
+- [0.4.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.4.0): `prepare`, `list` and `list-remote`, `update`
+  following latest, and one-line failures with `--verbose`.
 - [0.3.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.3.1): the note that a newer release is available,
   `install VERSION`, and checked install steps for Windows and Go.
 - [0.3.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.3.0): `homeskillet update`, `self releases`, the
@@ -54,5 +94,5 @@ releases](https://github.com/nicholashoule/homeskillet/releases).
   `check`, and `backups`.
 - [0.1.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.1.1): the first release, for Linux and macOS.
 
-[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.4.0...HEAD
-[0.4.0]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.4.0
+[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.5.0

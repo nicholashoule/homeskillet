@@ -254,7 +254,7 @@ func TestRepositoryArgument(t *testing.T) {
 		{[]string{"version", "/r"}, "unexpected"},
 		{[]string{"self", "list", "/r"}, "unexpected"},
 		{[]string{"self", "use", "v0.0.1", "v0.0.2"}, "unexpected"},
-		{[]string{"self", "--dry-run", "upgrade"}, "unknown command self upgrade"},
+		{[]string{"self", "--dry-run", "upgrade"}, "'self upgrade' is not a command; 'self' takes install, update"},
 		{[]string{"status", "r", "--force"}, "applies only to link"},
 	} {
 		if _, err := parse(test.args, new(bytes.Buffer)); err == nil || !strings.Contains(err.Error(), test.want) {
@@ -385,8 +385,8 @@ func TestSetupSteps(t *testing.T) {
 		{[]string{"setup", "dotnet", "--repo", "r"}, "r", []string{"dotnet"}},
 	} {
 		inv, err := parse(test.args, new(bytes.Buffer))
-		if err != nil || inv.repo != test.repo || !slices.Equal(inv.steps, test.steps) {
-			t.Fatalf("%v: got repo %q, steps %q, %v", test.args, inv.repo, inv.steps, err)
+		if err != nil || inv.repo != test.repo || !slices.Equal(inv.names, test.steps) {
+			t.Fatalf("%v: got repo %q, steps %q, %v", test.args, inv.repo, inv.names, err)
 		}
 	}
 
@@ -471,6 +471,7 @@ func TestVersion(t *testing.T) {
 		}
 		// Built for and run on the same platform, the two are one line.
 		if !strings.HasPrefix(output.String(), "homeskillet ") || !strings.Contains(output.String(), "go:") ||
+			!strings.HasSuffix(output.String(), "  source:    "+project+"\n") ||
 			!strings.Contains(output.String(), "platform:  "+runtime.GOOS+"/") || strings.Contains(output.String(), "host:") {
 			t.Fatalf("%v: %q", args, output.String())
 		}
@@ -984,7 +985,8 @@ func TestDefaultRepository(t *testing.T) {
 	// linked yet: the error says how to name one.
 	t.Chdir(elsewhere)
 	err := Run(context.Background(), []string{"link", "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))
-	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "name one: homeskillet link") {
+	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "name one: homeskillet link") ||
+		!strings.Contains(err.Error(), "start one with homeskillet init") {
 		t.Fatalf("nothing recorded: %v", err)
 	}
 	err = Run(context.Background(), []string{"link", home, "--home", home}, nil, new(bytes.Buffer), new(bytes.Buffer))

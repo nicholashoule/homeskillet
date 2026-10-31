@@ -83,7 +83,7 @@ func TestPrepareNotice(t *testing.T) {
 	check := &updateCheck{data: data, now: now, deadline: now, done: make(chan notice, 1)}
 	check.done <- found
 	var output bytes.Buffer
-	if err := check.print(&output); err != nil || output.String() != found.line {
+	if err := check.print(&output); err != nil || output.String() != "Note: "+found.line {
 		t.Fatalf("print: %q, %v", output.String(), err)
 	}
 	if found := prepareNotice(context.Background(), data, "v0.3.0", none, now.Add(time.Hour)); found.line != "" || asked != 1 {
