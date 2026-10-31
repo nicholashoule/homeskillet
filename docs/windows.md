@@ -1,7 +1,7 @@
 # Windows
 
-homeskillet runs natively on Windows 10 and 11, on x64 and Arm64, from PowerShell or any other shell. Inside WSL, it is a
-Linux program, as on any other Linux. You choose what it manages: only your PowerShell profile and other Windows
+homeskillet runs natively on Windows 10 and 11, on x64 and Arm64, from PowerShell or any other shell. Inside WSL, it is
+a Linux program, as on any other Linux. You choose what it manages: only your PowerShell profile and other Windows
 dotfiles; only your WSL home; or both, from one repository, with `home/` for Windows and `home/wsl/` for the
 distribution, each side with its own install and record of links. [Installing](#installing) comes first; the rest of
 this page covers what else differs on Windows, and the rest of the documentation applies as written.
@@ -9,7 +9,7 @@ this page covers what else differs on Windows, and the rest of the documentation
 ## Installing
 
 1. Open **PowerShell** from the Start menu as yourself. Do not choose **Run as administrator**: homeskillet refuses an
-   elevated terminal. The lines below are PowerShell, so check the prompt: PowerShell starts with `PS`, as in
+   elevated terminal. The lines below are PowerShell, so check the prompt: in PowerShell it starts with `PS`, as in
    `PS C:\Users\you>`. If yours is `C:\Users\you>` alone, the window is Command Prompt; type `powershell`, press Enter,
    and the same window runs PowerShell.
 2. Paste these lines. They download the build for your PC and the release's `SHA256SUMS` into your Downloads folder,
@@ -43,26 +43,35 @@ PowerShell may otherwise not offer. The check and the run are one statement, so 
 not download, is never run. If something stops you, [Before You Start](#before-you-start) and [Preparing
 Windows](#preparing-windows) say what each check needs and why. From then on, `homeskillet update` installs the newest
 release, checked with Windows's own `curl.exe` and `certutil.exe`; [install.md](install.md) covers versions, pinning,
-and removal.
+removal, and tab completion in PowerShell 7.3 or later ([Shell Completion](install.md#shell-completion)). To build
+from source, run `go build -o bin\homeskillet.exe .` in a clone, then `bin\homeskillet.exe install`
+([development.md](development.md#on-windows)).
 
 ### When a Folder Is Writable by Others
 
-Anyone who can change a linked file, such as your PowerShell profile, can run code as you. So every command, `prepare`,
-`install`, and `link` included, first checks that nobody else can change your profile, the folders above it, or the
-repository, and stops with a message naming the folder and who may change it, such as `C:\ is writable by NT
-AUTHORITY\Authenticated Users`. What to do depends on the folder:
+Anyone who can change a linked file, such as your PowerShell profile, can run code as you. So when another account can
+change your profile, a folder above it, or the repository, its permissions are too open for homeskillet: every
+command, `link` included, stops, names the folder and the account, such as `C:\ is writable by NT
+AUTHORITY\Authenticated Users`, and changes nothing until you fix them:
 
-- **A folder outside your profile**, such as `C:\src\dotfiles`: a folder made at the root of a drive lets every
-  signed-in user change it. Keep the repository in your profile instead: `homeskillet init $HOME\dotfiles` creates
-  one there, and `git clone URL $HOME\dotfiles` clones one.
-- **A folder in your profile**: remove the other account from it on its Security tab (Properties, Security, Edit), or
-  move the repository into a new folder in your profile.
-- **`C:\`, or another folder your profile is in**: every file in your profile is under it, so no folder you create
-  or move can help. As Windows sets it up, `C:\` passes, so on this machine it has been changed, and an administrator
-  has to put back what Windows sets up, as below; for another folder, such as `C:\Users`, compare `icacls` on it with
-  a machine where homeskillet works, and remove what differs.
+- **A folder you made**, such as `C:\src\dotfiles`, or one in your profile, needs its permissions fixed: one made at the
+  root of a drive, such as `C:\src`, lets every signed-in user change what is in it. In PowerShell as yourself, with
+  that folder, or the one the message names, in place of `C:\src`, this stops it inheriting those permissions and gives
+  full control of it, and of everything in it, to you, `SYSTEM`, and `Administrators` alone:
 
-To put back `C:\`:
+  ```powershell
+  icacls C:\src /inheritance:r /grant:r "*$([Security.Principal.WindowsIdentity]::GetCurrent().User.Value):(OI)(CI)F" '*S-1-5-18:(OI)(CI)F' '*S-1-5-32-544:(OI)(CI)F'
+  ```
+
+  `icacls C:\src` then lists only those three; remove any other with `icacls C:\src /remove:g 'BUILTIN\Users'`, naming
+  it, and if icacls says access is denied, the folder is not yours: run it as administrator. Or keep the repository in
+  your profile instead: `git clone URL $HOME\dotfiles`.
+- **`C:\`, or another folder your profile is in**, had its permissions opened beyond what Windows sets, and they need
+  repairing: every file in your profile is under it, so no folder you make or move can help. An administrator has to
+  restore the permissions Windows sets, as below, which removes the extra access. For another folder, such as
+  `C:\Users`, compare `icacls` on it with a machine where homeskillet works, and remove what differs.
+
+To repair `C:\`:
 
 1. Open PowerShell as administrator: right-click Start and choose **Terminal (Admin)**, or on Windows 10 **Windows
    PowerShell (Admin)**, and approve the prompt.
@@ -81,23 +90,23 @@ To put back `C:\`:
    Users:(OI)(CI)(M)` or `Everyone:(F)`, is the cause. `(IO)` marks a right that only what is created inside gets,
    and `(AD)` only lets an account create folders, so those pass. Lines that some apps add for an `S-1-15-3-…`
    capability with only read rights, such as `(S,RD,X,RA)`, pass too.
-3. Put back what Windows sets up for that account, in the same window. For `NT AUTHORITY\Authenticated Users`, the
-   usual one:
+3. Repair that account's permissions, in the same window, by restoring what Windows sets. For
+   `NT AUTHORITY\Authenticated Users`, the usual one:
 
    ```powershell
    icacls C:\ /remove:g '*S-1-5-11'
    icacls C:\ /grant '*S-1-5-11:(OI)(CI)(IO)(M)' '*S-1-5-11:(AD)'
    ```
 
-   The first line removes all entries for the account, and the second restores what Windows sets up. For
-   `BUILTIN\Users`, they are `icacls C:\ /remove:g '*S-1-5-32-545'` and `icacls C:\ /grant
+   The first line removes all of the account's entries, and the second grants back only what Windows sets, so the extra
+   access is gone. For `BUILTIN\Users`, they are `icacls C:\ /remove:g '*S-1-5-32-545'` and `icacls C:\ /grant
    '*S-1-5-32-545:(OI)(CI)(RX)'`; for `Everyone`, which Windows does not list on `C:\`, only `icacls C:\ /remove:g
    '*S-1-1-0'`. Accounts are named by SID, the same in every language, and quoted, so PowerShell leaves the parentheses
    alone. Windows carries the change to everything under `C:\` that inherits from it, which can take a few minutes; let
    it finish, then run `icacls C:\` again to compare.
 4. Close the administrator window, open PowerShell as yourself again, and paste the [install lines](#installing) again:
-   `prepare` checks again, and the install carries on from step 3. Where homeskillet is already installed, run
-   `homeskillet prepare` instead, then what stopped before, such as `homeskillet link`.
+   `prepare` checks again, and the install carries on from its [step 3](#installing). Where homeskillet is already
+   installed, run `homeskillet prepare` instead, then what stopped before, such as `homeskillet link`.
 
 ### Putting the Command on Your Path
 
@@ -115,15 +124,6 @@ if (($userPath -split ';') -notcontains $bin) { Set-ItemProperty HKCU:\Environme
 
 Both keep the Path as it is stored, so entries such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` stay
 variables, and tell Windows the environment changed, so new windows see the Path at once.
-
-### Building from Source
-
-For development, or bringing homeskillet to another system: from a clone of this repository, `go build -o
-bin\homeskillet.exe .`, then `bin\homeskillet.exe install`, or `make install` where GNU Make is installed
-([development.md](development.md#on-windows), [install.md](install.md#building-from-source)). The command lands in
-`%USERPROFILE%\.local\bin\homeskillet.exe`, as a release does, where uv and other installers also put programs.
-
-For tab completion in PowerShell 7.3 or later, see [Shell Completion](install.md#shell-completion).
 
 ## What Is Supported
 
@@ -167,7 +167,7 @@ installed. It checks, in order:
 | Item | Needed for | When it is missing |
 |---|---|---|
 | Home | Everything: links go into it, homeskillet installs into it, and the installs below run in it | Your profile folder, and every folder above it, such as `C:\`, must pass the [ownership rules](#ownership-and-permissions). homeskillet cannot fix that itself, so `prepare` says why it fails and who can fix it ([how](#when-a-folder-is-writable-by-others)), still offers Developer Mode, and holds back the installs below until it passes. |
-| Developer Mode | Links and installs homeskillet itself | Offers to open Settings for developers, waits while you switch it on, then checks again, and, while it is still off, asks whether to check once more. Turning it on takes an administrator, so the switch is yours. |
+| Developer Mode | Making links, and installing homeskillet itself | Offers to open the For developers page in Settings, waits while you switch it on, then checks again, and, while it is still off, asks whether to check once more. Turning it on takes an administrator, so the switch is yours. |
 | winget | The two installs below | Offers, in turn, until winget is found: registering it with Microsoft's `Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe`, as needed after a first sign-in, then waits a few seconds for Windows to finish; then Microsoft's repair, which installs the NuGet provider and the `Microsoft.WinGet.Client` module from the PowerShell Gallery for your account only and runs `Repair-WinGetPackageManager`, asked about even under `--yes`. Failing both, it names App Installer in the Microsoft Store, winget's GitHub releases, and each tool's official download page. |
 | Git | Cloning a repository | Offers `winget install --id Git.Git --exact --source winget` with the two `--accept-…-agreements` flags. winget verifies the installer's SHA-256 against its manifest, which is why homeskillet does not download installers itself. |
 | PowerShell 7 | Most Windows repositories' steps, and tab completion | Offers `winget install --id Microsoft.PowerShell` the same way. Not required: `prepare` is ready without it. |
@@ -180,7 +180,7 @@ run without asking, except winget's repair, which downloads code from the PowerS
 opened, since nobody is there to switch Developer Mode on. `prepare` ends with `ready` when the home passes and
 Developer Mode and Git are in place, and otherwise names what is still missing and exits nonzero; run it again at any
 point, as each thing is fixed. Once ready, it says what to do next: install homeskillet when what ran is the download;
-put `.local\bin` on your Path, when it is not; or, with nothing linked yet, run `homeskillet` alone, which shows how to
+put `.local\bin` on your Path when it is not; or, with nothing linked yet, run `homeskillet` alone, which shows how to
 start. On Linux and macOS it checks the home the same way, and for Git, and says how to install Git, since that takes
 `sudo` or Apple's installer.
 
@@ -454,7 +454,7 @@ acts in a distribution, WSL's default unless `--distribution NAME` names another
   in only once all of it has arrived, and say so on standard error every time: copied, updated with how many files were
   added, changed, and removed, or up to date, so a missing line means no update. `status` and `--dry-run` change
   nothing: they use the copy as it is and say when it differs from the clone, or a temporary copy when there is none
-  yet. Links in WSL point to the copy, so edit the Windows clone, and `homeskillet wsl link` applies the change across.
+  yet. Links in WSL point to the copy, so edit the Windows clone, and `homeskillet wsl link` brings the change across.
   Keep shell scripts with LF line endings, as a `.gitattributes` with `*.sh text eol=lf` does, since the copy has the
   clone's bytes.
 - **Options** other than `--distribution` and `--from` go to homeskillet in the distribution and mean what they mean
