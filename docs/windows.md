@@ -15,7 +15,7 @@ this page covers what else differs on Windows, and the rest of the documentation
 2. Paste these lines. They download the build for your PC and the release's `SHA256SUMS` into your Downloads folder,
    and only if the build's SHA-256 is listed there, run its `prepare` and then its `install`. If `install` stops, a
    warning says that homeskillet is not installed yet; deal with what it said, and paste the lines again. When it says
-   a folder, such as `C:\`, is writable by others, see [When a Folder Is Writable by
+   a folder's permissions are too open, such as `C:\`'s, see [When a Folder Is Writable by
    Others](#when-a-folder-is-writable-by-others):
 
    ```powershell

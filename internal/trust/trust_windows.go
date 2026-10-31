@@ -143,7 +143,7 @@ func checkPath(path string, rights uint32) error {
 		return err
 	}
 	if info.Mode()&(os.ModeSymlink|os.ModeIrregular) != 0 && !info.IsDir() {
-		return fmt.Errorf("%s is a symlink, a junction, or another reparse point, such as a OneDrive file, which homeskillet does not trust here; use the directory or file it stands for", printable(path))
+		return fmt.Errorf("%s: a symlink, junction, or other reparse point, such as a OneDrive file, which homeskillet does not follow here; use the directory or file it stands for", printable(path))
 	}
 	descriptor, err := pathSecurity(path, false)
 	if err != nil {
@@ -164,7 +164,7 @@ type descriptor struct {
 // any right.
 func (d descriptor) checkOwner(path string) error {
 	if !trusted(d.owner) {
-		return fmt.Errorf("%s is owned by %s, not by you, SYSTEM, or Administrators", printable(path), account(d.owner))
+		return fmt.Errorf("%s: owned by %s, not you, SYSTEM, or Administrators; use files and folders you own instead", printable(path), account(d.owner))
 	}
 	return nil
 }
@@ -176,7 +176,7 @@ func (d descriptor) check(path string, rights uint32) error {
 		return err
 	}
 	if d.dacl == nil {
-		return fmt.Errorf("%s has no access control list, so everyone may change it", printable(path))
+		return fmt.Errorf("%s: permissions too open: it has no access control list, so everyone can change it; fix them so only you can change it", printable(path))
 	}
 	entries, err := parseACL(d.dacl)
 	if err != nil {
@@ -195,11 +195,6 @@ func (d descriptor) check(path string, rights uint32) error {
 	return nil
 }
 
-// permissionsGuide is where docs/windows.md says how an administrator puts
-// back what Windows sets up, for an error the user cannot fix by moving a
-// folder.
-const permissionsGuide = "https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#when-a-folder-is-writable-by-others"
-
 // profile is the current user's profile directory, found once, or "" when
 // Windows cannot say where it is.
 var profile = sync.OnceValue(func() string {
@@ -211,23 +206,27 @@ var profile = sync.OnceValue(func() string {
 })
 
 // writableError reports a path that someone untrusted may change, given the
-// access mask of the entry that lets them. Folders created at the root of a
+// access mask of the entry that lets them, in one line, as every refusal here
+// does: the path, what is wrong, and what to do. Folders made at the root of a
 // drive, such as C:\src, let every signed-in user change what is in them,
-// while a profile directory lets only its user, hence the advice to keep
-// files under it. That advice cannot help with a directory above the
-// profile, such as C:\, which every check of a file in the profile passes
-// through: no folder the user creates or moves can avoid it, and only an
-// administrator can change it. The error says so, names the permission as a
-// folder's Security tab does, so that it can be matched with what icacls
-// shows, and links to the steps that put back what Windows sets up.
+// while a profile lets only its user, so a folder outside the profile can
+// move into it instead. That cannot help with a directory above the profile,
+// such as C:\, which every check of a file in the profile passes through:
+// only an administrator can repair it. The permission is named as a folder's
+// Security tab names it, so that it can be matched with what icacls shows.
+// The messages name no documentation, which can move; the Windows guide has
+// the commands.
 func writableError(path, sid string, mask uint32) error {
-	if home := profile(); home == "" || !Within(path, home) || strings.EqualFold(path, home) {
-		return fmt.Errorf("%s is writable by %s; keep it under your user profile, which only you can change, or remove that permission", printable(path), account(sid))
+	home := profile()
+	switch {
+	case home != "" && Within(path, home) && !strings.EqualFold(path, home):
+		return fmt.Errorf("%s: permissions too open: %s can change it (%s), and your profile is inside it, so moving files cannot help; "+
+			"an administrator needs to repair them by restoring what Windows sets (icacls %s shows them)",
+			printable(path), account(sid), permission(mask), printable(path))
+	case home != "" && Within(home, path):
+		return fmt.Errorf("%s: permissions too open: %s can change it; fix them so only you can change it", printable(path), account(sid))
 	}
-	return fmt.Errorf("%s holds your profile and is writable by %s (%s), so homeskillet trusts nothing in your profile, "+
-		"and no folder you create or move can avoid that\n"+
-		"  an administrator has to put back what Windows sets up on %s, as %s shows step by step",
-		printable(path), account(sid), permission(mask), printable(path), permissionsGuide)
+	return fmt.Errorf("%s: permissions too open: %s can change it; fix them so only you can change it, or move it into your profile", printable(path), account(sid))
 }
 
 // permission names mask as a folder's Security tab does when it holds one of

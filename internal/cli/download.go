@@ -191,8 +191,8 @@ func systemProgram(what string, candidates ...string) (string, error) {
 		}
 		return candidate, nil
 	}
-	return "", fmt.Errorf("%s is not installed at %s, and homeskillet needs it to download a release; install it, or download the release yourself (docs/install.md): %w",
-		what, strings.Join(candidates, " or "), errNotInstalled)
+	return "", fmt.Errorf("%s is not installed at %s, and homeskillet needs it to download a release; install it, or download the release yourself from %s: %w",
+		what, strings.Join(candidates, " or "), project, errNotInstalled)
 }
 
 // errNotInstalled marks a system tool that systemProgram found absent, as

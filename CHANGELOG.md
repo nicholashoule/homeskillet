@@ -17,9 +17,12 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
   the folder is on your Path but not yet in the one it runs in.
 - The Windows install lines run `install` even when `prepare` still lists Git as missing, since installing does not
   need Git ([docs/windows.md](docs/windows.md#installing)).
-- On Windows, when a directory above your profile, such as `C:\`, lets other users change it, the error says that no
-  folder you create or move can avoid it, and links to the steps an administrator follows to put back what Windows sets
-  up ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
+- When a file or folder's permissions are too open, or another account owns it, the error says so in one line on every
+  system: the path, what is wrong, and what to do, such as `run chmod go-w on it`. On Windows, for a directory above
+  your profile, such as `C:\`, it says that moving files cannot help and that an administrator needs to repair the
+  permissions by restoring what Windows sets ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
+- Help, errors, and the start guide name homeskillet's repository instead of pages of its documentation, and on
+  Windows, the note about the Path says how to add a folder in Windows's own dialog.
 
 ## [0.5.0]
 

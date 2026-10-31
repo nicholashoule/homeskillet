@@ -174,7 +174,7 @@ func TestInitRefusesSharedRepository(t *testing.T) {
 	if err := os.Chmod(repo, 0o777); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := initialize(repo); err == nil || !strings.Contains(err.Error(), "writable by group or others") {
+	if _, err := initialize(repo); err == nil || !strings.Contains(err.Error(), "permissions too open") {
 		t.Fatalf("shared repository: %v", err)
 	}
 	if entries, err := os.ReadDir(repo); err != nil || len(entries) != 0 {

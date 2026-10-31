@@ -22,10 +22,6 @@ import (
 // helpWidth is the widest line help writes before wrapping.
 const helpWidth = 120
 
-// docsURL is where help points for the details its one-line descriptions
-// leave out.
-const docsURL = "https://github.com/nicholashoule/homeskillet/blob/main/docs/usage.md"
-
 // commandHelp describes each of commands in one line, in the list of
 // commands and atop the command's own help.
 var commandHelp = map[string]string{
@@ -215,8 +211,10 @@ func overview(color bool) string {
 	b.WriteString("\n")
 	wrap(&b, "", "Run "+name("homeskillet help COMMAND")+", or "+name("homeskillet COMMAND --help")+", for a command's arguments and options.")
 	// The details the descriptions leave out, such as how to load a
-	// completion script or turn off the update note, are in the docs.
-	fmt.Fprintf(&b, "Every command and option in full: %s\n", docsURL)
+	// completion script or turn off the update note, are in the docs. Help
+	// names the repository, not a page in it: a released binary keeps its
+	// links for good, and the docs must stay free to move.
+	fmt.Fprintf(&b, "Every command and option in full: the documentation at %s\n", project)
 	return b.String()
 }
 
@@ -249,7 +247,7 @@ func commandHelpText(command string, color bool) string {
 		wrap(&b, "", "Every other option is passed on to homeskillet in the distribution, where it means what it means there: "+
 			"--home names a Linux directory. See "+paint(color, styleName, "homeskillet help status")+" and the others for theirs.")
 	}
-	fmt.Fprintf(&b, "\nIn full: %s\n", docsURL)
+	fmt.Fprintf(&b, "\nIn full: the documentation at %s\n", project)
 	return b.String()
 }
 

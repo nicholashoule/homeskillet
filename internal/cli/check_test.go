@@ -174,7 +174,7 @@ func TestCheckSharedRepository(t *testing.T) {
 	repo, _ := repository(t, "home/.bashrc", "home/.profile")
 	makeShared(t, repo)
 	output, err := runCheckCommand(repo)
-	if err == nil || strings.Count(output, "issue\t") != 1 || !strings.Contains(output, "writable by") {
+	if err == nil || strings.Count(output, "issue\t") != 1 || !strings.Contains(output, "permissions too open") {
 		t.Fatalf("got %q, %v", output, err)
 	}
 }

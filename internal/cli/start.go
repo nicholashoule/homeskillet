@@ -27,9 +27,6 @@ type nothingLinked struct{ error }
 
 func (e nothingLinked) Unwrap() error { return e.error }
 
-// examples is where the starter repositories, one for each system, are.
-const examples = project + "/tree/main/examples"
-
 // startStep is a line of startGuide: a step, numbered unless it is an
 // alternative to the one before, and the command that does it. A step
 // without a command is a sentence, and its detail the line under it.
@@ -100,7 +97,7 @@ func startGuide(w io.Writer, home string) error {
 			return err
 		}
 	}
-	fmt.Fprintf(&b, "\nStarter repositories for each system: %s\nEvery command: %s\n", examples, name(install.Binary, "help"))
+	fmt.Fprintf(&b, "\nStarter repositories for each system are in examples/ at %s\nEvery command: %s\n", project, name(install.Binary, "help"))
 	_, err := io.WriteString(w, b.String())
 	return err
 }
