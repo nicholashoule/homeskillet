@@ -16,6 +16,7 @@ import (
 
 	"github.com/nicholashoule/homeskillet/internal/config"
 	"github.com/nicholashoule/homeskillet/internal/install"
+	"github.com/nicholashoule/homeskillet/internal/setup"
 	"github.com/nicholashoule/homeskillet/internal/version"
 )
 
@@ -51,7 +52,7 @@ func startGuide(w io.Writer, home string) error {
 	if runtime.GOOS == "windows" {
 		repo = filepath.Join(home, "dotfiles")
 		file, target = filepath.Join(repo, config.HomeDir, ".gitconfig"), filepath.Join(home, ".gitconfig")
-		repo, file, target = copyable(repo), copyable(file), copyable(target)
+		repo, file, target = shellWord(repo), shellWord(file), shellWord(target)
 	}
 	// prepare comes first: on Windows, installing makes a link, which takes
 	// the Developer Mode it turns on. Until homeskillet is installed, both
@@ -104,13 +105,36 @@ func startGuide(w io.Writer, home string) error {
 	return err
 }
 
-// copyable returns a Windows path as it can be pasted into PowerShell or
-// cmd: in double quotes when it holds a space or a character either shell
-// would read, and with control characters quoted, as displayPath does.
-func copyable(path string) string {
-	path = displayPath(path)
-	if strings.ContainsAny(path, " &()[]{}^=;!'+,`~$%@#") && !strings.HasPrefix(path, `"`) {
-		return `"` + path + `"`
+// shellWord returns s as one word to paste into the shell homeskillet's
+// advice is written for: PowerShell on Windows, as the Windows guide uses,
+// and a POSIX shell elsewhere (see setup.Quote). On Windows that is in double
+// quotes when it holds a space or another character PowerShell or cmd would
+// read, and in single quotes, PowerShell's literal ones, when it holds $ or
+// a backtick, which PowerShell expands even inside double quotes, so a
+// folder named $work is not pasted as an empty name. A name with control or
+// formatting characters is never safe to paste, so it is shown escaped, as
+// displayPath shows it, to be read rather than run.
+func shellWord(s string) string {
+	switch {
+	case !config.Printable(s):
+		return displayPath(s)
+	case runtime.GOOS != "windows":
+		return setup.Quote([]string{s})
+	case strings.ContainsAny(s, "$`"):
+		return "'" + strings.ReplaceAll(s, "'", "''") + "'"
+	case strings.ContainsAny(s, " &()[]{}^=;!'+,~%@#"):
+		return `"` + s + `"`
 	}
-	return path
+	return s
+}
+
+// commandWord returns program as the first word of a command to paste (see
+// shellWord). PowerShell reads a quoted first word as a string, not as a
+// program to run, so on Windows a quoted one gets the call operator, &.
+func commandWord(program string) string {
+	word := shellWord(program)
+	if runtime.GOOS == "windows" && word != program {
+		return "& " + word
+	}
+	return word
 }

@@ -10,6 +10,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"runtime"
 	"slices"
@@ -171,4 +172,52 @@ func TestTilde(t *testing.T) {
 	if got := tilde(home, ""); got != home {
 		t.Errorf("no home: %q", got)
 	}
+	// Every spelling of the home counts, as where /home leads to /var/home.
+	canonical := filepath.Join(string(filepath.Separator)+"var", "home", "you")
+	if got := tilde(filepath.Join(home, "bin"), canonical, home); got != filepath.Join("~", "bin") {
+		t.Errorf("a home spelled another way: %q", got)
+	}
+	if runtime.GOOS == "windows" {
+		if got := tilde(`c:\users\you\bin`, `C:\Users\You`); got != `~\bin` {
+			t.Errorf("a home in another case: %q", got)
+		}
+	}
+}
+
+// TestInstalledRow checks that info names what is wrong with an install, and
+// what repairs it, rather than calling it nothing installed.
+func TestInstalledRow(t *testing.T) {
+	requireSymlinks(t)
+	_, home := repository(t)
+	layout := installVersions(t, home, "v0.3.0", "v0.4.0")
+	if got := installedRow(layout); got != "v0.4.0, following latest" {
+		t.Errorf("installed: %q", got)
+	}
+	if err := layout.Use("v0.3.0", false, nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Dir(layout.Program("v0.3.0"))); err != nil {
+		t.Fatal(err)
+	}
+	if got := installedRow(layout); !strings.HasPrefix(got, "broken: the command points to") || !strings.Contains(got, "v0.3.0") || !strings.Contains(got, "use latest repairs it") {
+		t.Errorf("a pinned version deleted by hand: %q", got)
+	}
+}
+
+// TestPersonNotes checks that update words the install's notes for a person,
+// with Note: in color only when colors are on.
+func TestPersonNotes(t *testing.T) {
+	lines := "note\t/home/you/.local/bin is not on PATH; add it\n"
+	if got := personNotes(lines, false); got != "Note: /home/you/.local/bin is not on PATH; add it\n" {
+		t.Errorf("without color: %q", got)
+	}
+	if got := personNotes(lines, true); got != styleAttention+"Note:"+styleReset+" /home/you/.local/bin is not on PATH; add it\n" {
+		t.Errorf("with color: %q", got)
+	}
+}
+
+// TestPrintErrorNil checks that PrintError, being exported, discards its
+// output for a nil writer rather than panicking.
+func TestPrintErrorNil(t *testing.T) {
+	PrintError(nil, errors.New("discarded"))
 }

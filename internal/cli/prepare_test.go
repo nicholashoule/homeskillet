@@ -150,7 +150,7 @@ func TestPrepareGit(t *testing.T) {
 	}
 	t.Setenv("PATH", bin)
 	output, err = prepare()
-	if err != nil || output != "done\thome\tonly you can change it\ndone\tgit\t"+filepath.Join(bin, "git")+"\nready\tcan clone and link a repository\n" {
+	if err != nil || output != "done\thome\tno other account can write to it\ndone\tgit\t"+filepath.Join(bin, "git")+"\nready\tcan clone and link a repository\n" {
 		t.Errorf("with git: %q, %v", output, err)
 	}
 	// Linux and macOS have no Developer Mode to report.

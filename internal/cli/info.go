@@ -20,6 +20,7 @@ import (
 	"strings"
 
 	"github.com/nicholashoule/homeskillet/internal/host"
+	"github.com/nicholashoule/homeskillet/internal/install"
 	"github.com/nicholashoule/homeskillet/internal/version"
 )
 
@@ -36,23 +37,38 @@ type infoSection struct {
 // runInfo writes what homeskillet detects: which homeskillet runs, the
 // system, and the terminal, then where to report a problem.
 func runInfo(input io.Reader, output io.Writer) error {
-	home := ""
-	if dir, err := os.UserHomeDir(); err == nil {
-		if dir, err := canonicalDirectory(dir); err == nil {
-			home = dir
-		}
-	}
+	home, homes := infoHomes()
 	return writeInfo(output, "homeskillet info", []infoSection{
-		{"homeskillet", homeskilletRows(home)},
+		{"homeskillet", homeskilletRows(home, homes)},
 		{"System", systemRows()},
-		{"Terminal", terminalRows(input, output)},
+		{"Terminal", terminalRows(input, output, homes)},
 	}, "To report a problem, paste this into an issue: "+issuesURL)
 }
 
 // runTerm writes what homeskillet detects about the terminal alone; info
 // adds the rest.
 func runTerm(input io.Reader, output io.Writer) error {
-	return writeInfo(output, "homeskillet term", []infoSection{{"", terminalRows(input, output)}}, "")
+	_, homes := infoHomes()
+	return writeInfo(output, "homeskillet term", []infoSection{{"", terminalRows(input, output, homes)}}, "")
+}
+
+// infoHomes returns the home directory, canonical, as the install is found
+// under it, and every spelling of it that a path shown may start with, for
+// tilde: the canonical one and the one the environment gives, which differ
+// where a symlink leads to the home, as /home leads to /var/home on Fedora
+// Silverblue.
+func infoHomes() (home string, homes []string) {
+	dir, err := os.UserHomeDir()
+	if err != nil {
+		return "", nil
+	}
+	if home, err = canonicalDirectory(dir); err != nil {
+		return "", []string{dir}
+	}
+	if home == dir {
+		return home, []string{home}
+	}
+	return home, []string{home, dir}
 }
 
 // writeInfo writes sections: for a person, under title, each under its
@@ -112,7 +128,7 @@ func labeled(rows [][]string) [][]string {
 // homeskilletRows describes this build and the installed command: the
 // version, commit, and Go that built it, which version the command runs and
 // whether it follows latest, and whether its directory is on PATH.
-func homeskilletRows(home string) [][]string {
+func homeskilletRows(home string, homes []string) [][]string {
 	info := version.Current()
 	built := info.Version
 	if info.Revision != "" {
@@ -132,21 +148,37 @@ func homeskilletRows(home string) [][]string {
 	command := "not on PATH"
 	if home != "" {
 		if layout, err := selfLayout(invocation{}, home); err == nil {
-			if state, err := layout.Inspect(); err == nil && state.Current != "" {
-				runs = state.Current + ", pinned"
-				if state.Following {
-					runs = state.Current + ", following latest"
-				}
-			}
-			if onPath(layout.Bin) {
-				command = tilde(layout.Command(), home)
+			runs = installedRow(layout)
+			if _, err := os.Lstat(layout.Command()); err == nil && onPath(layout.Bin) {
+				command = tilde(layout.Command(), homes...)
 			}
 		}
 	}
 	if path, err := exec.LookPath("homeskillet"); err == nil && command == "not on PATH" {
-		command = tilde(path, home) + ", not the installed command"
+		command = tilde(path, homes...) + ", not the installed command"
 	}
 	return [][]string{{"version", built}, {"installed", runs}, {"command", command}}
+}
+
+// installedRow says which installed version runs, and whether it follows
+// latest, or what is wrong: versions installed but none chosen, a command
+// that points to a version no longer there, or versions that cannot be read,
+// each with what repairs it, as a bug report needs it.
+func installedRow(layout install.Layout) string {
+	state, err := layout.Inspect()
+	switch {
+	case err != nil:
+		return "could not be read: " + oneLine(err)
+	case state.Broken != "":
+		return "broken: the command points to " + brokenTarget(state) + ", which is not installed; " + selfName() + " use latest repairs it"
+	case state.Current == "" && len(state.Versions) > 0:
+		return "none chosen to run; " + selfName() + " use latest chooses the newest"
+	case state.Current == "":
+		return "nothing installed yet"
+	case state.Following:
+		return state.Current + ", following latest"
+	}
+	return state.Current + ", pinned"
 }
 
 // systemRows describes the operating system: its release and kernel, the
@@ -177,7 +209,7 @@ func systemRows() [][]string {
 // lines for scripts; whether input is one, which decides how a prompt gets
 // its answer; whether colors are on and why; the locale; the terminal
 // program; and the shell, the one to restart after linking.
-func terminalRows(input io.Reader, output io.Writer) [][]string {
+func terminalRows(input io.Reader, output io.Writer, homes []string) [][]string {
 	in, _ := input.(*os.File)
 	color := colorFor(output)
 	out := "not a terminal: a pipe or file, so results are one tab-separated line each, for scripts"
@@ -205,7 +237,7 @@ func terminalRows(input io.Reader, output io.Writer) [][]string {
 		// that are not ASCII; LC_ALL wins over LANG when set.
 		{"LANG", cmp.Or(os.Getenv("LC_ALL"), os.Getenv("LANG"), "not set")},
 		{"program", terminalProgram()},
-		{"shell", shellName()},
+		{"shell", tilde(shellName(), homes...)},
 	}
 }
 
@@ -245,16 +277,29 @@ func shellName() string {
 }
 
 // tilde returns path with the home directory written as ~, so what info
-// prints carries no user name.
-func tilde(path, home string) string {
-	if home == "" {
-		return path
-	}
-	if path == home {
-		return "~"
-	}
-	if rest, ok := strings.CutPrefix(path, home+string(filepath.Separator)); ok {
-		return "~" + string(filepath.Separator) + rest
+// prints carries no user name. homes are every spelling of the home (see
+// infoHomes); on Windows, where paths ignore case, so does the match, as
+// C:\Users\Alice and c:\users\alice are the same folder.
+func tilde(path string, homes ...string) string {
+	for _, home := range homes {
+		if home == "" || len(path) < len(home) || !samePrefix(path[:len(home)], home) {
+			continue
+		}
+		switch rest := path[len(home):]; {
+		case rest == "":
+			return "~"
+		case rest[0] == filepath.Separator:
+			return "~" + rest
+		}
 	}
 	return path
+}
+
+// samePrefix reports whether a and b, the start of a path and a home, are
+// the same, ignoring case on Windows.
+func samePrefix(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }

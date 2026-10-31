@@ -387,6 +387,16 @@ func TestRemoveSeveral(t *testing.T) {
 	if err := layout.Remove(nil, false, nil); err == nil {
 		t.Fatal("removed nothing without saying so")
 	}
+	// The program goes first, so a failure to delete it, as when another
+	// process runs it on Windows, leaves the version whole.
+	state, err = layout.Inspect()
+	if err != nil {
+		t.Fatal(err)
+	}
+	r, err := layout.removable(state, "v1.0.0")
+	if err != nil || len(r.entries) < 2 || r.entries[0].Name() != programFile {
+		t.Fatalf("removable: %+v, %v", r, err)
+	}
 }
 
 func TestInspectIgnoresForeignEntries(t *testing.T) {

@@ -821,22 +821,25 @@ func openRepository(inv invocation, home string) (repo string, manifest config.M
 		recorded, _ = link.Repositories(data, home)
 	}
 	// Advice names homeskillet as it was run, so that it works as written
-	// before homeskillet is installed, when the first run is the download.
-	self := selfName()
+	// before homeskillet is installed, when the first run is the download,
+	// and each repository ready to paste. Naming it searches PATH, so it is
+	// done only for advice that is printed.
 	if inv.repoGiven {
+		self := selfName()
 		if len(recorded) == 0 {
 			return "", config.Manifest{}, false, fmt.Errorf("%w\n  that is the home directory; name a repository instead: %s %s /path/to/dotfiles", err, self, inv.command)
 		}
 		var choices strings.Builder
 		choices.WriteString("\n  that is the home directory; name the repository linked into it instead:")
 		for _, recordedRepo := range recorded {
-			fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, recordedRepo)
+			fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, shellWord(recordedRepo))
 		}
 		return "", config.Manifest{}, false, fmt.Errorf("%w%s", err, choices.String())
 	}
 	switch len(recorded) {
 	case 0:
 		// Nothing linked yet is where everyone starts, so say how to.
+		self := selfName()
 		return "", config.Manifest{}, false, nothingLinked{fmt.Errorf("%w\n  name one: %s %s /path/to/dotfiles\n"+
 			"  nothing is linked yet: clone your dotfiles repository and name the clone, or start one with %s init /path/to/dotfiles",
 			err, self, inv.command, self)}
@@ -849,8 +852,9 @@ func openRepository(inv invocation, home string) (repo string, manifest config.M
 	}
 	var choices strings.Builder
 	fmt.Fprintf(&choices, "\n  several repositories are linked into %s; name one:", home)
+	self := selfName()
 	for _, recordedRepo := range recorded {
-		fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, recordedRepo)
+		fmt.Fprintf(&choices, "\n    %s %s %s", self, inv.command, shellWord(recordedRepo))
 	}
 	return "", config.Manifest{}, false, fmt.Errorf("%w%s", err, choices.String())
 }

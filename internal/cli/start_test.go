@@ -21,7 +21,7 @@ func TestStartGuide(t *testing.T) {
 	home := t.TempDir()
 	repo := "~/dotfiles"
 	if runtime.GOOS == "windows" {
-		repo = copyable(filepath.Join(home, "dotfiles"))
+		repo = shellWord(filepath.Join(home, "dotfiles"))
 	}
 	var output bytes.Buffer
 	if err := startGuide(&output, home); err != nil {
@@ -60,19 +60,6 @@ func TestStartGuide(t *testing.T) {
 	}
 }
 
-func TestCopyable(t *testing.T) {
-	for path, want := range map[string]string{
-		`C:\Users\you\dotfiles`:        `C:\Users\you\dotfiles`,
-		`C:\Users\Jo Smith\dotfiles`:   `"C:\Users\Jo Smith\dotfiles"`,
-		`C:\Users\you&me\dotfiles`:     `"C:\Users\you&me\dotfiles"`,
-		"C:\\Users\\you\x1b\\dotfiles": `"C:\\Users\\you\x1b\\dotfiles"`,
-	} {
-		if got := copyable(path); got != want {
-			t.Errorf("copyable(%q) = %q, want %q", path, got, want)
-		}
-	}
-}
-
 func TestBareWithNothingLinked(t *testing.T) {
 	// A script that runs homeskillet alone where there is nothing to link
 	// still gets the error, with how to name a repository and how to start.
@@ -83,5 +70,40 @@ func TestBareWithNothingLinked(t *testing.T) {
 	if !errors.Is(err, config.ErrNothingToManage) || !strings.Contains(err.Error(), "name one: homeskillet status") ||
 		!strings.Contains(err.Error(), "start one with homeskillet init") {
 		t.Fatalf("%v\n%s", err, output.String())
+	}
+}
+
+// TestShellWord checks that a path in advice pastes as one word into the
+// shell the advice is for, with nothing in it expanded, that a program in a
+// quoted path still runs in PowerShell, and that a name that could rewrite
+// the terminal is shown escaped instead.
+func TestShellWord(t *testing.T) {
+	type test struct{ in, word, command string }
+	tests := []test{
+		{"/home/you/dot files", "'/home/you/dot files'", "'/home/you/dot files'"},
+		{"/home/you/dotfiles", "/home/you/dotfiles", "/home/you/dotfiles"},
+		{"./homeskillet-linux-amd64", "./homeskillet-linux-amd64", "./homeskillet-linux-amd64"},
+		{"/home/you/it's", `'/home/you/it'\''s'`, `'/home/you/it'\''s'`},
+	}
+	if runtime.GOOS == "windows" {
+		tests = []test{
+			{`C:\Users\John Smith\Downloads\homeskillet-windows-amd64.exe`, `"C:\Users\John Smith\Downloads\homeskillet-windows-amd64.exe"`,
+				`& "C:\Users\John Smith\Downloads\homeskillet-windows-amd64.exe"`},
+			{`C:\Users\you\dotfiles`, `C:\Users\you\dotfiles`, `C:\Users\you\dotfiles`},
+			{`C:\Users\you&me\dotfiles`, `"C:\Users\you&me\dotfiles"`, `& "C:\Users\you&me\dotfiles"`},
+			{`.\homeskillet-windows-amd64.exe`, `.\homeskillet-windows-amd64.exe`, `.\homeskillet-windows-amd64.exe`},
+			// PowerShell expands $ and backticks inside double quotes.
+			{`C:\Users\you\$work\dotfiles`, `'C:\Users\you\$work\dotfiles'`, `& 'C:\Users\you\$work\dotfiles'`},
+			{"C:\\Users\\o'brien\\$x", "'C:\\Users\\o''brien\\$x'", "& 'C:\\Users\\o''brien\\$x'"},
+		}
+	}
+	tests = append(tests, test{"/x\x1b[2J y", `"/x\x1b[2J y"`, ""})
+	for _, test := range tests {
+		if got := shellWord(test.in); got != test.word {
+			t.Errorf("shellWord(%q) = %s, want %s", test.in, got, test.word)
+		}
+		if got := commandWord(test.in); test.command != "" && got != test.command {
+			t.Errorf("commandWord(%q) = %s, want %s", test.in, got, test.command)
+		}
 	}
 }

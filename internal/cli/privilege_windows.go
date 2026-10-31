@@ -3,7 +3,6 @@
 package cli
 
 import (
-	"strings"
 	"syscall"
 	"unsafe"
 )
@@ -34,17 +33,19 @@ func runsElevated() bool {
 	return err != nil || elevated != 0
 }
 
-// pathAdvice says how to put dir on PATH: the PowerShell command that adds it
-// to the user Path, ready to paste, since finding the setting in Settings is
-// where people get stuck. Windows keeps each user's Path in the registry,
-// which new terminals read; a profile that changes $env:Path changes it only
-// for PowerShell. dir goes in single quotes, any quote in it doubled, so
-// PowerShell reads it as text and expands nothing in it.
-func pathAdvice(dir string) string {
-	quoted := "'" + strings.ReplaceAll(dir, "'", "''") + "'"
-	return "add it to your Path in PowerShell with [Environment]::SetEnvironmentVariable('Path', " +
-		"[Environment]::GetEnvironmentVariable('Path', 'User') + ';' + " + quoted + ", 'User'), then open a new terminal"
+// pathAdvice says how to put dir on PATH: with the PowerShell lines the
+// Windows guide gives, which keep the user Path as Windows stores it, where
+// entries such as %USERPROFILE%\AppData\Local\Microsoft\WindowsApps stay
+// variables, add dir once, and tell Windows the environment changed, so
+// that new terminals see it. Too long to print as a note, they are linked.
+// Windows keeps each user's Path in the registry, which new terminals read;
+// a profile that changes $env:Path changes it only for PowerShell.
+func pathAdvice(string) string {
+	return "add it to your Path as " + windowsGuide + "#putting-the-command-on-your-path shows, then open a new terminal"
 }
+
+// windowsGuide is the Windows guide, which pathAdvice points to.
+const windowsGuide = project + "/blob/main/docs/windows.md"
 
 // translator names what runs an x64 build on Arm64 hardware.
 func translator() string {

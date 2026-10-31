@@ -101,13 +101,14 @@ homeskillet init ~/dotfiles --platform darwin     # a starter for a macOS reposi
 }
 ```
 
-`init` creates nothing until you answer `y`, or pass `--yes`; in a script without it, nothing is created and it fails.
-A repository directory that does not exist yet, such as `~/dotfiles` on a machine with no dotfiles, is created too, with
-any missing directories above it, provided the directory they are made in passes the ownership rules; if anything then
-fails, what `init` made is removed again. It never replaces a file or directory: it writes nothing into a repository
-that has a manifest under either name, and creates `home/` only when it is missing. It refuses your home directory
-itself, which is no place for a repository ([safety.md](safety.md#starter-manifests-checks-and-completion)). Remove
-`platforms` to apply everywhere.
+`init` creates nothing until you answer `y` at a terminal, or pass `--yes`, which `--quiet` needs, since it would hide
+the question; a script without it, its input piped or empty, creates nothing and fails. A repository directory that does
+not exist yet, such as `~/dotfiles` on a machine with no dotfiles, is created too, with any missing directories above
+it, each listed in what `init` shows, provided the directory they are made in passes the ownership rules; if anything
+then fails, what `init` made is removed again. It never replaces a file or directory: it writes nothing into a
+repository that has a manifest under either name, and creates `home/` only when it is missing. It refuses your home
+directory itself, which is no place for a repository ([safety.md](safety.md#starter-manifests-checks-and-completion)).
+Remove `platforms` to apply everywhere.
 
 Or copy a whole starter repository from homeskillet's [examples/](../examples/): one each for Linux, macOS, and Windows,
 with dotfiles, a setup step, and a README of the commands that link them. A test runs `check` on each, so they stay

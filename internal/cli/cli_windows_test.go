@@ -92,13 +92,15 @@ func TestSetupDocumentsWindows(t *testing.T) {
 	}
 }
 
-// TestPathAdvice checks that the note about Path gives a command to paste,
-// with the directory quoted so that PowerShell reads it as text.
+// TestPathAdvice checks that the note about Path points to the Windows
+// guide's lines, at a heading that exists there.
 func TestPathAdvice(t *testing.T) {
-	got := pathAdvice(`C:\Users\o'brien\.local\bin`)
-	want := "add it to your Path in PowerShell with [Environment]::SetEnvironmentVariable('Path', " +
-		"[Environment]::GetEnvironmentVariable('Path', 'User') + ';' + 'C:\\Users\\o''brien\\.local\\bin', 'User'), then open a new terminal"
-	if got != want {
-		t.Errorf("pathAdvice:\n%s\nwant:\n%s", got, want)
+	got := pathAdvice(`C:\Users\you\.local\bin`)
+	if !strings.Contains(got, windowsGuide+"#putting-the-command-on-your-path") {
+		t.Errorf("pathAdvice: %s", got)
+	}
+	guide, err := os.ReadFile(filepath.Join("..", "..", "docs", "windows.md"))
+	if err != nil || !strings.Contains(string(guide), "\n### Putting the Command on Your Path\n") {
+		t.Errorf("docs/windows.md has no heading for the link: %v", err)
 	}
 }

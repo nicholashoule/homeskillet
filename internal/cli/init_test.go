@@ -275,8 +275,9 @@ func TestInitCreatesRepository(t *testing.T) {
 	root := filepath.Dir(emptyRepository(t))
 	repo := filepath.Join(root, "projects", "dotfiles")
 	output, err := initialize(repo, "--dry-run")
-	if err != nil || !strings.Contains(output, "would create\t"+repo+"\n") || !strings.Contains(output, "would create\t"+filepath.Join(repo, config.HomeDir)+"\n") {
-		t.Fatalf("dry run: %q, %v", output, err)
+	if err != nil || !strings.Contains(output, "would create\t"+filepath.Join(root, "projects")+"\n") ||
+		!strings.Contains(output, "would create\t"+repo+"\n") || !strings.Contains(output, "would create\t"+filepath.Join(repo, config.HomeDir)+"\n") {
+		t.Fatalf("dry run, which must show every directory it would make: %q, %v", output, err)
 	}
 	if exists(filepath.Join(root, "projects")) {
 		t.Fatal("the dry run created the repository")
@@ -304,6 +305,20 @@ func TestInitCreatesRepository(t *testing.T) {
 	}
 	if _, err := initialize(file); err == nil || !strings.Contains(err.Error(), "not a directory") {
 		t.Errorf("init over a file: %v", err)
+	}
+}
+
+// TestInitQuietNeedsYes checks that init refuses --quiet without --yes,
+// which would hide the question it waits on, and creates nothing.
+func TestInitQuietNeedsYes(t *testing.T) {
+	repo := emptyRepository(t)
+	var output bytes.Buffer
+	if err := Run(context.Background(), []string{"init", repo, "--quiet"}, strings.NewReader("y\n"), &output, &output); err == nil ||
+		!strings.Contains(err.Error(), "--quiet needs --yes") {
+		t.Fatalf("init --quiet without --yes: %v", err)
+	}
+	if exists(filepath.Join(repo, config.FileName)) {
+		t.Fatal("init --quiet without --yes created the manifest")
 	}
 }
 

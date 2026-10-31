@@ -28,7 +28,7 @@ file: the README, docs/, and this file describe the project, so keep them curren
 |---|---|
 | `main.go` | Entry point only: calls `cli.Run` and exits on error |
 | `main_unsupported.go` | Entry point on unsupported systems such as FreeBSD: says so and exits |
-| `internal/cli` | Flags, root refusal, path canonicalization, output, help, shell completion, `init`'s starter manifest, `check`, and `update`'s release download |
+| `internal/cli` | Flags, root refusal, path canonicalization, output and its color standard (`color.go`), help, shell completion, the start guide for a first run, `init`'s starter manifest, `check`, `info` and `term`, and `update`'s release download |
 | `internal/config` | Reading a repository: `bootstrap.json` and `dotfiles.json` decoding and merging, `home/` discovery, lexical validation |
 | `internal/trust` | Ownership and permission rules (audit these in one place) |
 | `internal/link` | Link planning, conflict detection, filesystem changes, and the record of links |
@@ -36,7 +36,7 @@ file: the README, docs/, and this file describe the project, so keep them curren
 | `internal/install` | Versioned installs of homeskillet itself: `latest`, `previous`, `current` links (on Windows, a `current` file and a link to the chosen program) |
 | `internal/safefile` | Size-limited reads and atomic writes; use it for every file homeskillet keeps |
 | `internal/version` | Build details and semantic version ordering |
-| `internal/host` | Detecting the OS and architecture homeskillet runs on (best effort), Windows known folders and registry, and whether it may make symlinks |
+| `internal/host` | Detecting the OS and architecture homeskillet runs on (best effort), describing the system for `info` (release, kernel, WSL, container), Windows known folders and registry, and whether it may make symlinks |
 | `internal/wsl`, `internal/mirror` | `homeskillet wsl`: finding and running commands in a WSL distribution; copying a Windows clone into it, checked, whole |
 | `Makefile` | Portable build, test, lint, and cross-build targets |
 | `tools/xplat` | Cross-platform shim for Makefile recipes, vendored from `go-webapp` |

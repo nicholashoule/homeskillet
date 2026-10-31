@@ -14,7 +14,6 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
-	"runtime"
 	"slices"
 	"strings"
 
@@ -44,6 +43,10 @@ import (
 // creates it only once approved, with no as the default answer, or under
 // --yes; with --dry-run it only shows it.
 func runInit(inv invocation, input io.Reader, output io.Writer) error {
+	// --quiet hides the question init asks, which would then wait unseen.
+	if inv.quiet && !inv.yes && !inv.dryRun {
+		return errors.New("init --quiet needs --yes: init asks before it creates anything, and --quiet would hide the question; nothing was created")
+	}
 	repo, createRepo, err := initRepository(inv.repo)
 	if err != nil {
 		return fmt.Errorf("repository: %w", err)
@@ -69,9 +72,13 @@ func runInit(inv invocation, input io.Reader, output io.Writer) error {
 		return err
 	}
 	home := filepath.Join(repo, config.HomeDir)
+	dirs, err := missingDirectories(repo, createRepo)
+	if err != nil {
+		return err
+	}
 
 	person := terminal(output)
-	plan := initPlan{repo: repo, home: home, manifest: path, platform: platform, createRepo: createRepo, createHome: createHome}
+	plan := initPlan{repo: repo, home: home, manifest: path, platform: platform, dirs: dirs, createHome: createHome}
 	if err := showInitPlan(output, person, plan, manifest); err != nil {
 		return err
 	}
@@ -88,7 +95,7 @@ func runInit(inv invocation, input io.Reader, output io.Writer) error {
 	}
 	// created lists the directories made here, outermost first, so that a
 	// failure removes them again, innermost first; each was empty when made.
-	created, err := makeRepository(repo, createRepo)
+	created, err := makeRepository(repo, dirs)
 	undo := func(err error) error {
 		for _, dir := range slices.Backward(created) {
 			if removeErr := os.Remove(dir); removeErr != nil {
@@ -126,20 +133,27 @@ func runInit(inv invocation, input io.Reader, output io.Writer) error {
 		return undo(err)
 	}
 	if person {
-		self, color := selfName(), colorFor(output).on
-		_, err = fmt.Fprintf(output, "%s %s. Put your dotfiles under %s, placed as they are in your home, then preview the links with %s and make them with %s.\n",
-			paint(color, styleGood, "Created"), displayPath(path), displayPath(home),
-			paint(color, styleName, self+" link "+copyableRepo(repo)+" --dry-run"), paint(color, styleName, self+" link "+copyableRepo(repo)))
-		return err
+		return initCreated(output, repo, home, path)
 	}
 	_, err = fmt.Fprintf(output, "created\t%s\nnote\tfiles under %s/ are found without a list; add setup steps under \"setup\"\n", path, config.HomeDir)
 	return err
 }
 
+// initCreated says, for a person, what init created and what to do next:
+// where the dotfiles go, then the commands that preview and make the links,
+// ready to paste.
+func initCreated(output io.Writer, repo, home, path string) error {
+	self, color := selfName(), colorFor(output).on
+	_, err := fmt.Fprintf(output, "%s %s. Put your dotfiles under %s, placed as they are in your home, then preview the links with %s and make them with %s.\n",
+		paint(color, styleGood, "Created"), displayPath(path), displayPath(home),
+		paint(color, styleName, self+" link "+shellWord(repo)+" --dry-run"), paint(color, styleName, self+" link "+shellWord(repo)))
+	return err
+}
+
 // approveInit asks whether to create what init showed, unless --yes says so.
-// At a terminal, no is an answer, and nothing more is said than that; a
-// script that gave none gets an error, so it does not take nothing for
-// success.
+// No typed at a terminal is an answer, and nothing more is said than that;
+// a script that gave none, its input piped or empty even when its output is
+// a terminal, gets an error, so it does not take nothing for success.
 func approveInit(inv invocation, input io.Reader, output io.Writer, person bool) (bool, error) {
 	if inv.yes {
 		return true, nil
@@ -148,18 +162,21 @@ func approveInit(inv invocation, input io.Reader, output io.Writer, person bool)
 	if err != nil || approved {
 		return approved, err
 	}
-	if person {
+	if in, ok := input.(*os.File); person && ok && isTerminal(in) {
 		_, err := fmt.Fprintln(output, paint(colorFor(output).on, styleAttention, "Nothing created."))
 		return false, err
 	}
 	return false, errors.New("nothing was created: init asks before it creates anything; pass --yes to create without asking")
 }
 
-// initPlan is what init would create: the repository directory when it does
-// not exist yet, its home directory when that does not, and the manifest.
+// initPlan is what init would create: dirs, the repository directory and
+// the directories above it that do not exist yet, outermost first, none when
+// the repository exists; its home directory when that does not; and the
+// manifest.
 type initPlan struct {
 	repo, home, manifest, platform string
-	createRepo, createHome         bool
+	dirs                           []string
+	createHome                     bool
 }
 
 // showInitPlan shows what init would create before it asks: for a person,
@@ -167,20 +184,26 @@ type initPlan struct {
 // line per path and the manifest.
 func showInitPlan(output io.Writer, person bool, plan initPlan, manifest string) error {
 	if !person {
-		text := ""
-		if plan.createRepo {
-			text += fmt.Sprintf("would create\t%s\n", plan.repo)
+		var text strings.Builder
+		for _, dir := range plan.dirs {
+			fmt.Fprintf(&text, "would create\t%s\n", dir)
 		}
 		if plan.createHome {
-			text += fmt.Sprintf("would create\t%s\n", plan.home)
+			fmt.Fprintf(&text, "would create\t%s\n", plan.home)
 		}
-		_, err := fmt.Fprintf(output, "%swould write\t%s\n%s", text, plan.manifest, manifest)
+		_, err := fmt.Fprintf(output, "%swould write\t%s\n%s", text.String(), plan.manifest, manifest)
 		return err
 	}
 	color := colorFor(output).on
 	var rows [][]string
-	if plan.createRepo {
-		rows = append(rows, []string{displayPath(plan.repo) + string(filepath.Separator), "the repository, a new directory"})
+	// Every directory init would make is shown, so a mistyped path cannot
+	// create a chain of them unseen.
+	for _, dir := range plan.dirs {
+		what := "a new directory, above the repository"
+		if dir == plan.repo {
+			what = "the repository, a new directory"
+		}
+		rows = append(rows, []string{displayPath(dir) + string(filepath.Separator), what})
 	}
 	if plan.createHome {
 		rows = append(rows, []string{displayPath(plan.home) + string(filepath.Separator), "the directory your dotfiles are linked from"})
@@ -267,12 +290,10 @@ func initRepository(named string) (repo string, create bool, err error) {
 	return repo, true, err
 }
 
-// makeRepository creates repo, when create says it does not exist yet, with
-// the directories above it that do not exist either, each private, and
-// returns those it made, outermost first. It checks the result as every
-// repository is checked, so a directory made where the checks fail is
-// reported, for the caller to remove.
-func makeRepository(repo string, create bool) ([]string, error) {
+// missingDirectories returns, when create says repo does not exist yet, repo
+// and the directories above it that do not exist either, outermost first,
+// which init would create.
+func missingDirectories(repo string, create bool) ([]string, error) {
 	if !create {
 		return nil, nil
 	}
@@ -286,26 +307,27 @@ func makeRepository(repo string, create bool) ([]string, error) {
 		missing = append(missing, dir)
 	}
 	slices.Reverse(missing)
+	return missing, nil
+}
+
+// makeRepository creates dirs, the directories init showed it would create,
+// outermost first, each private, and returns those it made. Each is made in
+// the one before, so a directory removed meanwhile fails the next rather
+// than being made again unseen. It then checks repo as every repository is
+// checked, so a directory made where the checks fail is reported, for the
+// caller to remove.
+func makeRepository(repo string, dirs []string) ([]string, error) {
+	if len(dirs) == 0 {
+		return nil, nil
+	}
 	var created []string
-	for _, dir := range missing {
+	for _, dir := range dirs {
 		if err := os.Mkdir(dir, 0o700); err != nil {
 			return created, err
 		}
 		created = append(created, dir)
 	}
 	return created, trust.CheckRepository(repo)
-}
-
-// copyableRepo returns repo as it can be pasted into a shell after init: as
-// copyable makes it on Windows, and quoted wherever displayPath quotes it.
-func copyableRepo(repo string) string {
-	if runtime.GOOS == "windows" {
-		return copyable(repo)
-	}
-	if strings.ContainsAny(repo, " '\"\\$`!&;|<>()*?[]{}~#") {
-		return "'" + strings.ReplaceAll(repo, "'", `'\''`) + "'"
-	}
-	return displayPath(repo)
 }
 
 // homeToCreate reports whether repo has no home directory, which init then

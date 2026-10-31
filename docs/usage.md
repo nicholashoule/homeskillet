@@ -69,7 +69,7 @@ value, as from an unset variable in `--home "$SCRATCH"`, is refused rather than 
 | `--dry-run` | Change nothing and run no setup step; say what would happen. |
 | `--home DIR` | Act on another home, such as a scratch one to try a repository in. |
 | `--platform OS[/ARCH]` | Act for another platform, such as `darwin` or `linux/arm64` ([manifest.md](manifest.md#platforms)). |
-| `--quiet` | Print nothing but errors; the exit status reports the result. Not for `setup`, whose steps must be shown. |
+| `--quiet` | Print nothing but errors; the exit status reports the result. Not for `setup`, whose steps must be shown, and for `init` only with `--yes`, since it would hide init's question. |
 | `--verbose` | On failure, show the whole error, not only its first line ([Output](#output)). |
 | `--force` | For `link`: move conflicting files into a backup, then link (see below). |
 | `--yes` | Approve without asking. For `setup`: run every pending step, for unattended builds such as a Dockerfile ([safety.md](safety.md#setup-steps)). For `prepare`: run the installs, though winget's repair still asks. For `init`: create the starter files. For `backups purge`: delete every backup listed. |

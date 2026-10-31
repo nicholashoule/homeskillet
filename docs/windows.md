@@ -23,7 +23,7 @@ this page covers what else differs on Windows, and the rest of the documentation
    $bin = "$HOME\.local\bin"; $installed = $false
    foreach ($file in $exe, 'SHA256SUMS') { Remove-Item $file -ErrorAction SilentlyContinue; if (Get-Command curl.exe -ErrorAction SilentlyContinue) { curl.exe -fsSLO --proto =https "$base/$file" } else { & { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest "$base/$file" -OutFile $file -UseBasicParsing } } }
    if ((Test-Path $exe, SHA256SUMS) -notcontains $false -and (Get-Content SHA256SUMS) -contains "$((Get-FileHash $exe -Algorithm SHA256).Hash)  $exe") { & ".\$exe" prepare; if ($LASTEXITCODE -eq 0) { if (($env:Path -split ';') -notcontains $bin) { $env:Path += ";$bin" }; & ".\$exe" install; $installed = $LASTEXITCODE -eq 0 } } else { Write-Error "$exe did not download, or does not match SHA256SUMS; it was not run" }
-   if ($installed) { $userPath = [Environment]::GetEnvironmentVariable('Path', 'User'); if (($userPath -split ';') -notcontains $bin) { [Environment]::SetEnvironmentVariable('Path', ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';'), 'User') }; Remove-Item $exe, SHA256SUMS; homeskillet version } else { Write-Warning 'homeskillet is not installed yet: deal with what it said above, then paste these lines again' }
+   if ($installed) { $userPath = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames'); if (($userPath -split ';') -notcontains $bin) { Set-ItemProperty HKCU:\Environment Path ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';') -Type ExpandString; [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', $null, 'User') }; Remove-Item $exe, SHA256SUMS; homeskillet version } else { Write-Warning 'homeskillet is not installed yet: deal with what it said above, then paste these lines again' }
    ```
 
 3. Answer `prepare`'s questions. Each fix is shown first and runs only if you type `y`. For Developer Mode, which
@@ -42,6 +42,22 @@ not download, is never run. If something stops you, [Before You Start](#before-y
 Windows](#preparing-windows) say what each check needs and why. From then on, `homeskillet update` installs the newest
 release, checked with Windows's own `curl.exe` and `certutil.exe`; [install.md](install.md) covers versions, pinning,
 and removal.
+
+### Putting the Command on Your Path
+
+The install steps do this for you. After installing another way, such as from source, put `.local\bin` on your Path
+once with these lines, with your folder in place of `$HOME\.local\bin` if you installed elsewhere, then open a new
+window:
+
+```powershell
+$bin = "$HOME\.local\bin"
+$userPath = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+if (($userPath -split ';') -notcontains $bin) { Set-ItemProperty HKCU:\Environment Path ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';') -Type ExpandString; [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', $null, 'User') }
+```
+
+The Path is read and written as it is kept, so entries such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` go on
+following the variables they name, and the folder is added only once. Setting and clearing `HOMESKILLET_PATH` makes
+Windows tell programs that the environment changed, so new windows see the Path at once.
 
 ### Building from Source
 

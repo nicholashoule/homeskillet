@@ -22,7 +22,7 @@ place and then says what to do next, and the Windows install lines leave `homesk
   `prepare`, `install` when you ran the download, `init` or `git clone`, where files go, and `link`, each ready to
   copy ([docs/usage.md](docs/usage.md#the-repository)).
 - `homeskillet init ~/dotfiles` creates `~/dotfiles` when it does not exist yet, with any missing directories above it,
-  as part of what it shows and asks about ([docs/manifest.md](docs/manifest.md#creating-one)).
+  each listed in what it shows and asks about ([docs/manifest.md](docs/manifest.md#creating-one)).
 - `prepare` checks your home first, as every command that links or installs there does. When it fails, as when `C:\`
   lets other users change it, `prepare` says why and who can fix it, holds back only the installs that would run
   there, and still offers the rest, so you can run it again as each thing is fixed
@@ -57,8 +57,8 @@ place and then says what to do next, and the Windows install lines leave `homesk
   ([docs/windows.md](docs/windows.md#ownership-and-permissions)).
 - Advice in errors names homeskillet as you ran it, such as `.\homeskillet-windows-amd64.exe` before it is installed,
   so it works as written.
-- `homeskillet init` shows what it would create and asks before creating it; scripts pass `--yes`. It refuses your home
-  directory itself, and as before never replaces a file or directory
+- `homeskillet init` shows what it would create and asks before creating it; scripts pass `--yes`, which `--quiet`
+  needs too. It refuses your home directory itself, and as before never replaces a file or directory
   ([docs/manifest.md](docs/manifest.md#creating-one)).
 - At a terminal, `homeskillet list` groups releases apart from development builds, newest first, in columns that line up
   however long a development version is, and ends with which version runs; `list-remote` lines up too and says what the

@@ -134,8 +134,20 @@ func update(ctx context.Context, inv invocation, layout install.Layout, home str
 	if err != nil {
 		return err
 	}
-	_, err = io.WriteString(output, notes.String())
+	_, err = io.WriteString(output, personNotes(notes.String(), colorFor(output).on))
 	return err
+}
+
+// personNotes returns the install's note lines, tab-separated, as sentences
+// for a person, each after a Note: in the standard's color for what still
+// needs doing.
+func personNotes(lines string, color bool) string {
+	var text strings.Builder
+	for line := range strings.Lines(lines) {
+		note := strings.TrimSuffix(strings.TrimPrefix(line, "note\t"), "\n")
+		text.WriteString(paint(color, styleAttention, "Note:") + " " + strings.ReplaceAll(note, "\t", " ") + "\n")
+	}
+	return text.String()
 }
 
 // reportDownload says that target was downloaded and checked, for a script,
@@ -240,12 +252,10 @@ func installDownload(ctx context.Context, file, target string, inv invocation, h
 		if install.AboutRunning(text) {
 			continue
 		}
-		if person {
-			note, ok := strings.CutPrefix(text, "note\t")
-			if !ok {
-				continue
-			}
-			line = paint(colorFor(output).on, styleAttention, "Note:") + " " + strings.ReplaceAll(note, "\t", " ") + "\n"
+		// A person gets only the notes, which update words for them once
+		// it has said what happened (see personNotes).
+		if person && !strings.HasPrefix(text, "note\t") {
+			continue
 		}
 		if _, err := io.WriteString(output, line); err != nil {
 			return err

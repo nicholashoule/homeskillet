@@ -140,7 +140,7 @@ var titles = map[string]string{homeStep: "Home", developerModeStep: "Developer M
 
 // needs names, in the sentence that says what is still needed, the items
 // whose titles do not read as a need, such as the home.
-var needs = map[string]string{homeStep: "a home only you can change"}
+var needs = map[string]string{homeStep: "a home no other account can write to"}
 
 // homeItem checks the home as every command that links or installs there
 // does (see trust.CheckDirectory): owned by the user, and changeable by
@@ -148,7 +148,7 @@ var needs = map[string]string{homeStep: "a home only you can change"}
 // cannot fix that itself, so it is never pending; when it fails, the error,
 // on one line, says why and who can fix it.
 func homeItem(home string) item {
-	it := item{id: homeStep, title: titles[homeStep], required: true, state: itemDone, detail: "only you can change it"}
+	it := item{id: homeStep, title: titles[homeStep], required: true, state: itemDone, detail: "no other account can write to it"}
 	if err := trust.CheckDirectory(home); err != nil {
 		it.state, it.detail = itemMissing, strings.ReplaceAll(err.Error(), "\n  ", "; ")
 	}
@@ -308,15 +308,23 @@ func (o prepareOutput) next(home string) error {
 
 // nextStep says what to do once the machine is ready, so that prepare can be
 // run at any point and always ends with it: install homeskillet, when no
-// version is installed yet, as when what runs is the download; put the
-// directory it installs into on PATH, when it is not; or, with no repository
-// linked yet, start one. It is "" once a repository is linked.
+// version is installed yet, as when what runs is the download; choose one to
+// run, when versions are installed but the command points to none of them,
+// as after a pinned version was deleted by hand; put the directory it
+// installs into on PATH, when it is not; or, with no repository linked yet,
+// start one. It is "" once a repository is linked.
 func nextStep(home string) string {
 	layout, err := selfLayout(invocation{}, home)
 	if err != nil {
 		return ""
 	}
-	if state, err := layout.Inspect(); err != nil || state.Current == "" {
+	state, err := layout.Inspect()
+	switch {
+	case err != nil:
+		return "the installed versions could not be read: " + oneLine(err)
+	case state.Broken != "" || state.Current == "" && len(state.Versions) > 0:
+		return selfName() + " use latest chooses the newest installed version to run, and repairs the command."
+	case state.Current == "":
 		return selfName() + " install installs homeskillet as a command that runs from any folder."
 	}
 	if !onPath(layout.Bin) {

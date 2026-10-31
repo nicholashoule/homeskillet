@@ -566,8 +566,11 @@ func (l Layout) Use(choice string, dryRun bool, log io.Writer) error {
 // It refuses to remove the version that runs, which must first be changed
 // with Use. It deletes only what Install creates, so a version directory
 // holding anything else is left alone and reported. Every version is checked
-// before anything changes, so one that cannot be removed keeps the others
-// installed too; a version named twice is removed once.
+// before anything changes, so one it refuses keeps the others installed too;
+// a version named twice is removed once. Each version's program is deleted
+// before the rest of it: on Windows, a program another process runs cannot
+// be deleted, and failing on it first leaves that version whole, though the
+// versions removed before it stay removed.
 //
 // It writes one line per change to log, which may be nil. With dryRun it
 // writes the same lines and changes nothing.
@@ -665,6 +668,10 @@ func (l Layout) removable(state State, v string) (removal, error) {
 		if name := entry.Name(); entry.IsDir() || name != programFile && name != buildFile && !strings.HasPrefix(name, safefile.TempPrefix) {
 			return removal{}, fmt.Errorf("%s contains %q, which homeskillet did not create; remove the directory by hand", dir, name)
 		}
+	}
+	// The program first (see Remove).
+	if i := slices.IndexFunc(entries, func(entry os.DirEntry) bool { return entry.Name() == programFile }); i > 0 {
+		entries[0], entries[i] = entries[i], entries[0]
 	}
 	return removal{version: v, dir: dir, entries: entries}, nil
 }

@@ -494,8 +494,8 @@ func counted(n int, format string) string {
 	return fmt.Sprintf(format, n)
 }
 
-// list joins the items that are not empty as a phrase: "a", "a and b", or
-// "a, b and c".
+// list joins the items that are not empty as a phrase, as joined does: "a",
+// "a and b", or "a, b, and c".
 func list(items ...string) string {
 	var kept []string
 	for _, item := range items {
@@ -503,10 +503,7 @@ func list(items ...string) string {
 			kept = append(kept, item)
 		}
 	}
-	if len(kept) < 2 {
-		return strings.Join(kept, "")
-	}
-	return strings.Join(kept[:len(kept)-1], ", ") + " and " + kept[len(kept)-1]
+	return joined(kept, "and")
 }
 
 // files formats n with the singular or plural noun, such as "1 file is" or
