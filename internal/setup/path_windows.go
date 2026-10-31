@@ -40,33 +40,7 @@ func registryPath(root syscall.Handle, key string) []string {
 	if err != nil || value == "" {
 		return nil
 	}
-	return filepath.SplitList(expand(value))
-}
-
-// expand replaces each %NAME% in s with the environment variable's value, as
-// ExpandEnvironmentStrings does, leaving a name that is not set as it is.
-func expand(s string) string {
-	var result strings.Builder
-	for {
-		start := strings.IndexByte(s, '%')
-		if start < 0 {
-			break
-		}
-		end := strings.IndexByte(s[start+1:], '%')
-		if end < 0 {
-			break
-		}
-		end += start + 1
-		result.WriteString(s[:start])
-		if value, ok := os.LookupEnv(s[start+1 : end]); ok && end > start+1 {
-			result.WriteString(value)
-		} else {
-			result.WriteString(s[start : end+1])
-		}
-		s = s[end+1:]
-	}
-	result.WriteString(s)
-	return result.String()
+	return filepath.SplitList(host.ExpandVariables(value))
 }
 
 // lookPath finds the program a step names, as exec.LookPath does but

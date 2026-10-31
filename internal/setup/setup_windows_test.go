@@ -90,23 +90,6 @@ func TestLookPathWindows(t *testing.T) {
 	}
 }
 
-func TestExpand(t *testing.T) {
-	t.Setenv("HOMESKILLET_TEST_DIR", `C:\tools`)
-	for in, want := range map[string]string{
-		`%HOMESKILLET_TEST_DIR%\bin`:          `C:\tools\bin`,
-		`%homeskillet_test_dir%\bin`:          `C:\tools\bin`,
-		`%HOMESKILLET_TEST_UNSET%\bin`:        `%HOMESKILLET_TEST_UNSET%\bin`,
-		`a%%b`:                                `a%%b`,
-		`50%`:                                 `50%`,
-		`%HOMESKILLET_TEST_DIR%;%x%;C:\plain`: `C:\tools;%x%;C:\plain`,
-		`%HOMESKILLET_TEST_DIR%%HOMESKILLET_TEST_DIR%`: `C:\toolsC:\tools`,
-	} {
-		if got := expand(in); got != want {
-			t.Errorf("expand(%q) = %q, want %q", in, got, want)
-		}
-	}
-}
-
 func TestSearchPathAppendsWindows(t *testing.T) {
 	_, home := fixture(t)
 	bin := filepath.Join(home, ".local", "bin")

@@ -97,7 +97,7 @@ func TestWritableErrorAboveProfile(t *testing.T) {
 	// be avoided, so the error says who can change it and how to look.
 	above := filepath.Dir(home)
 	text := writableError(above, "S-1-5-11", modify).Error()
-	for _, want := range []string{above + " holds your profile", "(Modify)", "administrator", "icacls " + above, permissionsGuide} {
+	for _, want := range []string{above + " holds your profile", "(Modify)", "no folder you create or move", "administrator", permissionsGuide} {
 		if !strings.Contains(text, want) {
 			t.Errorf("above the profile, %q is missing from:\n%s", want, text)
 		}

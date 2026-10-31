@@ -13,8 +13,10 @@ this page covers what else differs on Windows, and the rest of the documentation
    `PS C:\Users\you>`. If yours is `C:\Users\you>` alone, the window is Command Prompt; type `powershell`, press Enter,
    and the same window runs PowerShell.
 2. Paste these lines. They download the build for your PC and the release's `SHA256SUMS` into your Downloads folder,
-   and only if the build's SHA-256 is listed there, run its `prepare` and then its `install`. If either stops, a
-   warning says that homeskillet is not installed yet; deal with what it said, and paste the lines again:
+   and only if the build's SHA-256 is listed there, run its `prepare` and then its `install`. If `install` stops, a
+   warning says that homeskillet is not installed yet; deal with what it said, and paste the lines again. When it says
+   a folder, such as `C:\`, is writable by others, see [When a Folder Is Writable by
+   Others](#when-a-folder-is-writable-by-others):
 
    ```powershell
    cd $HOME\Downloads
@@ -22,14 +24,14 @@ this page covers what else differs on Windows, and the rest of the documentation
    $base = 'https://github.com/nicholashoule/homeskillet/releases/latest/download'
    $bin = "$HOME\.local\bin"; $installed = $false
    foreach ($file in $exe, 'SHA256SUMS') { Remove-Item $file -ErrorAction SilentlyContinue; if (Get-Command curl.exe -ErrorAction SilentlyContinue) { curl.exe -fsSLO --proto =https "$base/$file" } else { & { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest "$base/$file" -OutFile $file -UseBasicParsing } } }
-   if ((Test-Path $exe, SHA256SUMS) -notcontains $false -and (Get-Content SHA256SUMS) -contains "$((Get-FileHash $exe -Algorithm SHA256).Hash)  $exe") { & ".\$exe" prepare; if ($LASTEXITCODE -eq 0) { if (($env:Path -split ';') -notcontains $bin) { $env:Path += ";$bin" }; & ".\$exe" install; $installed = $LASTEXITCODE -eq 0 } } else { Write-Error "$exe did not download, or does not match SHA256SUMS; it was not run" }
+   if ((Test-Path $exe, SHA256SUMS) -notcontains $false -and (Get-Content SHA256SUMS) -contains "$((Get-FileHash $exe -Algorithm SHA256).Hash)  $exe") { & ".\$exe" prepare; if (($env:Path -split ';') -notcontains $bin) { $env:Path += ";$bin" }; & ".\$exe" install; $installed = $LASTEXITCODE -eq 0 } else { Write-Error "$exe did not download, or does not match SHA256SUMS; it was not run" }
    if ($installed) { $userPath = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames'); if (($userPath -split ';') -notcontains $bin) { Set-ItemProperty HKCU:\Environment Path ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';') -Type ExpandString; [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', $null, 'User') }; Remove-Item $exe, SHA256SUMS; homeskillet version } else { Write-Warning 'homeskillet is not installed yet: deal with what it said above, then paste these lines again' }
    ```
 
 3. Answer `prepare`'s questions. Each fix is shown first and runs only if you type `y`. For Developer Mode, which
    Windows requires before a program may make links, it opens Settings at For developers: switch it on there, approve
    the administrator prompt, and come back; `prepare` checks again, and while it is still off, asks whether to check
-   once more. It then offers Git, and PowerShell 7, from winget. Once it says `ready`, `install` runs.
+   once more. It then offers Git, and PowerShell 7, from winget. `install` runs next: it needs Developer Mode, not Git.
 4. Once `install` finishes, the last line puts `.local\bin` on your Path, for this window and every new one, deletes
    the two downloads, and runs `homeskillet version` to show that the command works. Then run `homeskillet` alone: with
    no repository yet, it shows how to start one, or to link the one you have.
@@ -43,11 +45,67 @@ Windows](#preparing-windows) say what each check needs and why. From then on, `h
 release, checked with Windows's own `curl.exe` and `certutil.exe`; [install.md](install.md) covers versions, pinning,
 and removal.
 
+### When a Folder Is Writable by Others
+
+Anyone who can change a linked file, such as your PowerShell profile, can run code as you. So every command, `prepare`,
+`install`, and `link` included, first checks that nobody else can change your profile, the folders above it, or the
+repository, and stops with a message naming the folder and who may change it, such as `C:\ is writable by NT
+AUTHORITY\Authenticated Users`. What to do depends on the folder:
+
+- **A folder outside your profile**, such as `C:\src\dotfiles`: a folder made at the root of a drive lets every
+  signed-in user change it. Keep the repository in your profile instead: `homeskillet init $HOME\dotfiles` creates
+  one there, and `git clone URL $HOME\dotfiles` clones one.
+- **A folder in your profile**: remove the other account from it on its Security tab (Properties, Security, Edit), or
+  move the repository into a new folder in your profile.
+- **`C:\`, or another folder your profile is in**: every file in your profile is under it, so no folder you create
+  or move can help. As Windows sets it up, `C:\` passes, so on this machine it has been changed, and an administrator
+  has to put back what Windows sets up, as below; for another folder, such as `C:\Users`, compare `icacls` on it with
+  a machine where homeskillet works, and remove what differs.
+
+To put back `C:\`:
+
+1. Open PowerShell as administrator: right-click Start and choose **Terminal (Admin)**, or on Windows 10 **Windows
+   PowerShell (Admin)**, and approve the prompt.
+2. Run `icacls C:\` and compare it with what Windows sets up:
+
+   ```text
+   C:\ BUILTIN\Administrators:(OI)(CI)(F)
+       NT AUTHORITY\SYSTEM:(OI)(CI)(F)
+       BUILTIN\Users:(OI)(CI)(RX)
+       NT AUTHORITY\Authenticated Users:(OI)(CI)(IO)(M)
+       NT AUTHORITY\Authenticated Users:(AD)
+       Mandatory Label\High Mandatory Level:(OI)(NP)(IO)(NW)
+   ```
+
+   A line for the account the message names that is not in this list, such as `NT AUTHORITY\Authenticated
+   Users:(OI)(CI)(M)` or `Everyone:(F)`, is the cause. `(IO)` marks a right that only what is created inside gets,
+   and `(AD)` only lets an account create folders, so those pass. Lines that some apps add for an `S-1-15-3-…`
+   capability with only read rights, such as `(S,RD,X,RA)`, pass too.
+3. Put back what Windows sets up for that account, in the same window. For `NT AUTHORITY\Authenticated Users`, the
+   usual one:
+
+   ```powershell
+   icacls C:\ /remove:g '*S-1-5-11'
+   icacls C:\ /grant '*S-1-5-11:(OI)(CI)(IO)(M)' '*S-1-5-11:(AD)'
+   ```
+
+   The first line removes every entry for the account, and the second grants back what Windows sets up. For
+   `BUILTIN\Users`, they are `icacls C:\ /remove:g '*S-1-5-32-545'` and `icacls C:\ /grant
+   '*S-1-5-32-545:(OI)(CI)(RX)'`; for `Everyone`, which Windows does not list on `C:\`, only `icacls C:\ /remove:g
+   '*S-1-1-0'`. Accounts are named by SID, the same in every language, and quoted, so PowerShell leaves the parentheses
+   alone. Windows carries the change to everything under `C:\` that inherits from it, which can take a few minutes; let
+   it finish, then run `icacls C:\` again to compare.
+4. Close the administrator window, open PowerShell as yourself again, and paste the [install lines](#installing) again:
+   `prepare` checks once more, and the install carries on from its step 3. Where homeskillet is already installed, run
+   `homeskillet prepare` instead, then what stopped before, such as `homeskillet link`.
+
 ### Putting the Command on Your Path
 
-The install steps do this for you. After installing another way, such as from source, put `.local\bin` on your Path
-once with these lines, with your folder in place of `$HOME\.local\bin` if you installed elsewhere, then open a new
-window:
+Since 0.5.1, `install` does this itself, however you run it: when the folder it installs into is not on your Path, it
+adds that folder at the end of your user Path, for new terminals, and prints the line for the one it ran in, such as
+`$env:Path += ';C:\Users\you\.local\bin'`. It adds only that folder, once, after the [ownership
+rules](#ownership-and-permissions) pass, and only with your own profile as the home; it changes no other entry, and
+`--dry-run` changes nothing ([safety.md](safety.md#installing-homeskillet)). Otherwise, these lines do it:
 
 ```powershell
 $bin = "$HOME\.local\bin"
@@ -55,9 +113,8 @@ $userPath = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnviro
 if (($userPath -split ';') -notcontains $bin) { Set-ItemProperty HKCU:\Environment Path ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';') -Type ExpandString; [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', $null, 'User') }
 ```
 
-The Path is read and written as it is kept, so entries such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` go on
-following the variables they name, and the folder is added only once. Setting and clearing `HOMESKILLET_PATH` makes
-Windows tell programs that the environment changed, so new windows see the Path at once.
+Both keep the Path as it is stored, so entries such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` stay
+variables, and tell Windows the environment changed, so new windows see the Path at once.
 
 ### Building from Source
 
@@ -93,7 +150,8 @@ answer `y` (see [Preparing Windows](#preparing-windows)). The [install steps](#i
   command refuses it unless `--allow-root` is given.
 - **Keep the repository under your profile directory**, for example `%USERPROFILE%\projects\dotfiles`, and outside
   OneDrive. A folder created at the root of a drive, such as `C:\src`, lets every signed-in user change what is in it,
-  so homeskillet refuses it (see [Ownership and Permissions](#ownership-and-permissions)), and OneDrive keeps files as
+  so homeskillet refuses it (see [When a Folder Is Writable by Others](#when-a-folder-is-writable-by-others)), and
+  OneDrive keeps files as
   placeholders it fetches on demand, which homeskillet does not trust.
 
 ## Preparing Windows
@@ -108,7 +166,7 @@ installed. It checks, in order:
 
 | Item | Needed for | When it is missing |
 |---|---|---|
-| Home | Everything: links go into it, homeskillet installs into it, and the installs below run in it | Your profile folder, and every folder above it, such as `C:\`, must pass the [ownership rules](#ownership-and-permissions). homeskillet cannot fix that itself, so `prepare` says why it fails and who can fix it, still offers Developer Mode, and holds back the installs below until it passes. |
+| Home | Everything: links go into it, homeskillet installs into it, and the installs below run in it | Your profile folder, and every folder above it, such as `C:\`, must pass the [ownership rules](#ownership-and-permissions). homeskillet cannot fix that itself, so `prepare` says why it fails and who can fix it ([how](#when-a-folder-is-writable-by-others)), still offers Developer Mode, and holds back the installs below until it passes. |
 | Developer Mode | Links, and installing homeskillet itself | Offers to open Settings at For developers, waits while you switch it on, then checks again, and while it is still off, asks whether to check once more. Turning it on takes an administrator, so the switch is yours. |
 | winget | The two installs below | Offers, in turn until winget is found: registering it with Microsoft's `Add-AppxPackage -RegisterByFamilyName -MainPackage Microsoft.DesktopAppInstaller_8wekyb3d8bbwe`, as needed after a first sign-in, then waits a few seconds for Windows to finish; then Microsoft's repair, which installs the NuGet provider and the `Microsoft.WinGet.Client` module from the PowerShell Gallery for your account only and runs `Repair-WinGetPackageManager`, asked about even under `--yes`. Failing both, it names App Installer in the Microsoft Store, winget's GitHub releases, and each tool's official download page. |
 | Git | Cloning a repository | Offers `winget install --id Git.Git --exact --source winget` with the two `--accept-…-agreements` flags. winget checks the installer against its manifest's SHA-256, which is why homeskillet does not download installers itself. |
@@ -262,12 +320,9 @@ saying who may do what. The rules stay those of the other systems, in Windows te
 - Rules that only deny, and rules that apply only to files created later, are ignored; an entry of a kind homeskillet
   cannot evaluate fails the check.
 
-The error names the account that may write, such as `BUILTIN\Users`. When the directory is one above your profile, such
-as `C:\`, every check of a file in your profile passes through it, so moving the repository cannot help, and the error
-says so: it names the permission as a folder's Security tab does, such as Modify or Full control, and that only an
-administrator can change it. `icacls C:\` lists who may do what. As Windows sets it up, `C:\` lets
-`NT AUTHORITY\Authenticated Users` only create folders, shown as `(AD)`, and grants Modify only on what they create,
-shown as `(OI)(CI)(IO)(M)`, which passes.
+The error names the account that may write, such as `BUILTIN\Users`, and above your profile, such as at `C:\`, the
+permission as a folder's Security tab does, such as Modify; [When a Folder Is Writable by
+Others](#when-a-folder-is-writable-by-others) says what to do.
 
 ### Junctions and Other Reparse Points
 

@@ -200,6 +200,13 @@ copies and where it copies it:
   anything else found in a version directory.
 - Each file is written under a temporary name and renamed into place only once it is complete and flushed to disk, so a
   crash or a full disk never leaves a partial binary.
+- On Windows, when the installation's `bin` directory is not on your Path, `install` adds it, the only change
+  homeskillet makes to the registry: to the one value, `Path` in `HKEY_CURRENT_USER\Environment`; only appended to, so
+  every entry already there keeps its place and text, and a command of the same name earlier on the Path still runs
+  first; keeping the value's type, so variables in it stay variables; and only with a plain directory on a drive,
+  holding no `;`, `"`, `%`, or control characters, that passes the ownership rules above, since anyone who could add a
+  program to a directory on the Path could have it run as you. It is added only when the home is your own profile,
+  never a scratch one given with `--home`, and `--dry-run` changes nothing.
 
 ## Updating
 

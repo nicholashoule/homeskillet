@@ -195,9 +195,10 @@ func (d descriptor) check(path string, rights uint32) error {
 	return nil
 }
 
-// permissionsGuide is where docs/windows.md explains what the checks here
-// accept, for an error the user cannot fix by moving a folder.
-const permissionsGuide = "https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#ownership-and-permissions"
+// permissionsGuide is where docs/windows.md says how an administrator puts
+// back what Windows sets up, for an error the user cannot fix by moving a
+// folder.
+const permissionsGuide = "https://github.com/nicholashoule/homeskillet/blob/main/docs/windows.md#when-a-folder-is-writable-by-others"
 
 // profile is the current user's profile directory, found once, or "" when
 // Windows cannot say where it is.
@@ -215,15 +216,17 @@ var profile = sync.OnceValue(func() string {
 // while a profile directory lets only its user, hence the advice to keep
 // files under it. That advice cannot help with a directory above the
 // profile, such as C:\, which every check of a file in the profile passes
-// through: only an administrator can change it. The error says so, and
-// names the permission as a folder's Security tab does, so that what the
-// user reports can be matched with what icacls shows.
+// through: no folder the user creates or moves can avoid it, and only an
+// administrator can change it. The error says so, names the permission as a
+// folder's Security tab does, so that it can be matched with what icacls
+// shows, and links to the steps that put back what Windows sets up.
 func writableError(path, sid string, mask uint32) error {
 	if home := profile(); home == "" || !Within(path, home) || strings.EqualFold(path, home) {
 		return fmt.Errorf("%s is writable by %s; keep it under your user profile, which only you can change, or remove that permission", printable(path), account(sid))
 	}
-	return fmt.Errorf("%s holds your profile and is writable by %s (%s), so homeskillet trusts nothing in your profile\n"+
-		"  only an administrator can change that: icacls %s shows who may do what, and %s what homeskillet accepts",
+	return fmt.Errorf("%s holds your profile and is writable by %s (%s), so homeskillet trusts nothing in your profile, "+
+		"and no folder you create or move can avoid that\n"+
+		"  an administrator has to put back what Windows sets up on %s, as %s shows step by step",
 		printable(path), account(sid), permission(mask), printable(path), permissionsGuide)
 }
 
