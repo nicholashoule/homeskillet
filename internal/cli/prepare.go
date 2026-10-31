@@ -328,7 +328,7 @@ func nextStep(home string) string {
 		return selfName() + " install installs homeskillet as a command that runs from any folder."
 	}
 	if !onPath(layout.Bin) {
-		return displayPath(layout.Bin) + " is not on PATH; " + pathAdvice(layout.Bin) + "."
+		return pathStep(layout.Bin, home)
 	}
 	if data, err := dataDir(invocation{}, home); err == nil {
 		if linked, err := link.Repositories(data, home); err == nil && len(linked) > 0 {

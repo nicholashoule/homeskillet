@@ -13,7 +13,7 @@ this page covers what else differs on Windows, and the rest of the documentation
    `PS C:\Users\you>`. If yours is `C:\Users\you>` alone, the window is Command Prompt; type `powershell`, press Enter,
    and the same window runs PowerShell.
 2. Paste these lines. They download the build for your PC and the release's `SHA256SUMS` into your Downloads folder,
-   and only if the build's SHA-256 is listed there, run its `prepare` and then its `install`. If either stops, a
+   and only if the build's SHA-256 is listed there, run its `prepare` and then its `install`. If `install` stops, a
    warning says that homeskillet is not installed yet; deal with what it said, and paste the lines again. When it says
    a folder, such as `C:\`, is writable by others, see [When a Folder Is Writable by
    Others](#when-a-folder-is-writable-by-others):
@@ -24,14 +24,14 @@ this page covers what else differs on Windows, and the rest of the documentation
    $base = 'https://github.com/nicholashoule/homeskillet/releases/latest/download'
    $bin = "$HOME\.local\bin"; $installed = $false
    foreach ($file in $exe, 'SHA256SUMS') { Remove-Item $file -ErrorAction SilentlyContinue; if (Get-Command curl.exe -ErrorAction SilentlyContinue) { curl.exe -fsSLO --proto =https "$base/$file" } else { & { [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor 3072; $ProgressPreference = 'SilentlyContinue'; Invoke-WebRequest "$base/$file" -OutFile $file -UseBasicParsing } } }
-   if ((Test-Path $exe, SHA256SUMS) -notcontains $false -and (Get-Content SHA256SUMS) -contains "$((Get-FileHash $exe -Algorithm SHA256).Hash)  $exe") { & ".\$exe" prepare; if ($LASTEXITCODE -eq 0) { if (($env:Path -split ';') -notcontains $bin) { $env:Path += ";$bin" }; & ".\$exe" install; $installed = $LASTEXITCODE -eq 0 } } else { Write-Error "$exe did not download, or does not match SHA256SUMS; it was not run" }
+   if ((Test-Path $exe, SHA256SUMS) -notcontains $false -and (Get-Content SHA256SUMS) -contains "$((Get-FileHash $exe -Algorithm SHA256).Hash)  $exe") { & ".\$exe" prepare; if (($env:Path -split ';') -notcontains $bin) { $env:Path += ";$bin" }; & ".\$exe" install; $installed = $LASTEXITCODE -eq 0 } else { Write-Error "$exe did not download, or does not match SHA256SUMS; it was not run" }
    if ($installed) { $userPath = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnvironmentNames'); if (($userPath -split ';') -notcontains $bin) { Set-ItemProperty HKCU:\Environment Path ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';') -Type ExpandString; [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', $null, 'User') }; Remove-Item $exe, SHA256SUMS; homeskillet version } else { Write-Warning 'homeskillet is not installed yet: deal with what it said above, then paste these lines again' }
    ```
 
 3. Answer `prepare`'s questions. Each fix is shown first and runs only if you type `y`. For Developer Mode, which
    Windows requires before a program may make links, it opens Settings at For developers: switch it on there, approve
    the administrator prompt, and come back; `prepare` checks again, and while it is still off, asks whether to check
-   once more. It then offers Git, and PowerShell 7, from winget. Once it says `ready`, `install` runs.
+   once more. It then offers Git, and PowerShell 7, from winget. `install` runs next: it needs Developer Mode, not Git.
 4. Once `install` finishes, the last line puts `.local\bin` on your Path, for this window and every new one, deletes
    the two downloads, and runs `homeskillet version` to show that the command works. Then run `homeskillet` alone: with
    no repository yet, it shows how to start one, or to link the one you have.
@@ -101,9 +101,11 @@ To put back `C:\`:
 
 ### Putting the Command on Your Path
 
-The install steps do this for you. After installing another way, such as from source, put `.local\bin` on your Path
-once with these lines, with your folder in place of `$HOME\.local\bin` if you installed elsewhere, then open a new
-window:
+Since 0.5.1, `install` does this itself, however you run it: when the folder it installs into is not on your Path, it
+adds that folder at the end of your user Path, for new terminals, and prints the line for the one it ran in, such as
+`$env:Path += ';C:\Users\you\.local\bin'`. It adds only that folder, once, after the [ownership
+rules](#ownership-and-permissions) pass, and only with your own profile as the home; it changes no other entry, and
+`--dry-run` changes nothing ([safety.md](safety.md#installing-homeskillet)). Otherwise, these lines do it:
 
 ```powershell
 $bin = "$HOME\.local\bin"
@@ -111,9 +113,8 @@ $userPath = (Get-Item HKCU:\Environment).GetValue('Path', '', 'DoNotExpandEnviro
 if (($userPath -split ';') -notcontains $bin) { Set-ItemProperty HKCU:\Environment Path ("$userPath".TrimEnd(';') + ";$bin").TrimStart(';') -Type ExpandString; [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', '1', 'User'); [Environment]::SetEnvironmentVariable('HOMESKILLET_PATH', $null, 'User') }
 ```
 
-The Path is read and written as it is kept, so entries such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` go on
-following the variables they name, and the folder is added only once. Setting and clearing `HOMESKILLET_PATH` makes
-Windows tell programs that the environment changed, so new windows see the Path at once.
+Both keep the Path as it is stored, so entries such as `%USERPROFILE%\AppData\Local\Microsoft\WindowsApps` stay
+variables, and tell Windows the environment changed, so new windows see the Path at once.
 
 ### Building from Source
 
