@@ -8,6 +8,12 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 
 ## [Unreleased]
 
+## [0.6.0]
+
+homeskillet 0.6.0 gets more Windows machines working without an administrator: a `C:\` that gives every signed-in user
+Modify no longer stops every command, and `--allow-open-profile` lets you accept, run by run, a folder or file in your
+profile that another account can change.
+
 ### Added
 
 - On Windows, `--allow-open-profile` lets `status`, `link`, `unlink`, and `check` go on when another account can change
@@ -22,33 +28,13 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
   delete what is in it or change its permissions, such as `Everyone:(F)`
   ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
 
-## [0.5.1]
-
-homeskillet 0.5.1 gets Windows machines past where installs stopped: `install` puts its folder on your Path, so
-`homeskillet` runs in every new terminal, and when permissions are too open, or another account owns a file, the error
-says so in one line, on every system, with what to do next.
-
-### Changed
-
-- On Windows, `install` puts the folder it installs into, `.local\bin`, on your Path when it is not there, so
-  `homeskillet` runs in every new terminal however you installed it, and prints the line that makes it run in the
-  terminal you are in. It only appends that one folder, after the ownership checks, and only for your own profile
-  ([docs/windows.md](docs/windows.md#putting-the-command-on-your-path)). `prepare` says to open a new terminal when
-  the folder is on your Path but not yet in the one it runs in.
-- The Windows install lines run `install` even when `prepare` still lists Git as missing, since installing does not
-  need Git ([docs/windows.md](docs/windows.md#installing)).
-- When a file or folder's permissions are too open, or another account owns it, the error says so in one line on every
-  system: the path, what is wrong, and what to do, such as `run chmod go-w on it`. On Windows, for a directory above
-  your profile, such as `C:\`, it says that moving files cannot help and that an administrator needs to repair the
-  permissions by restoring what Windows sets ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
-- Help, errors, and the start guide name homeskillet's repository instead of pages of its documentation, and on
-  Windows, the note about the Path says how to add a folder in Windows's own dialog.
-
 ## Earlier Releases
 
 Each release keeps its notes on its GitHub Release; see [all
 releases](https://github.com/nicholashoule/homeskillet/releases).
 
+- [0.5.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.5.1): `install` putting its folder on the Path on
+  Windows, and one-line errors when permissions are too open.
 - [0.5.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.5.0): help for each command, `info` and `term`,
   removing several versions at once, one color standard, and a guided start.
 - [0.4.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.4.0): `prepare`, `list` and `list-remote`, `update`
@@ -61,5 +47,5 @@ releases](https://github.com/nicholashoule/homeskillet/releases).
   `check`, and `backups`.
 - [0.1.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.1.1): the first release, for Linux and macOS.
 
-[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.5.1...HEAD
-[0.5.1]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.5.1
+[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.6.0
