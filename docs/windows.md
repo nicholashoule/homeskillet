@@ -65,7 +65,8 @@ permissions too open: NT AUTHORITY\Authenticated Users can change it`, and chang
 
   `icacls C:\src` then lists only those three; remove any other with `icacls C:\src /remove:g 'BUILTIN\Users'`, naming
   it, and if icacls says access is denied, the folder is not yours: run it as administrator. Or keep the repository in
-  your profile instead: `git clone URL $HOME\dotfiles`.
+  your profile instead: `git clone URL $HOME\dotfiles`. For one in your profile, `--allow-open-profile` lets `status`,
+  `link`, `unlink`, and `check` go on past it on that run, warning about each, if you accept the risk.
 - **`C:\`, or another folder your profile is in**, had its permissions opened beyond what Windows sets, and they need
   repairing: every file in your profile is under it, so no folder you make or move can help. An administrator has to
   restore the permissions Windows sets, as below, which removes the extra access. For another folder, such as
@@ -86,10 +87,9 @@ To repair `C:\`:
        Mandatory Label\High Mandatory Level:(OI)(NP)(IO)(NW)
    ```
 
-   A line for the account the message names that is not in this list, such as `NT AUTHORITY\Authenticated
-   Users:(OI)(CI)(M)` or `Everyone:(F)`, is the cause. `(IO)` marks a right that only what is created inside gets,
-   and `(AD)` only lets an account create folders, so those pass. Lines that some apps add for an `S-1-15-3-…`
-   capability with only read rights, such as `(S,RD,X,RA)`, pass too.
+   A line for the account the message names that is not in this list, such as `Everyone:(F)`, is the cause. `(IO)`
+   marks a right that only what is created inside gets, and `(AD)` only lets an account create folders, so those pass.
+   Lines that some apps add for an `S-1-15-3-…` capability with only read rights, such as `(S,RD,X,RA)`, pass too.
 3. Repair that account's permissions, in the same window, by restoring what Windows sets. For
    `NT AUTHORITY\Authenticated Users`, the usual one:
 
@@ -151,8 +151,7 @@ answer `y` (see [Preparing Windows](#preparing-windows)). The [install steps](#i
 - **Keep the repository under your profile directory**, for example `%USERPROFILE%\projects\dotfiles`, and outside
   OneDrive. A folder created at the root of a drive, such as `C:\src`, lets every signed-in user change what is in it,
   so homeskillet refuses it (see [When a Folder Is Writable by Others](#when-a-folder-is-writable-by-others)), and
-  OneDrive keeps files as
-  placeholders it fetches on demand, which homeskillet does not trust.
+  OneDrive keeps files as placeholders it fetches on demand, which homeskillet does not trust.
 
 ## Preparing Windows
 
@@ -316,13 +315,14 @@ saying who may do what. The rules stay those of the other systems, in Windows te
 - A repository, its files, the home, the data directory, and every directory a link goes into must have a trusted owner
   and grant nobody else any right to change them, their entries, or who may access them.
 - A directory above them may also let others add files and folders, which is what a drive's root lets every user do, but
-  not delete or rename what is there, as a sticky directory such as `/tmp` allows elsewhere.
+  not delete or rename what is there, as a sticky directory such as `/tmp` allows elsewhere. A local volume's root, such
+  as `C:\`, cannot be renamed, so it may let them change anything else about it but its permissions or owner.
 - Rules that only deny, and rules that apply only to files created later, are ignored; an entry of a kind homeskillet
   cannot evaluate fails the check.
 
 The error names the account that may write, such as `BUILTIN\Users`, and above your profile, such as at `C:\`, the
 permission as a folder's Security tab does, such as Modify; [When a Folder Is Writable by
-Others](#when-a-folder-is-writable-by-others) says what to do.
+Others](#when-a-folder-is-writable-by-others) says what to do, and when `--allow-open-profile` can.
 
 ### Junctions and Other Reparse Points
 
@@ -460,7 +460,7 @@ acts in a distribution, WSL's default unless `--distribution NAME` names another
 - **Options** other than `--distribution` and `--from` go to homeskillet in the distribution and mean what they mean
   there: `--home` and `--data-dir` name Linux directories, and files and step names after the repository are as for the
   command itself. `--data-dir` also says where the copy is, so give the same one to every `wsl` command; `setup`, which
-  keeps nothing there, uses it only to find the copy.
+  keeps nothing there, uses it only to find the copy. `wsl` refuses `--allow-open-profile`.
 
 `wsl` is built not to fail on WSL's own hiccups. It reads the distributions from the registry, where WSL records them,
 rather than from `wsl.exe`'s output; starts the distribution with a command that changes nothing, given two minutes and

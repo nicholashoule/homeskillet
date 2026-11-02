@@ -77,6 +77,14 @@ func checkPrivate(path string, info os.FileInfo) error {
 	return nil
 }
 
+// AllowOpenProfile tolerates nothing on Linux and macOS, unlike its Windows
+// side: what is in the home is the user's own to fix with chmod, and the
+// command line offers --allow-open-profile only on Windows. report is never
+// told anything, and restore does nothing.
+func AllowOpenProfile(func(error)) (restore func()) {
+	return func() {}
+}
+
 // windowsDrive reports whether path is a Windows drive at one of WSL's
 // default mount points, such as /mnt/c, or is below one.
 func windowsDrive(path string) bool {

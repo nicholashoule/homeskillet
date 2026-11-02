@@ -76,7 +76,10 @@ Parent directories that `link` creates are private (`0700`); existing ones are l
 
 Windows has no mode bits, so there the same rules read each file's owner and access control list, an elevated process
 counts as root, and junctions are refused wherever ownership is checked
-([windows.md](windows.md#ownership-and-permissions)).
+([windows.md](windows.md#ownership-and-permissions)). It is also the one system where you can accept the risk:
+`--allow-open-profile` lets `status`, `link`, `unlink`, and `check` go on past a folder or file in your profile that
+another account can change, naming each one on every run. It never reaches outside the profile, a file another account
+owns, `setup`, or installing homeskillet ([windows.md](windows.md#when-a-folder-is-writable-by-others)).
 
 Nothing is linked across the line between Windows and WSL. The Windows build refuses a WSL distribution's files, under
 `\\wsl.localhost` or `\\wsl$`, where Windows reports no owner at all, and inside WSL the Linux build refuses Windows

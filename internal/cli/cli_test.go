@@ -205,6 +205,21 @@ func TestCLIArguments(t *testing.T) {
 	}
 }
 
+// TestAllowOpenProfileOnlyOnWindows checks that only the Windows build has
+// --allow-open-profile, which tolerates folders in the Windows profile.
+func TestAllowOpenProfileOnlyOnWindows(t *testing.T) {
+	inv, err := parse([]string{"link", "--allow-open-profile"}, new(bytes.Buffer))
+	if runtime.GOOS == "windows" {
+		if err != nil || !inv.openProfile {
+			t.Fatalf("link --allow-open-profile: %+v, %v", inv, err)
+		}
+		return
+	}
+	if err == nil {
+		t.Fatalf("link --allow-open-profile accepted on %s", runtime.GOOS)
+	}
+}
+
 func TestRepositoryArgument(t *testing.T) {
 	requireSymlinks(t)
 	for _, test := range []struct {

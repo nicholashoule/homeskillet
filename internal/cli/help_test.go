@@ -11,6 +11,7 @@ import (
 	"context"
 	"flag"
 	"maps"
+	"runtime"
 	"slices"
 	"strings"
 	"testing"
@@ -95,7 +96,8 @@ func TestHelp(t *testing.T) {
 func TestHelpOptions(t *testing.T) {
 	flags := newFlags(new(invocation))
 	for _, name := range optionOrder {
-		if flags.Lookup(name) == nil {
+		// Only Windows has --allow-open-profile.
+		if flags.Lookup(name) == nil && (name != "allow-open-profile" || runtime.GOOS == "windows") {
 			t.Errorf("help lists --%s, which is not an option", name)
 		}
 	}

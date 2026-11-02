@@ -124,6 +124,9 @@ the README's Supported Environments table or docs/windows.md.
   `trust.CheckLocation`, the refusal of junctions on Windows, or control-character rejection to make a test or a
   particular setup pass. On Windows, an access control entry the checks cannot evaluate must fail them. New code that
   reads or writes a home, repository, or prefix path must check it with `trust.CheckLocation` first.
+- The only way past a permission check is `--allow-open-profile` (`trust.AllowOpenProfile`): on Windows alone, for
+  paths in the user's profile alone, for `status`, `link`, `unlink`, and `check` alone, and named in a warning on every
+  run. Never widen it to other paths, owners, junctions, `setup`, or installing programs, and never make it persist.
 - Anything that writes into a home directory needs a dry-run mode and tests showing that the dry run changes nothing.
 - Setup steps are code from someone's repository. Never run one without showing it exactly and getting approval. Keep
   "no" as the default answer, and never add an implicit shell, environment expansion, or templating to `run`. The only
