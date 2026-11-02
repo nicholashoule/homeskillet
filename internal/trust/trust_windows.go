@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"unsafe"
 
@@ -52,6 +53,17 @@ const (
 	// rename anyone else's, so, like a sticky directory, an ancestor that
 	// lets others add entries still cannot be swapped for another.
 	sharedRights = privateRights &^ (fileWriteData | fileAppendData)
+	// rootRights are the rights on the root of a local volume, such as C:\,
+	// that let someone swap what is in it, or grant themselves a right that
+	// does. Renaming or deleting an entry takes DELETE on the entry, checked
+	// with it, or FILE_DELETE_CHILD on the directory holding it. A volume's
+	// root cannot itself be renamed or deleted, so DELETE on it does nothing,
+	// and changing its attributes moves nothing. Some machines give every
+	// signed-in user Modify on C:\ itself, where Windows gives it only to
+	// what is created inside: Modify lacks FILE_DELETE_CHILD, so it cannot
+	// touch C:\Users, and refusing it would stop every command on such a
+	// machine until an administrator repaired C:\.
+	rootRights = fileDeleteChild | writeDAC | writeOwner | genericAll
 )
 
 // Well-known security identifiers.
@@ -91,10 +103,15 @@ func trusted(sid string) bool {
 }
 
 // checkShared allows path to belong to the current user or the system, and
-// others only to add entries to it if it is a directory (see sharedRights).
+// others only to add entries to it if it is a directory (see sharedRights),
+// or, at the root of a local volume, anything that cannot swap them (see
+// rootRights).
 func checkShared(path string, info os.FileInfo) error {
 	rights := uint32(privateRights)
-	if info.IsDir() {
+	switch {
+	case info.IsDir() && volumeRoot(path):
+		rights = rootRights
+	case info.IsDir():
 		rights = sharedRights
 	}
 	return checkPath(path, rights)
@@ -104,6 +121,45 @@ func checkShared(path string, info os.FileInfo) error {
 // to be writable by nobody else.
 func checkPrivate(path string, _ os.FileInfo) error {
 	return checkPath(path, privateRights)
+}
+
+// getFinalPathNameByHandle is kernel32's GetFinalPathNameByHandleW, declared
+// here for the same reason as getSecurityInfo.
+var getFinalPathNameByHandle = syscall.NewLazyDLL("kernel32.dll").NewProc("GetFinalPathNameByHandleW")
+
+// volumeRoot reports whether path is the root directory of a local volume,
+// such as C:\. A drive letter does not show that: subst gives one to any
+// folder, and a mapped drive is a network share, and whoever may delete
+// either can rename it and put their own in its place. So the volume's own
+// name for the path decides, \\?\Volume{GUID}\ for a root, which a network
+// share does not have. Anything that cannot be read is not a root.
+func volumeRoot(path string) bool {
+	if filepath.Dir(path) != path {
+		return false
+	}
+	name, err := syscall.UTF16PtrFromString(path)
+	if err != nil {
+		return false
+	}
+	handle, err := syscall.CreateFile(name, readControl,
+		syscall.FILE_SHARE_READ|syscall.FILE_SHARE_WRITE|syscall.FILE_SHARE_DELETE,
+		nil, syscall.OPEN_EXISTING, syscall.FILE_FLAG_BACKUP_SEMANTICS|syscall.FILE_FLAG_OPEN_REPARSE_POINT, 0)
+	if err != nil {
+		return false
+	}
+	defer syscall.CloseHandle(handle) //nolint:errcheck // opened only to read its name; closing it cannot lose anything
+
+	// A root's name, \\?\Volume{GUID}\, is 49 characters; a longer one is
+	// not a root, and the call then returns the size it needs instead.
+	const volumeNameGUID = 0x1 // VOLUME_NAME_GUID
+	buffer := make([]uint16, 64)
+	n, _, _ := getFinalPathNameByHandle.Call(uintptr(handle), uintptr(unsafe.Pointer(&buffer[0])), uintptr(len(buffer)), volumeNameGUID) //nolint:gosec // G103: the API writes the name into the buffer, up to the length given
+	if n == 0 || n >= uintptr(len(buffer)) {
+		return false
+	}
+	guid, ok := strings.CutPrefix(syscall.UTF16ToString(buffer[:n]), `\\?\Volume{`)
+	guid, root := strings.CutSuffix(guid, `}\`)
+	return ok && root && !strings.ContainsAny(guid, `\/`)
 }
 
 // checkOwner requires path, following links, to belong to the current user
@@ -118,13 +174,14 @@ func checkOwner(path string, _ os.FileInfo) error {
 
 // checkOpenProgram applies the private rule to a program homeskillet is about
 // to copy, reading the security descriptor through the open file, so the
-// check covers the bytes copied.
+// check covers the bytes copied. AllowOpenProfile never applies: a program
+// another account could have changed would run as the user from then on.
 func checkOpenProgram(file *os.File, _ os.FileInfo) error {
 	descriptor, err := handleSecurity(syscall.Handle(file.Fd()))
 	if err != nil {
 		return fmt.Errorf("%s: %w", printable(file.Name()), err)
 	}
-	return descriptor.check(file.Name(), privateRights)
+	return descriptor.check(file.Name(), privateRights, false)
 }
 
 // checkPath checks path itself, never what it links to, against rights: the
@@ -149,7 +206,7 @@ func checkPath(path string, rights uint32) error {
 	if err != nil {
 		return err
 	}
-	return descriptor.check(path, rights)
+	return descriptor.check(path, rights, true)
 }
 
 // descriptor is the part of a security descriptor the checks use.
@@ -170,8 +227,9 @@ func (d descriptor) checkOwner(path string) error {
 }
 
 // check requires a trusted owner and a DACL that grants none of rights to
-// anyone untrusted.
-func (d descriptor) check(path string, rights uint32) error {
+// anyone untrusted, unless, when tolerate is set, AllowOpenProfile lets the
+// path pass.
+func (d descriptor) check(path string, rights uint32, tolerate bool) error {
 	if err := d.checkOwner(path); err != nil {
 		return err
 	}
@@ -190,9 +248,58 @@ func (d descriptor) check(path string, rights uint32) error {
 		case sidCreatorOwner, sidCreatorGroup, sidOwnerRights:
 			continue
 		}
+		if tolerate && tolerated(path, entry.sid) {
+			continue
+		}
 		return writableError(path, entry.sid, entry.mask)
 	}
 	return nil
+}
+
+// tolerance is what AllowOpenProfile lets pass: report is told of each path
+// once, and reported holds the paths it was told of, by PathKey.
+type tolerance struct {
+	report   func(error)
+	mu       sync.Mutex
+	reported map[string]bool
+}
+
+// openProfile is the tolerance AllowOpenProfile set, or nil, the rest of the
+// time, when the checks tolerate nothing. It is read atomically, since the
+// check for a newer release can run checks alongside the command.
+var openProfile atomic.Pointer[tolerance]
+
+// AllowOpenProfile lets the checks pass, until restore is called, a file or
+// directory in the user's profile, the profile itself included, that another
+// account may change, as --allow-open-profile asks for on a machine whose
+// owner accepts that risk. report is told of each such path once, with an error
+// naming who may change it; a nil report is told nothing. Everything else
+// still fails: an owner that is not trusted, a missing or unreadable access
+// control list, a junction, every path outside the profile, C:\ and C:\Users
+// above it included, and the programs self install copies (see
+// CheckProgram). A profile that Windows cannot locate tolerates nothing.
+func AllowOpenProfile(report func(error)) (restore func()) {
+	t := &tolerance{report: report, reported: make(map[string]bool)}
+	openProfile.Store(t)
+	return func() { openProfile.CompareAndSwap(t, nil) }
+}
+
+// tolerated reports whether AllowOpenProfile lets path pass although the
+// account sid may change it, telling its report the first time.
+func tolerated(path, sid string) bool {
+	t, home := openProfile.Load(), profile()
+	if t == nil || home == "" || !Within(home, path) {
+		return false
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if key := PathKey(path); !t.reported[key] {
+		t.reported[key] = true
+		if t.report != nil {
+			t.report(fmt.Errorf("%s: %s can change it", printable(path), account(sid)))
+		}
+	}
+	return true
 }
 
 // profile is the current user's profile directory, found once, or "" when

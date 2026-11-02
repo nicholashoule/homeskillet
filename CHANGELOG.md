@@ -8,6 +8,20 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 
 ## [Unreleased]
 
+### Added
+
+- On Windows, `--allow-open-profile` lets `status`, `link`, `unlink`, and `check` go on when another account can change
+  a folder or file in your profile, for a machine whose owner accepts that risk. Every run names each folder or file it
+  let through in a warning. It never applies outside your profile, to a file another account owns, to `setup`, or to
+  installing homeskillet ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
+
+### Changed
+
+- On Windows, a `C:\` that gives every signed-in user Modify on itself, as some machines come with, no longer stops
+  every command, since that cannot rename or delete what is in it. `C:\` is still refused when another account can
+  delete what is in it or change its permissions, such as `Everyone:(F)`
+  ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
+
 ## [0.5.1]
 
 homeskillet 0.5.1 gets Windows machines past where installs stopped: `install` puts its folder on your Path, so

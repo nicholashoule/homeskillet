@@ -68,8 +68,12 @@ var (
 		// of steps with inputs there.
 		"data-dir": {"status", "link", "unlink", "setup", "self", "backups"},
 		// Only link replaces anything, and only by moving it aside.
-		"force":      {"link"},
-		"older-than": {"backups"},
+		"force": {"link"},
+		// These only read and link files. setup runs the repository's
+		// commands, and self, prepare, and update install programs, where
+		// a file another account changed would run as the user outright.
+		"allow-open-profile": {"status", "link", "unlink", "check"},
+		"older-than":         {"backups"},
 		// Only wsl reaches into a WSL distribution.
 		"distribution": {"wsl"},
 		"from":         {"wsl"},
@@ -96,11 +100,10 @@ type invocation struct {
 	// means every entry.
 	files []string
 	// names are the words after setup's repository, the steps to offer,
-	// empty meaning every step, or after remove, the versions to delete.
-	names []string
-	// words is the command line a completion script asks about (see
-	// complete).
-	words  []string
+	// empty meaning every step; after remove, the versions to delete; or for
+	// the completion command, the command line a completion script asks about
+	// (see complete).
+	names  []string
 	home   string
 	prefix string
 	data   string // --data-dir
@@ -128,7 +131,10 @@ type invocation struct {
 	// verbose is --verbose: a failure is shown whole (see failure).
 	verbose bool
 	root    bool // --allow-root
-	yes     bool
+	// openProfile is --allow-open-profile, Windows only: go on past what
+	// others may change in the profile (see trust.AllowOpenProfile).
+	openProfile bool
+	yes         bool
 }
 
 // wslOptions are the wsl command's own: the distribution (--distribution,
@@ -178,7 +184,7 @@ func run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	}
 	switch inv.command {
 	case completeCommand:
-		return complete(inv.words, output)
+		return complete(inv.names, output)
 	case "completion":
 		return writeCompletion(inv.operand, output)
 	case "version":
@@ -199,6 +205,13 @@ func run(ctx context.Context, args []string, input io.Reader, output, diagnostic
 	// unelevated, since both have one identity.
 	if privileged() && !inv.root {
 		return errors.New(rootRefusal)
+	}
+	// --allow-open-profile is the owner of a Windows machine accepting that
+	// other accounts can change files in their profile. Each one let through
+	// is named on every run, so the risk is never taken silently.
+	if inv.openProfile {
+		restore := trust.AllowOpenProfile(func(err error) { warnOpenProfile(diagnostics, err) })
+		defer restore()
 	}
 	if handled, err := runApart(ctx, inv, input, output, diagnostics); handled {
 		return err
@@ -675,7 +688,7 @@ func parseHidden(args []string) (invocation, bool, error) {
 	// Completion scripts pass the line being completed as it stands, options
 	// and all, so it is never parsed as a command line here.
 	case completeCommand:
-		return invocation{command: completeCommand, words: args[1:]}, true, nil
+		return invocation{command: completeCommand, names: args[1:]}, true, nil
 	case mirrorCommand:
 		inv, err := parseMirror(args[1:])
 		return inv, true, err
@@ -732,6 +745,11 @@ func newFlags(inv *invocation) *flag.FlagSet {
 	flags.StringVar(&inv.data, "data-dir", "", "Keep the link record, backups, and installed versions in `DIR`, relative to the home unless absolute "+
 		"(default: $"+dataDirVariable+", else .local/share/homeskillet)")
 	flags.BoolVar(&inv.root, "allow-root", false, "Allow running as root, or elevated on Windows, for root's own dotfiles; root must own everything homeskillet reads")
+	// Only Windows has it, so help and completion offer it nowhere else.
+	if runtime.GOOS == "windows" {
+		flags.BoolVar(&inv.openProfile, "allow-open-profile", false, "Go on when another account can change a folder or file in your profile, "+
+			"naming each one; never outside the profile. Anyone who can change a linked file can run code as you")
+	}
 	flags.BoolVar(&inv.force, "force", false, "Move conflicting files into a backup, then link")
 	flags.BoolVar(&inv.yes, "yes", false, "Approve without asking: setup's pending steps, prepare's installs, init's starter files, or backups purge's deletions")
 	flags.StringVar(&inv.olderThan, "older-than", "", "Only backups moved more than `AGE` ago, in days or hours, such as 30d or 12h")

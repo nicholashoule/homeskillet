@@ -101,8 +101,9 @@ To start from a working one, copy the example for [Linux](examples/linux), [macO
 homeskillet never overwrites or deletes a file it did not create, short of backups you ask it to purge after it lists
 them, and refuses to run as root, or elevated on Windows, without `--allow-root`. Linked files such as `.bashrc` and
 setup steps run as you, so it refuses a repository, source, or symlink another user could change, following OpenSSH's
-rules for `~/.ssh`, and shows each setup step exactly before you approve it. Review someone else's dotfiles before
-linking them, and especially before `setup --yes`. [docs/safety.md](docs/safety.md) has every rule.
+rules for `~/.ssh`, and shows each setup step exactly before you approve it. On Windows, `--allow-open-profile` accepts
+that risk for folders in your profile, naming each one. Review someone else's dotfiles before linking them, and
+especially before `setup --yes`. [docs/safety.md](docs/safety.md) has every rule.
 
 ## Development
 

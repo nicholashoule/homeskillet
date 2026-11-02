@@ -80,7 +80,7 @@ var commandUsage = map[string][]string{
 // optionOrder is the order help lists options in, most used first.
 var optionOrder = []string{
 	"dry-run", "home", "repo", "platform", "force", "quiet", "verbose", "data-dir", "prefix", "older-than",
-	"distribution", "from", "yes", "allow-root",
+	"distribution", "from", "yes", "allow-root", "allow-open-profile",
 }
 
 // yesHelp says what --yes approves for each command that takes it, in that

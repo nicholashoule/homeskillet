@@ -77,6 +77,7 @@ value, as from an unset variable in `--home "$SCRATCH"`, is refused rather than 
 | `--data-dir DIR` | Keep the records of links and setup steps, backups, and installed versions elsewhere ([install.md](install.md#data-directory)). |
 | `--prefix DIR` | For `self`: install under another prefix. |
 | `--allow-root` | Run as root, or elevated on Windows, for root's own dotfiles ([safety.md](safety.md#ownership)). |
+| `--allow-open-profile` | Windows only, for `status`, `link`, `unlink`, and `check`: go on when another account can change a folder or file in your profile, naming each one ([windows.md](windows.md#when-a-folder-is-writable-by-others)). |
 | `--distribution NAME`, `--from FILE` | For `wsl` ([windows.md](windows.md#the-wsl-command)). |
 
 ## Output

@@ -90,3 +90,10 @@ func PrintError(w io.Writer, err error) {
 	}
 	_, _ = fmt.Fprintln(w, paint(colorFor(w).on, styleError, "homeskillet:"), err) // a failed write of the error has nowhere left to go
 }
+
+// warnOpenProfile writes what --allow-open-profile let pass, err from
+// trust.AllowOpenProfile, as PrintError writes a failure but after
+// "homeskillet: warning:", in yellow, since a check did not stop the command.
+func warnOpenProfile(w io.Writer, err error) {
+	_, _ = fmt.Fprintln(w, paint(colorFor(w).on, styleAttention, "homeskillet: warning:"), err.Error()+"; going on because of --allow-open-profile") // as for PrintError, a failed write has nowhere left to go
+}

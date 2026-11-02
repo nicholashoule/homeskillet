@@ -165,6 +165,10 @@ func (inv *invocation) setWSLOption(name, value string, boolean, hasValue bool) 
 		inv.data = value
 	case "allow-root":
 		inv.root = boolean && on
+	// It tolerates folders in the Windows profile, which nothing in a
+	// distribution is.
+	case "allow-open-profile":
+		return errors.New("--allow-open-profile applies only to Windows folders, not in a WSL distribution")
 	case "dry-run":
 		inv.dryRun = boolean && on
 	case "quiet":

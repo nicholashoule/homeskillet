@@ -14,6 +14,30 @@ import (
 	"github.com/nicholashoule/homeskillet/internal/config"
 )
 
+// TestAllowOpenProfileToleratesNothing checks that on Linux and macOS, where
+// the command line has no --allow-open-profile, AllowOpenProfile changes
+// nothing.
+func TestAllowOpenProfileToleratesNothing(t *testing.T) {
+	root, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	shared := filepath.Join(root, "shared")
+	if err := os.Mkdir(shared, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	// Not left to the umask, which would clear the bits under test.
+	if err := os.Chmod(shared, 0o777); err != nil {
+		t.Fatal(err)
+	}
+	reported := false
+	restore := AllowOpenProfile(func(error) { reported = true })
+	defer restore()
+	if err := CheckPath(root, shared); err == nil || reported {
+		t.Fatalf("directory others may write tolerated: %v, reported %v", err, reported)
+	}
+}
+
 func TestCheckTree(t *testing.T) {
 	root, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {

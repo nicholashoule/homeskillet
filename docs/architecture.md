@@ -200,6 +200,11 @@ Like `link.Prepare`, each command checks everything before changing anything, an
   directories are refused wherever ownership is checked ([windows.md](windows.md#ownership-and-permissions)). Nothing
   crosses between Windows and WSL: the Windows build refuses `\\wsl.localhost` and `\\wsl$`, and the Linux build Windows
   drives under `/mnt` ([windows.md](windows.md#windows-and-wsl-together)).
+- The only way past a permission check is `--allow-open-profile`, on Windows, for `status`, `link`, `unlink`, and
+  `check`. `trust.AllowOpenProfile`, set for that run alone, lets an access control entry that grants another account
+  rights pass on a path in the user's profile, the profile included, and reports each such path once, which the CLI
+  prints as a warning. Owners, missing or unreadable access control lists, junctions, paths outside the profile, and the
+  program `self install` copies (`trust.CheckProgram`) are checked as before.
 - Existing files, directories, and foreign symlinks are conflicts, never replaced except by `link --force`, which moves
   files and symlinks, never directories, into `backups/` in the data directory with the Unix time appended, never
   deleting one or overwriting a backup. It undoes its moves if one fails, and moves back what linking did not replace if

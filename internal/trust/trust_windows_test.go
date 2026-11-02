@@ -1,10 +1,11 @@
 // Tests of the Windows ownership and permission rules: parsing access control
-// lists, refusing what others may change and junctions, and the system
-// locations.
+// lists, refusing what others may change and junctions, the root of a volume,
+// what AllowOpenProfile lets through, and the system locations.
 
 package trust
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -160,29 +161,172 @@ func TestJunctionsRefused(t *testing.T) {
 	}
 }
 
+func TestVolumeRoot(t *testing.T) {
+	drive := filepath.VolumeName(os.Getenv("SystemRoot")) + `\`
+	if !volumeRoot(drive) {
+		t.Errorf("%s is not a volume root", drive)
+	}
+	dir := t.TempDir()
+	if volumeRoot(dir) {
+		t.Errorf("%s is a volume root", dir)
+	}
+	// subst gives a folder a drive letter of its own, but it is still a
+	// folder, which whoever may delete it can rename.
+	letter := ""
+	for l := 'Z'; l >= 'G' && letter == ""; l-- {
+		if _, err := os.Stat(string(l) + `:\`); err != nil {
+			letter = string(l) + ":"
+		}
+	}
+	if letter == "" {
+		t.Skip("no drive letter is free for subst")
+	}
+	subst := filepath.Join(os.Getenv("SystemRoot"), "System32", "subst.exe")
+	if output, err := exec.CommandContext(t.Context(), subst, letter, dir).CombinedOutput(); err != nil { //nolint:gosec // G204: the test's own fixture
+		t.Skipf("subst %s: %v\n%s", letter, err, output)
+	}
+	// The context of the test is done by the time cleanups run.
+	t.Cleanup(func() {
+		if output, err := exec.CommandContext(context.Background(), subst, letter, "/D").CombinedOutput(); err != nil { //nolint:gosec // G204: the test's own fixture
+			t.Errorf("subst %s /D: %v\n%s", letter, err, output)
+		}
+	})
+	if volumeRoot(letter + `\`) {
+		t.Errorf("%s, a folder given a drive letter, is a volume root", letter)
+	}
+}
+
+func TestVolumeRootRights(t *testing.T) {
+	drive := filepath.VolumeName(os.Getenv("SystemRoot")) + `\`
+	// S-1-5-11 is Authenticated Users.
+	for _, test := range []struct {
+		name   string
+		mask   uint32
+		passes bool
+	}{
+		// What some machines give every signed-in user on C:\ itself:
+		// neither can rename or delete what is in it.
+		{"Modify", 0x1301bf, true},
+		{"Write", 0x100116, true},
+		{"Full control", 0x1f01ff, false},
+		{"delete entries", fileDeleteChild, false},
+		{"change permissions", writeDAC, false},
+		{"take ownership", writeOwner, false},
+		{"generic all", genericAll, false},
+	} {
+		d := descriptor{owner: sidSystem, dacl: testACL(testACE(accessAllowedType, 0, test.mask, testSID(11)))}
+		if err := d.check(drive, rootRights, false); (err == nil) != test.passes {
+			t.Errorf("%s on %s: %v", test.name, drive, err)
+		}
+		// Below the root, each could swap the folder for another.
+		if err := d.check(drive+"src", sharedRights, false); err == nil {
+			t.Errorf("%s on a folder accepted", test.name)
+		}
+	}
+}
+
+func TestAllowOpenProfile(t *testing.T) {
+	dir := root(t)
+	if home := profile(); home == "" || !Within(home, dir) {
+		t.Skip("the temporary directory is not in the profile")
+	}
+	file := filepath.Join(dir, "file")
+	if err := os.WriteFile(file, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	icacls(t, file, "/grant", "*S-1-5-32-545:(W)")
+	if err := CheckTree(dir); err == nil {
+		t.Fatal("file others may change accepted")
+	}
+	var reported []string
+	restore := AllowOpenProfile(func(err error) { reported = append(reported, err.Error()) })
+	t.Cleanup(restore)
+	for range 2 {
+		if err := CheckTree(dir); err != nil {
+			t.Fatalf("file in the profile still refused: %v", err)
+		}
+	}
+	if len(reported) != 1 || !strings.HasPrefix(reported[0], file+": ") || !strings.HasSuffix(reported[0], `BUILTIN\Users can change it`) {
+		t.Errorf("reported %q, want the file once", reported)
+	}
+	// A program self install would copy is never let through.
+	program, err := os.Open(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer program.Close() //nolint:errcheck // opened only to read
+	if err := CheckProgram(program); err == nil {
+		t.Error("program others may change accepted")
+	}
+	restore()
+	if err := CheckTree(dir); err == nil {
+		t.Error("file others may change accepted once restored")
+	}
+	icacls(t, file, "/remove:g", "*S-1-5-32-545")
+}
+
+func TestAllowOpenProfileScope(t *testing.T) {
+	home := profile()
+	if home == "" || filepath.Dir(home) == home {
+		t.Skip("Windows does not say where the profile is")
+	}
+	users := testACL(testACE(accessAllowedType, 0, 0x1301bf, testSID(32, 545)))
+	inside := filepath.Join(home, "dotfiles")
+	restore := AllowOpenProfile(nil)
+	t.Cleanup(restore)
+	for _, test := range []struct {
+		name   string
+		d      descriptor
+		path   string
+		passes bool
+	}{
+		{"in the profile", descriptor{owner: sidSystem, dacl: users}, inside, true},
+		{"the profile", descriptor{owner: sidSystem, dacl: users}, home, true},
+		{"above the profile", descriptor{owner: sidSystem, dacl: users}, filepath.Dir(home), false},
+		{"outside the profile", descriptor{owner: sidSystem, dacl: users}, filepath.VolumeName(home) + `\src`, false},
+		{"owned by another account", descriptor{owner: "S-1-5-32-545", dacl: users}, inside, false},
+		{"no access control list", descriptor{owner: sidSystem}, inside, false},
+	} {
+		if err := test.d.check(test.path, privateRights, true); (err == nil) != test.passes {
+			t.Errorf("%s: %v", test.name, err)
+		}
+	}
+	restore()
+	if err := (descriptor{owner: sidSystem, dacl: users}).check(inside, privateRights, true); err == nil {
+		t.Error("in the profile, accepted once restored")
+	}
+}
+
+// testSID returns a binary SID: revision 1, the number of subauthorities,
+// authority 5 (NT AUTHORITY), then each subauthority little-endian.
+func testSID(subauthorities ...uint32) []byte {
+	b := []byte{1, byte(len(subauthorities)), 0, 0, 0, 0, 0, 5} //nolint:gosec // G115: a fixture of a few bytes
+	for _, s := range subauthorities {
+		b = append(b, byte(s), byte(s>>8), byte(s>>16), byte(s>>24)) //nolint:gosec // G115: splitting a value into its bytes
+	}
+	return b
+}
+
+// testACE returns an access control entry of kind granting or denying mask
+// to sid.
+func testACE(kind, flags byte, mask uint32, sid []byte) []byte {
+	size := 8 + len(sid)
+	b := []byte{kind, flags, byte(size), byte(size >> 8), byte(mask), byte(mask >> 8), byte(mask >> 16), byte(mask >> 24)} //nolint:gosec // G115: splitting values into their bytes
+	return append(b, sid...)
+}
+
+// testACL returns an access control list holding entries.
+func testACL(entries ...[]byte) []byte {
+	var body []byte
+	for _, e := range entries {
+		body = append(body, e...)
+	}
+	size := 8 + len(body)
+	return append([]byte{2, 0, byte(size), byte(size >> 8), byte(len(entries)), 0, 0, 0}, body...) //nolint:gosec // G115: a fixture of a few bytes
+}
+
 func TestParseACL(t *testing.T) {
-	// A SID: revision 1, n subauthorities, authority 5 (NT AUTHORITY), then
-	// each subauthority little-endian.
-	sid := func(subauthorities ...uint32) []byte {
-		b := []byte{1, byte(len(subauthorities)), 0, 0, 0, 0, 0, 5} //nolint:gosec // G115: a fixture of a few bytes
-		for _, s := range subauthorities {
-			b = append(b, byte(s), byte(s>>8), byte(s>>16), byte(s>>24)) //nolint:gosec // G115: splitting a value into its bytes
-		}
-		return b
-	}
-	entry := func(kind, flags byte, mask uint32, sid []byte) []byte {
-		size := 8 + len(sid)
-		b := []byte{kind, flags, byte(size), byte(size >> 8), byte(mask), byte(mask >> 8), byte(mask >> 16), byte(mask >> 24)} //nolint:gosec // G115: splitting values into their bytes
-		return append(b, sid...)
-	}
-	acl := func(entries ...[]byte) []byte {
-		var body []byte
-		for _, e := range entries {
-			body = append(body, e...)
-		}
-		size := 8 + len(body)
-		return append([]byte{2, 0, byte(size), byte(size >> 8), byte(len(entries)), 0, 0, 0}, body...) //nolint:gosec // G115: a fixture of a few bytes
-	}
+	sid, entry, acl := testSID, testACE, testACL
 	users := sid(32, 545)
 	parsed, err := parseACL(acl(
 		entry(accessAllowedType, 0, 0x1f01ff, sid(18)),
