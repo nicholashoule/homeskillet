@@ -258,11 +258,16 @@ func starterManifest(chosen string) (platform, manifest string, err error) {
 		}
 		platform = parsed.String()
 	}
-	quoted, err := json.Marshal(platform)
+	// The encoder writes the whole document, so no value is spliced between
+	// quotes by hand, where a quote in it could change what the manifest says.
+	encoded, err := json.MarshalIndent(struct {
+		Platforms []string `json:"platforms"`
+		Setup     []any    `json:"setup"`
+	}{Platforms: []string{platform}, Setup: []any{}}, "", "  ")
 	if err != nil {
 		return "", "", err
 	}
-	return platform, fmt.Sprintf("{\n  \"platforms\": [%s],\n  \"setup\": []\n}\n", quoted), nil
+	return platform, string(encoded) + "\n", nil
 }
 
 // initRepository returns the canonical path of the repository init was

@@ -96,7 +96,9 @@ homeskillet init ~/dotfiles --platform darwin     # a starter for a macOS reposi
 
 ```json
 {
-  "platforms": ["linux"],
+  "platforms": [
+    "linux"
+  ],
   "setup": []
 }
 ```
