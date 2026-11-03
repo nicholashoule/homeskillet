@@ -8,31 +8,23 @@ notes on GitHub, so entries say what you can now do, not what was committed; ear
 
 ## [Unreleased]
 
-## [0.6.0]
+## [0.6.1]
 
-homeskillet 0.6.0 gets more Windows machines working without an administrator: a `C:\` that gives every signed-in user
-Modify no longer stops every command, and `--allow-open-profile` lets you accept, run by run, a folder or file in your
-profile that another account can change.
-
-### Added
-
-- On Windows, `--allow-open-profile` lets `status`, `link`, `unlink`, and `check` go on when another account can change
-  a folder or file in your profile, for a machine whose owner accepts that risk. Every run names each folder or file it
-  let through in a warning. It never applies outside your profile, to a file another account owns, to `setup`, or to
-  installing homeskillet ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
+homeskillet 0.6.1 is a small hardening release, from code scanning findings: `init` now has the JSON encoder write its
+whole starter manifest, so no value in it is put between quotes by hand.
 
 ### Changed
 
-- On Windows, a `C:\` that gives every signed-in user Modify on itself, as some machines come with, no longer stops
-  every command, since that cannot rename or delete what is in it. `C:\` is still refused when another account can
-  delete what is in it or change its permissions, such as `Everyone:(F)`
-  ([docs/windows.md](docs/windows.md#when-a-folder-is-writable-by-others)).
+- The starter manifest `init` writes is laid out by the JSON encoder, which puts each platform in its `platforms` list
+  on a line of its own ([docs/manifest.md](docs/manifest.md#creating-one)).
 
 ## Earlier Releases
 
 Each release keeps its notes on its GitHub Release; see [all
 releases](https://github.com/nicholashoule/homeskillet/releases).
 
+- [0.6.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.6.0): a `C:\` with Modify for signed-in users no
+  longer stopping every command on Windows, and `--allow-open-profile`.
 - [0.5.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.5.1): `install` putting its folder on the Path on
   Windows, and one-line errors when permissions are too open.
 - [0.5.0](https://github.com/nicholashoule/homeskillet/releases/tag/v0.5.0): help for each command, `info` and `term`,
@@ -47,5 +39,5 @@ releases](https://github.com/nicholashoule/homeskillet/releases).
   `check`, and `backups`.
 - [0.1.1](https://github.com/nicholashoule/homeskillet/releases/tag/v0.1.1): the first release, for Linux and macOS.
 
-[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.6.0...HEAD
-[0.6.0]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.6.0
+[Unreleased]: https://github.com/nicholashoule/homeskillet/compare/v0.6.1...HEAD
+[0.6.1]: https://github.com/nicholashoule/homeskillet/releases/tag/v0.6.1
