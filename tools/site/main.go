@@ -76,9 +76,12 @@ func check(dir string) ([]string, error) {
 }
 
 // checkReference returns the problem with one reference from the page, or
-// "". Links to other sites must use HTTPS; any other URL scheme, such as
-// mailto: or data:, is left alone. Everything else names a file, which must
-// be inside dir, since only dir is published, and must exist.
+// "". Links to other sites must use HTTPS. The schemes that can carry script
+// are refused: javascript: and vbscript: run it when followed, and a data: URL
+// runs it as a script's or a frame's source; anything the page embeds can be
+// a file in dir instead. Any other URL scheme, such as mailto:, is left alone.
+// Everything else names a file, which must be inside dir, since only dir is
+// published, and must exist.
 func checkReference(dir, ref string) string {
 	ref = strings.TrimSpace(ref)
 	lower := strings.ToLower(ref)
@@ -87,8 +90,10 @@ func checkReference(dir, ref string) string {
 		return ""
 	case strings.HasPrefix(lower, "http:"):
 		return "plain HTTP link: " + ref
-	case strings.HasPrefix(lower, "javascript:"):
-		return "javascript: link, which runs code when followed: " + ref
+	case strings.HasPrefix(lower, "javascript:"), strings.HasPrefix(lower, "vbscript:"):
+		return "script link, which runs code when followed: " + ref
+	case strings.HasPrefix(lower, "data:"):
+		return "data: URL, which can carry script; make it a file in " + dir + ": " + ref
 	case strings.HasPrefix(ref, "//"):
 		return "protocol-relative link, which may load over plain HTTP: " + ref
 	case hasScheme(ref):
@@ -115,7 +120,7 @@ func checkReference(dir, ref string) string {
 }
 
 // hasScheme reports whether ref starts with a URL scheme, such as https: or
-// data:: a letter, then letters, digits, +, -, or ., then a colon, all before
+// mailto:: a letter, then letters, digits, +, -, or ., then a colon, all before
 // any /, ?, or #.
 func hasScheme(ref string) bool {
 	for i, r := range ref {
