@@ -116,6 +116,8 @@ Makefile, CI, and cross builds, and [docs/release.md](docs/release.md) releasing
 
 ## Documentation
 
+- [Website](https://nicholashoule.github.io/homeskillet/): an overview of homeskillet, how to install it, and where to
+  start.
 - [Usage](docs/usage.md): commands, options, choosing the repository and files, and output.
 - [Configuration Repositories](docs/manifest.md): `home/`, `bootstrap.json` and `dotfiles.json`, platforms, setup steps,
   and `check`.

@@ -175,14 +175,24 @@ runtime verification there.
 [site/index.html](../site/index.html) is the project's website, one hand-written page with no build step or framework,
 and only a few lines of script that mark the menu item for the section in view, kept in step with the README. The Go
 gopher in `site/images/` is the Go project's own file, Renee French's design under Creative Commons Attribution 4.0,
-which the page credits.
+which the page credits; `skillet.svg` beside it is the header's skillet, drawn alone as the browser tab's icon.
 
-`make site` runs [tools/site](../tools/site), the site's only check: the page is bounded in size, declares a title, a
-language, a viewport, and a description, every link or source relative to it is a file inside `site/`, since nothing
-else is published, and no link uses plain HTTP or runs script. `make check` includes it. The Pages workflow runs the
-same check on pull requests that touch the site and on `main`, where it goes on to deploy and then fetches the page
-until it matches `site/index.html` byte for byte. It cannot enable Pages itself, which needs a personal token, so when
-Pages is off, as after unpublishing the site, it fails with the setting to change rather than the action's generic
+The page's head is written for search engines and link previews. The title and description lead with what people
+search for, dotfiles and the systems homeskillet runs on, and the Open Graph tags repeat them for previews in chat and
+social apps. The canonical URL makes `/` and `/index.html`, which Pages both serves, one page to a search engine, and
+the schema.org structured data says the page describes a free program, for which systems, and where its source and
+downloads are; it names no version, which would go stale with each release. The canonical URL, `og:url`, and the
+structured data name the site's address, so change them together if it moves, as to a custom domain. `robots.txt` and a
+sitemap are left out: crawlers read them only at the root of a host, and a project page lives under
+`nicholashoule.github.io/homeskillet/`, so one in `site/` would be ignored.
+
+`make site` runs [tools/site](../tools/site), the site's only check: the page is bounded in size; declares a title, a
+language, a viewport, a description, a canonical URL, and an Open Graph title and description that match the title and
+description; any structured data is valid JSON; every link or source relative to it is a file inside `site/`, since
+nothing else is published; and no link uses plain HTTP or runs script. `make check` includes it. The Pages workflow
+runs the same check on pull requests that touch the site and on `main`, where it goes on to deploy and then fetches the
+page until it matches `site/index.html` byte for byte. It cannot enable Pages itself, which needs a personal token, so
+when Pages is off, as after unpublishing the site, it fails with the setting to change rather than the action's generic
 error. Deployments are never cancelled midway; a second push waits for the first, and pull request checks never wait on,
 or cancel, a deployment.
 

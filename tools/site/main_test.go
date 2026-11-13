@@ -21,7 +21,9 @@ func TestCheck(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	sound := `<html lang="en"><head><title>x</title><meta name="viewport" content="w"><meta name="description" content="d"></head>` +
+	head := `<html lang="en"><head><title> x </title><meta name="viewport" content="w"><meta name="description" content="d">` +
+		`<link rel="canonical" href="https://example.com/"><meta property="og:title" content="x"><meta property="og:description" content="d">`
+	sound := head + `<script type="application/ld+json">{"@type": "SoftwareApplication"}</script><script>var a = 1 < 2;</script></head>` +
 		`<body><a href="#top">t</a><a href="https://example.com/">e</a><img src="images/a.svg"><a href="images/a.svg#x">f</a></body></html>`
 	write("index.html", sound)
 	write("images/a.svg", "<svg/>")
@@ -34,13 +36,63 @@ func TestCheck(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, want := range []string{"lacks a <title>", "lacks a lang", "lacks a viewport", "lacks a description", "plain HTTP link", "not in " + dir + ": missing.png", "absolute path"} {
+	for _, want := range []string{"lacks a <title>", "lacks a lang", "lacks a viewport", "lacks a description", "lacks a canonical",
+		"lacks an og:title", "lacks an og:description", "plain HTTP link", "not in " + dir + ": missing.png", "absolute path"} {
 		if !strings.Contains(strings.Join(problems, "\n"), want) {
 			t.Errorf("problems %q lack %q", problems, want)
 		}
 	}
 	if _, err := check(filepath.Join(dir, "nowhere")); err == nil {
 		t.Error("a missing site passed")
+	}
+}
+
+func TestCheckMeta(t *testing.T) {
+	for _, tt := range []struct{ name, html, want string }{
+		{"matching", `<title>x</title><meta name="description" content="d"><meta property="og:title" content="x"><meta property="og:description" content="d">`, ""},
+		{"og:title drifted", `<title>x</title><meta property="og:title" content="y">`, "og:title \"y\" differs"},
+		{"og:description drifted", `<meta name="description" content="d"><meta property="og:description" content="e">`, "og:description \"e\" differs"},
+		{"empty description", `<meta name="description" content=" ">`, "lacks a description"},
+	} {
+		got := strings.Join(checkMeta(tt.html), "\n")
+		if tt.want == "" && strings.Contains(got, "differs") || tt.want != "" && !strings.Contains(got, tt.want) {
+			t.Errorf("%s: checkMeta = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCheckStructuredData(t *testing.T) {
+	for html, want := range map[string]string{
+		`<script type="application/ld+json">{"a": 1}</script>`:         "",
+		`<SCRIPT TYPE='Application/LD+JSON'>{"a": 1}</SCRIPT>`:         "",
+		`<script>not json at all</script>`:                             "",
+		`<script type="application/ld+json">{"a": 1,}</script>`:        "not valid JSON",
+		`<script type="application/ld+json">{"a": 1}</script><script>`: "never closed",
+		`<script type="application/ld+json"`:                           "ends inside",
+	} {
+		got := strings.Join(checkStructuredData(html), "\n")
+		if want == "" && got != "" || want != "" && !strings.Contains(got, want) {
+			t.Errorf("checkStructuredData(%q) = %q, want %q", html, got, want)
+		}
+	}
+}
+
+func TestTagAttributes(t *testing.T) {
+	html := `<meta NAME = description content='a > b' data-x checked/>rest`
+	attrs, end := tagAttributes(html, len("<meta"))
+	if html[end:] != ">rest" {
+		t.Errorf("the tag ends at %q, want >rest", html[end:])
+	}
+	for name, want := range map[string]string{"name": "description", "content": "a > b", "data-x": "", "checked": ""} {
+		if got, ok := attrs[name]; !ok || got != want {
+			t.Errorf("attrs[%q] = %q, %v, want %q", name, got, ok, want)
+		}
+	}
+	if _, end := tagAttributes(`<meta name="unclosed`, len("<meta")); end != len(`<meta name="unclosed`) {
+		t.Errorf("an unclosed tag ends at %d", end)
+	}
+	if metas := metaContents(`<meta property="OG:Title" content="t"><meta charset="utf-8">`); metas["og:title"] != "t" || len(metas) != 1 {
+		t.Errorf("metaContents = %v", metas)
 	}
 }
 

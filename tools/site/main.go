@@ -1,15 +1,18 @@
 // Command site checks the website in site/ before it is published, for make
 // site and the Pages workflow: the page exists, is bounded in size, declares a
-// title, a language, a viewport, and a description, every link or source it
-// names relative to itself is a file inside site/, and no link uses plain
-// HTTP or runs script. The site is hand-written HTML with no build step, so
-// this is the only check it gets. It is a development tool, not linked into
-// homeskillet, so it may use net/url.
+// title, a language, a viewport, a description, a canonical URL, and the Open
+// Graph title and description that link previews show, matching the title and
+// description search results show; any structured data is valid JSON; every
+// link or source it names relative to itself is a file inside site/; and no
+// link uses plain HTTP or runs script. The site is hand-written HTML with no
+// build step, so this is the only check it gets. It is a development tool, not
+// linked into homeskillet, so it may use net/url and encoding/json.
 //
 // Usage: go run ./tools/site [DIR], where DIR defaults to site.
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -60,19 +63,76 @@ func check(dir string) ([]string, error) {
 	for _, required := range []struct{ marker, what string }{
 		{"<title>", "a <title>"},
 		{"<html lang=", "a lang attribute on <html>"},
-		{`name="viewport"`, "a viewport meta tag, for phones"},
-		{`name="description"`, "a description meta tag"},
+		// Pages serves the page at both / and /index.html; without a
+		// canonical URL a search engine may index them as two pages.
+		{`rel="canonical"`, "a canonical link, so / and /index.html count as one page"},
 	} {
 		if !strings.Contains(html, required.marker) {
 			problems = append(problems, "index.html lacks "+required.what)
 		}
 	}
+	problems = append(problems, checkMeta(html)...)
+	problems = append(problems, checkStructuredData(html)...)
 	for _, ref := range references(html) {
 		if problem := checkReference(dir, ref); problem != "" {
 			problems = append(problems, problem)
 		}
 	}
 	return problems, nil
+}
+
+// checkMeta returns the problems with the page's <meta> tags. Phones need the
+// viewport, search results show the description, and link previews in chat
+// and social apps show the Open Graph title and description. Those repeat the
+// <title> and description by hand, so they must match them, or a shared link
+// would describe the page differently from a search result.
+func checkMeta(html string) []string {
+	metas := metaContents(html)
+	var problems []string
+	for _, required := range []struct{ key, what string }{
+		{"viewport", "a viewport meta tag, for phones"},
+		{"description", "a description meta tag, which search results show"},
+		{"og:title", "an og:title meta tag, which link previews show"},
+		{"og:description", "an og:description meta tag, which link previews show"},
+	} {
+		if strings.TrimSpace(metas[required.key]) == "" {
+			problems = append(problems, "index.html lacks "+required.what)
+		}
+	}
+	if title, og := elementText(html, "title"), metas["og:title"]; title != "" && og != "" && og != title {
+		problems = append(problems, fmt.Sprintf("og:title %q differs from the <title> %q", og, title))
+	}
+	if description, og := metas["description"], metas["og:description"]; description != "" && og != "" && og != description {
+		problems = append(problems, fmt.Sprintf("og:description %q differs from the description %q", og, description))
+	}
+	return problems
+}
+
+// checkStructuredData returns a problem for each application/ld+json script
+// that is not valid JSON. A search engine skips such a block without saying
+// so, so this check is the only place the mistake would show.
+func checkStructuredData(html string) []string {
+	lower := strings.ToLower(html)
+	var problems []string
+	for at := 0; ; {
+		i := strings.Index(lower[at:], "<script")
+		if i < 0 {
+			return problems
+		}
+		attrs, end := tagAttributes(html, at+i+len("<script"))
+		if end >= len(html) {
+			return append(problems, "index.html ends inside a <script> tag")
+		}
+		body := end + 1
+		length := strings.Index(lower[body:], "</script")
+		if length < 0 {
+			return append(problems, "index.html has a <script> that is never closed")
+		}
+		at = body + length
+		if strings.EqualFold(strings.TrimSpace(attrs["type"]), "application/ld+json") && !json.Valid([]byte(html[body:at])) {
+			problems = append(problems, "structured data in an application/ld+json script is not valid JSON")
+		}
+	}
 }
 
 // checkReference returns the problem with one reference from the page, or
@@ -161,6 +221,80 @@ func references(html string) []string {
 		}
 	}
 	return refs
+}
+
+// metaContents returns the content of each <meta> tag in html, keyed by its
+// name attribute, or for Open Graph's tags its property attribute, in lower
+// case.
+func metaContents(html string) map[string]string {
+	lower := strings.ToLower(html)
+	metas := map[string]string{}
+	for at := 0; ; {
+		i := strings.Index(lower[at:], "<meta")
+		if i < 0 {
+			return metas
+		}
+		attrs, end := tagAttributes(html, at+i+len("<meta"))
+		at = end
+		key := attrs["name"]
+		if key == "" {
+			key = attrs["property"]
+		}
+		if key != "" {
+			metas[strings.ToLower(key)] = attrs["content"]
+		}
+	}
+}
+
+// elementText returns the text between the first <name> and </name> in
+// html, trimmed, or "" when there is none.
+func elementText(html, name string) string {
+	lower := strings.ToLower(html)
+	open, closing := "<"+name+">", "</"+name+">"
+	start := strings.Index(lower, open)
+	if start < 0 {
+		return ""
+	}
+	start += len(open)
+	length := strings.Index(lower[start:], closing)
+	if length < 0 {
+		return ""
+	}
+	return strings.TrimSpace(html[start : start+length])
+}
+
+// tagAttributes reads a tag's attributes from html[start], just past the
+// tag's name, up to the > that ends it, and returns them by name in lower
+// case, along with the index of that > (or len(html) when there is none). A >
+// inside a quoted value does not end the tag. Every pass of the loop moves
+// forward, so a malformed tag cannot stall it.
+func tagAttributes(html string, start int) (map[string]string, int) {
+	attrs := map[string]string{}
+	i := start
+	for i < len(html) && html[i] != '>' {
+		if isSpace(html[i]) || html[i] == '/' {
+			i++
+			continue
+		}
+		nameStart := i
+		for i < len(html) && !isSpace(html[i]) && html[i] != '=' && html[i] != '>' && html[i] != '/' {
+			i++
+		}
+		name := strings.ToLower(html[nameStart:i])
+		for i < len(html) && isSpace(html[i]) {
+			i++
+		}
+		if i >= len(html) || html[i] != '=' {
+			attrs[name] = ""
+			continue
+		}
+		i++
+		for i < len(html) && isSpace(html[i]) {
+			i++
+		}
+		attrs[name], i = attributeValue(html, i)
+	}
+	return attrs, i
 }
 
 // attributeValue returns the attribute value that starts at html[start],

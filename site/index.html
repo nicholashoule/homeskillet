@@ -3,9 +3,42 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta name="description" content="homeskillet manages your dotfiles across Linux, macOS, and Windows, linking them from your own repository and bootstrapping your system tools, each step only once you approve it.">
+<!-- Search engines show the title and description as the result, cut off at
+     about 60 and 155 characters, so each leads with what people search for.
+     The Open Graph tags repeat them for link previews in chat and social
+     apps, and tools/site fails when a copy differs. -->
+<title>homeskillet: dotfiles manager for Linux, macOS, Windows, and WSL</title>
+<meta name="description" content="Manage your dotfiles on Linux, macOS, Windows, and WSL. homeskillet symlinks them from your repository and bootstraps your tools, once you approve each step.">
+<!-- Pages serves this page at both / and /index.html; the canonical URL
+     makes them one page to a search engine rather than two that compete. -->
+<link rel="canonical" href="https://nicholashoule.github.io/homeskillet/">
+<meta property="og:type" content="website">
+<meta property="og:site_name" content="homeskillet">
+<meta property="og:url" content="https://nicholashoule.github.io/homeskillet/">
+<meta property="og:title" content="homeskillet: dotfiles manager for Linux, macOS, Windows, and WSL">
+<meta property="og:description" content="Manage your dotfiles on Linux, macOS, Windows, and WSL. homeskillet symlinks them from your repository and bootstraps your tools, once you approve each step.">
+<meta name="twitter:card" content="summary">
 <meta name="color-scheme" content="light dark">
-<title>homeskillet</title>
+<link rel="icon" href="images/skillet.svg" type="image/svg+xml">
+<!-- Structured data tells a search engine this page is a free program, for
+     which systems, and where its source and downloads are. It names no
+     version, since it would go stale with every release. -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "homeskillet",
+  "url": "https://nicholashoule.github.io/homeskillet/",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "Linux, macOS, Windows",
+  "downloadUrl": "https://github.com/nicholashoule/homeskillet/releases/latest",
+  "sameAs": "https://github.com/nicholashoule/homeskillet",
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Person", "name": "Nicholas Houle", "url": "https://github.com/nicholashoule" }
+}
+</script>
 <style>
   :root {
     color-scheme: light dark;
@@ -218,7 +251,7 @@
   <div class="wrap hero">
     <h1>Easily manage your dotfiles across Linux, macOS, and Windows.</h1>
     <p class="lead">
-      homeskillet links the dotfiles from your own repository into your home directory, on every machine you use,
+      homeskillet symlinks the dotfiles from your own repository into your home directory, on every machine you use,
       and bootstraps your system tools too: the manifest can install your shell prompt, language toolchains,
       editors, and packages, each step shown to you and run only once you approve it. One small, dependency-free
       binary, with nothing to configure but your repository.
@@ -313,7 +346,7 @@ homeskillet update                            # install the newest release and r
 
   <section id="repository">
     <div class="wrap">
-      <h2>Configuring a repository</h2>
+      <h2>Configuring a dotfiles repository</h2>
       <p>The simplest repository is a <code>home/</code> directory laid out as your home. Every file under it is linked to the same path in yours.</p>
 <pre><code>dotfiles/
 └── home/
