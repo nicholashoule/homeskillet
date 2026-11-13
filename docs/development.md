@@ -181,20 +181,28 @@ The page's head is written for search engines and link previews. The title and d
 search for, dotfiles and the systems homeskillet runs on, and the Open Graph tags repeat them for previews in chat and
 social apps. The canonical URL makes `/` and `/index.html`, which Pages both serves, one page to a search engine, and
 the schema.org structured data says the page describes a free program, for which systems, and where its source and
-downloads are; it names no version, which would go stale with each release. The canonical URL, `og:url`, and the
-structured data name the site's address, so change them together if it moves, as to a custom domain. `robots.txt` and a
-sitemap are left out: crawlers read them only at the root of a host, and a project page lives under
+downloads are; it names no version, which would go stale with each release. The canonical URL, `og:url`, `og:image`,
+and the structured data name the site's address, so change them together if it moves, as to a custom domain.
+`robots.txt` and a sitemap are left out: crawlers read them only at the root of a host, and a project page lives under
 `nicholashoule.github.io/homeskillet/`, so one in `site/` would be ignored.
+
+Link previews show `images/social-preview.png`, a PNG because chat and social apps do not show SVG. It is rendered from
+`images/social-preview.svg` with ImageMagick, by the command in that file's opening comment, which leaves out metadata
+and timestamps so the same source renders the same bytes. Change the SVG and render it again rather than editing the
+PNG, and look at the result before committing it: the text is set in fonts the machine has, falling back to the next
+one named. GitHub shows its own card for links to the repository; to show this image there too, upload it in the
+repository's Settings under Social preview, which has no API.
 
 `make site` runs [tools/site](../tools/site), the site's only check: the page is bounded in size; declares a title, a
 language, a viewport, a description, a canonical URL, and an Open Graph title and description that match the title and
-description; any structured data is valid JSON; every link or source relative to it is a file inside `site/`, since
-nothing else is published; and no link uses plain HTTP or runs script. `make check` includes it. The Pages workflow
-runs the same check on pull requests that touch the site and on `main`, where it goes on to deploy and then fetches the
-page until it matches `site/index.html` byte for byte. It cannot enable Pages itself, which needs a personal token, so
-when Pages is off, as after unpublishing the site, it fails with the setting to change rather than the action's generic
-error. Deployments are never cancelled midway; a second push waits for the first, and pull request checks never wait on,
-or cancel, a deployment.
+description; its Open Graph image, when it has one, is a PNG or JPEG in `site/`, under the canonical URL, of the size
+the page declares; any structured data is valid JSON; every link or source relative to it is a file inside `site/`,
+since nothing else is published; and no link uses plain HTTP or runs script. `make check` includes it. The Pages
+workflow runs the same check on pull requests that touch the site and on `main`, where it goes on to deploy and then
+fetches the page until it matches `site/index.html` byte for byte. It cannot enable Pages itself, which needs a personal
+token, so when Pages is off, as after unpublishing the site, it fails with the setting to change rather than the
+action's generic error. Deployments are never cancelled midway; a second push waits for the first, and pull request
+checks never wait on, or cancel, a deployment.
 
 ## Working With Both Repositories
 

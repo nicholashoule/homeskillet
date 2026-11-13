@@ -1,0 +1,44 @@
+<!-- The source of social-preview.png, the image a link to the website shows
+     in chat and social apps (the page's og:image). Those apps do not show
+     SVG, so the page names the PNG, rendered from this file from the
+     repository's root with ImageMagick:
+
+       magick -background none site/images/social-preview.svg -strip -define png:exclude-chunks=date,time PNG8:site/images/social-preview.png
+
+     -strip and the excluded chunks leave out metadata and timestamps, so the
+     same source renders the same bytes; PNG8 keeps the file small, since the
+     image is a few flat colors. The colors are the page's dark theme, the
+     skillet is the header's, and the text is set in Adwaita Sans and Source
+     Code Pro; a machine without them falls back to the next font named. -->
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="630" viewBox="0 0 1200 630">
+  <rect width="1200" height="630" fill="#141312"/>
+  <rect width="1200" height="8" fill="#f59e0b"/>
+
+  <g transform="translate(80 82) scale(2.2)">
+    <path d="M23 10.6 H40.5 a2.4 2.4 0 0 1 0 4.8 H23 z" fill="#5b4e45" stroke="#8c7b6d" stroke-width="0.8" stroke-linejoin="round"/>
+    <circle cx="38.6" cy="13" r="1.1" fill="#141312"/>
+    <path d="M12.5 1.8 l2.2 -1.4 l2.2 1.4 z M12.5 24.2 l2.2 1.4 l2.2 -1.4 z" fill="#5b4e45"/>
+    <circle cx="13" cy="13" r="11" fill="#5b4e45" stroke="#8c7b6d" stroke-width="1"/>
+    <circle cx="13" cy="13" r="8.2" fill="#2a2420"/>
+    <path d="M7.4 10.2 a6.6 6.6 0 0 1 4.6 -4.2" fill="none" stroke="#7d6c60" stroke-width="1.1" stroke-linecap="round"/>
+  </g>
+  <g font-family="Adwaita Sans, Inter, Noto Sans, Helvetica, Arial, sans-serif">
+    <text x="196" y="127" font-size="46" font-weight="700" fill="#ece9e4" letter-spacing="-0.5">homeskillet</text>
+    <text x="1120" y="125" font-size="24" fill="#a8a29e" text-anchor="end">nicholashoule.github.io/homeskillet</text>
+
+    <text font-size="60" font-weight="700" fill="#ece9e4" letter-spacing="-1.5">
+      <tspan x="80" y="268">Manage your dotfiles on</tspan>
+      <tspan x="80" y="340">Linux, macOS, Windows, and WSL.</tspan>
+    </text>
+
+    <text font-size="28" fill="#a8a29e">
+      <tspan x="80" y="418">Symlinks your dotfiles from your own repository and bootstraps</tspan>
+      <tspan x="80" y="458">your tools, each step shown first and run only once you approve it.</tspan>
+    </text>
+
+    <text x="1120" y="549" font-size="24" fill="#a8a29e" text-anchor="end">Open source <tspan fill="#f59e0b">·</tspan> Apache-2.0</text>
+  </g>
+
+  <rect x="80" y="508" width="543" height="64" rx="12" fill="#262320" stroke="#2c2a27" stroke-width="2"/>
+  <text x="108" y="550" font-family="Source Code Pro, Adwaita Mono, Menlo, Consolas, monospace" font-size="28" fill="#e7e5e4"><tspan fill="#f59e0b">$</tspan> homeskillet link ~/dotfiles</text>
+</svg>
