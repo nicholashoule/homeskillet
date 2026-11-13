@@ -2,11 +2,13 @@
 // site and the Pages workflow: the page exists, is bounded in size, declares a
 // title, a language, a viewport, a description, a canonical URL, and the Open
 // Graph title and description that link previews show, matching the title and
-// description search results show; any structured data is valid JSON; every
-// link or source it names relative to itself is a file inside site/; and no
-// link uses plain HTTP or runs script. The site is hand-written HTML with no
-// build step, so this is the only check it gets. It is a development tool, not
-// linked into homeskillet, so it may use net/url and encoding/json.
+// description search results show; the Open Graph image, when there is one,
+// is a PNG or JPEG in site/ of the size the page declares; any structured data
+// is valid JSON; every link or source it names relative to itself is a file
+// inside site/; and no link uses plain HTTP or runs script. The site is
+// hand-written HTML with no build step, so this is the only check it gets. It
+// is a development tool, not linked into homeskillet, so it may use net/url,
+// encoding/json, and the image decoders.
 //
 // Usage: go run ./tools/site [DIR], where DIR defaults to site.
 package main
@@ -15,6 +17,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg" // registers JPEG with image.DecodeConfig, for og:image
+	_ "image/png"  // registers PNG with image.DecodeConfig, for og:image
 	"net/url"
 	"os"
 	"path/filepath"
@@ -72,6 +77,7 @@ func check(dir string) ([]string, error) {
 		}
 	}
 	problems = append(problems, checkMeta(html)...)
+	problems = append(problems, checkPreviewImage(dir, html)...)
 	problems = append(problems, checkStructuredData(html)...)
 	for _, ref := range references(html) {
 		if problem := checkReference(dir, ref); problem != "" {
@@ -104,6 +110,53 @@ func checkMeta(html string) []string {
 	}
 	if description, og := metas["description"], metas["og:description"]; description != "" && og != "" && og != description {
 		problems = append(problems, fmt.Sprintf("og:description %q differs from the description %q", og, description))
+	}
+	return problems
+}
+
+// checkPreviewImage returns the problems with the og:image a link preview
+// shows, when the page names one. The apps fetch it by an absolute URL, which
+// the reference check skips, so a renamed or missing image would otherwise
+// break every preview without a sign. The URL must lie under the canonical
+// URL, where site/ is published, and name a file there that decodes as a PNG
+// or JPEG, the formats every app shows, of the og:image:width and
+// og:image:height the page declares, which apps use to lay out the preview
+// before the image arrives.
+func checkPreviewImage(dir, html string) []string {
+	metas := metaContents(html)
+	preview := strings.TrimSpace(metas["og:image"])
+	if preview == "" {
+		return nil
+	}
+	canonical := linkHref(html, "canonical")
+	ref, under := strings.CutPrefix(preview, canonical)
+	if canonical == "" || !under || ref == "" {
+		return []string{fmt.Sprintf("og:image %q is not under the canonical URL %q, where %s is published", preview, canonical, dir)}
+	}
+	if problem := checkReference(dir, ref); problem != "" {
+		return []string{"og:image " + problem}
+	}
+	path, err := localPath(dir, ref)
+	if err != nil {
+		return []string{"og:image " + err.Error()}
+	}
+	f, err := os.Open(path) //nolint:gosec // G304: a file under the site directory, checked by checkReference
+	if err != nil {
+		return []string{"og:image " + err.Error()}
+	}
+	defer f.Close() //nolint:errcheck // opened only to read; closing it cannot lose anything
+	config, format, err := image.DecodeConfig(f)
+	if err != nil {
+		return []string{fmt.Sprintf("og:image %s is not a PNG or JPEG: %v", ref, err)}
+	}
+	var problems []string
+	for _, side := range []struct {
+		key  string
+		size int
+	}{{"og:image:width", config.Width}, {"og:image:height", config.Height}} {
+		if declared, ok := metas[side.key]; ok && strings.TrimSpace(declared) != fmt.Sprint(side.size) {
+			problems = append(problems, fmt.Sprintf("%s is %q, but the %s %s is %dx%d", side.key, declared, format, ref, config.Width, config.Height))
+		}
 	}
 	return problems
 }
@@ -161,13 +214,10 @@ func checkReference(dir, ref string) string {
 	case strings.HasPrefix(ref, "/"):
 		return "absolute path, which breaks under a project page's prefix: " + ref
 	}
-	local, _, _ := strings.Cut(ref, "#")
-	local, _, _ = strings.Cut(local, "?")
-	decoded, err := url.PathUnescape(local)
+	path, err := localPath(dir, ref)
 	if err != nil {
 		return "badly percent-encoded reference: " + ref
 	}
-	path := filepath.Join(dir, filepath.FromSlash(decoded))
 	if rel, err := filepath.Rel(dir, path); err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
 		return "references a file outside " + dir + ", which is not published: " + ref
 	}
@@ -177,6 +227,39 @@ func checkReference(dir, ref string) string {
 		return err.Error()
 	}
 	return ""
+}
+
+// localPath returns the path under dir that a relative reference names,
+// without its query or fragment, or an error when it is badly
+// percent-encoded. It does not check that the path stays inside dir;
+// checkReference does.
+func localPath(dir, ref string) (string, error) {
+	local, _, _ := strings.Cut(ref, "#")
+	local, _, _ = strings.Cut(local, "?")
+	decoded, err := url.PathUnescape(local)
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(dir, filepath.FromSlash(decoded)), nil
+}
+
+// linkHref returns the href of the first <link> in html whose rel includes
+// rel, such as canonical, or "" when there is none.
+func linkHref(html, rel string) string {
+	lower := strings.ToLower(html)
+	for at := 0; ; {
+		i := strings.Index(lower[at:], "<link")
+		if i < 0 {
+			return ""
+		}
+		attrs, end := tagAttributes(html, at+i+len("<link"))
+		at = end
+		for r := range strings.FieldsSeq(attrs["rel"]) {
+			if strings.EqualFold(r, rel) {
+				return strings.TrimSpace(attrs["href"])
+			}
+		}
+	}
 }
 
 // hasScheme reports whether ref starts with a URL scheme, such as https: or

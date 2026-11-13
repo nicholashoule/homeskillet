@@ -4,11 +4,24 @@
 package main
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// pngOf returns a blank PNG of the given size, as a preview image.
+func pngOf(t *testing.T, width, height int) string {
+	t.Helper()
+	var b bytes.Buffer
+	if err := png.Encode(&b, image.NewRGBA(image.Rect(0, 0, width, height))); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
 
 func TestCheck(t *testing.T) {
 	dir := t.TempDir()
@@ -22,11 +35,13 @@ func TestCheck(t *testing.T) {
 		}
 	}
 	head := `<html lang="en"><head><title> x </title><meta name="viewport" content="w"><meta name="description" content="d">` +
-		`<link rel="canonical" href="https://example.com/"><meta property="og:title" content="x"><meta property="og:description" content="d">`
+		`<link rel="canonical" href="https://example.com/"><meta property="og:title" content="x"><meta property="og:description" content="d">` +
+		`<meta property="og:image" content="https://example.com/images/p.png"><meta property="og:image:width" content="2"><meta property="og:image:height" content="1">`
 	sound := head + `<script type="application/ld+json">{"@type": "SoftwareApplication"}</script><script>var a = 1 < 2;</script></head>` +
 		`<body><a href="#top">t</a><a href="https://example.com/">e</a><img src="images/a.svg"><a href="images/a.svg#x">f</a></body></html>`
 	write("index.html", sound)
 	write("images/a.svg", "<svg/>")
+	write("images/p.png", pngOf(t, 2, 1))
 	if problems, err := check(dir); err != nil || len(problems) != 0 {
 		t.Fatalf("a sound site: %v, %v", problems, err)
 	}
@@ -57,6 +72,39 @@ func TestCheckMeta(t *testing.T) {
 		got := strings.Join(checkMeta(tt.html), "\n")
 		if tt.want == "" && strings.Contains(got, "differs") || tt.want != "" && !strings.Contains(got, tt.want) {
 			t.Errorf("%s: checkMeta = %q, want %q", tt.name, got, tt.want)
+		}
+	}
+}
+
+func TestCheckPreviewImage(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "images"), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"images/p.png": pngOf(t, 4, 3), "images/a.svg": "<svg/>"} {
+		if err := os.WriteFile(filepath.Join(dir, filepath.FromSlash(name)), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	const canonical = `<link rel="icon" href="x.svg"><link rel="canonical" href="https://example.com/site/">`
+	for _, tt := range []struct{ name, html, want string }{
+		{"no image", canonical, ""},
+		{"sized", canonical + `<meta property="og:image" content="https://example.com/site/images/p.png?v=2">` +
+			`<meta property="og:image:width" content="4"><meta property="og:image:height" content="3">`, ""},
+		{"unsized", canonical + `<meta property="og:image" content="https://example.com/site/images/p.png">`, ""},
+		{"elsewhere", canonical + `<meta property="og:image" content="https://cdn.example.com/p.png">`, "not under the canonical URL"},
+		{"no canonical", `<meta property="og:image" content="https://example.com/site/images/p.png">`, "not under the canonical URL"},
+		{"missing", canonical + `<meta property="og:image" content="https://example.com/site/images/gone.png">`, "not in"},
+		{"outside", canonical + `<meta property="og:image" content="https://example.com/site/../p.png">`, "outside"},
+		{"not an image", canonical + `<meta property="og:image" content="https://example.com/site/images/a.svg">`, "not a PNG or JPEG"},
+		{"wrong width", canonical + `<meta property="og:image" content="https://example.com/site/images/p.png">` +
+			`<meta property="og:image:width" content="1200"><meta property="og:image:height" content="3">`, `og:image:width is "1200", but the png images/p.png is 4x3`},
+		{"wrong height", canonical + `<meta property="og:image" content="https://example.com/site/images/p.png">` +
+			`<meta property="og:image:height" content="630">`, `og:image:height is "630"`},
+	} {
+		got := strings.Join(checkPreviewImage(dir, tt.html), "\n")
+		if tt.want == "" && got != "" || tt.want != "" && !strings.Contains(got, tt.want) {
+			t.Errorf("%s: checkPreviewImage = %q, want %q", tt.name, got, tt.want)
 		}
 	}
 }
